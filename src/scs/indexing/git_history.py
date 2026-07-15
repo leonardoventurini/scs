@@ -19,6 +19,7 @@ class ProvenanceGraph(Protocol):
     """Batch operations required for source-control provenance."""
 
     def get_or_create_repo_sync(self, path: str) -> int: ...
+    def get_file_node_map_sync(self, repo_id: int) -> dict[str, str]: ...
     def batch_upsert_nodes_sync(self, nodes: list[dict[str, object]]) -> int: ...
     def batch_upsert_edges_sync(self, edges: list[dict[str, object]]) -> int: ...
 
@@ -47,7 +48,10 @@ class GitHistoryIngester:
 
         root = repo_path.expanduser().resolve()
         repo_id = self._graph.get_or_create_repo_sync(str(root))
-        format_value = f"%H{FIELD_SEPARATOR}%an{FIELD_SEPARATOR}%ae{FIELD_SEPARATOR}%aI{FIELD_SEPARATOR}%s{RECORD_SEPARATOR}"
+        file_nodes = self._graph.get_file_node_map_sync(repo_id)
+        # Prefix each commit with the record separator so the following
+        # ``--name-only`` lines remain attached to that commit when split.
+        format_value = f"{RECORD_SEPARATOR}%H{FIELD_SEPARATOR}%an{FIELD_SEPARATOR}%ae{FIELD_SEPARATOR}%aI{FIELD_SEPARATOR}%s"
         process = subprocess.run(
             ["git", "log", f"--max-count={limit}", f"--format={format_value}", "--name-only"],
             cwd=root,
@@ -98,7 +102,9 @@ class GitHistoryIngester:
                 }
             )
             for rel_path in filter(None, paths_text.splitlines()):
-                file_id = _identity("file", f"{root}:{rel_path}")
+                file_id = file_nodes.get(rel_path)
+                if file_id is None:
+                    continue
                 edges.append(
                     {
                         "source_id": commit_id,

@@ -28,6 +28,7 @@ class _NativeGraphHandle(Protocol):
 
     def get_or_create_repo(self, path: str) -> int: ...
     def resolve_repo_id(self, path: str) -> int | None: ...
+    def get_file_node_map(self, repo_id: int) -> object: ...
     def batch_upsert_nodes(self, nodes_json: str) -> int: ...
     def batch_upsert_edges(self, edges_json: str) -> int: ...
     def batch_upsert_embeddings(self, embeddings_json: str) -> int: ...
@@ -142,6 +143,11 @@ class NativeGraph:
 
     def resolve_repo_id_sync(self, path: str) -> int | None:
         return self._inner.resolve_repo_id(path)
+
+    def get_file_node_map_sync(self, repo_id: int) -> dict[str, str]:
+        """Map repository-relative source paths to parser-created file nodes."""
+
+        return cast(dict[str, str], _json_value(self._inner.get_file_node_map(repo_id)))
 
     def batch_upsert_nodes_sync(self, nodes: list[dict[str, object]]) -> int:
         return self._inner.batch_upsert_nodes(json.dumps(nodes, default=str))
