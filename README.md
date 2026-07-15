@@ -18,6 +18,21 @@ just setup
 just verify
 ```
 
-The runtime and installation commands will be added with the daemon boundary:
-`scs service install|start|stop|restart|status|uninstall`.
+`just setup` installs Python dependencies and builds the private `_scs_native`
+extension. The daemon can then be run directly with `scs serve`, while explicit
+repository enrollment uses `scs index <repo>` or `scs reindex <repo>`.
 
+Install and operate the independent user services with:
+
+```bash
+scs service install
+scs service start
+scs service status
+scs service restart
+scs service stop
+scs service uninstall
+```
+
+Uninstall removes only service registrations and runtime ownership. It
+preserves `SCS_HOME` and every SCS-owned index. SCS never reads External product's legacy
+index and never enrolls repositories merely because External product knows about them.

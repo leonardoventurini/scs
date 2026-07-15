@@ -2,6 +2,7 @@ set shell := ["zsh", "-cu"]
 
 setup:
     uv sync --all-groups
+    ./scripts/build-native.sh
 
 test:
     uv run --all-groups pytest -v
@@ -12,5 +13,7 @@ typecheck:
 native-test:
     cargo test --workspace
 
-verify: typecheck test
+native-build:
+    ./scripts/build-native.sh
 
+verify: typecheck test native-test
