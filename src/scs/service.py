@@ -31,7 +31,12 @@ class SubprocessRunner:
     def run(self, command: tuple[str, ...], *, check: bool = True) -> int:
         """Run a command with inherited output for transparent diagnostics."""
 
-        completed = subprocess.run(command, check=check)
+        completed = subprocess.run(
+            command,
+            check=check,
+            stdout=None if check else subprocess.DEVNULL,
+            stderr=None if check else subprocess.DEVNULL,
+        )
         return completed.returncode
 
 

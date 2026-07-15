@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from scs.service import ProcessLock, ServiceManager
+from scs.service import ProcessLock, ServiceManager, SubprocessRunner
 
 
 class RecordingRunner:
@@ -78,3 +79,16 @@ def test_duplicate_process_lock_is_refused(tmp_path: Path) -> None:
 
     second.acquire()
     second.release()
+
+
+def test_unloaded_service_probe_suppresses_launchctl_noise() -> None:
+    with patch("scs.service.subprocess.run") as run:
+        run.return_value.returncode = 1
+
+        assert SubprocessRunner().run(
+            ("launchctl", "print", "gui/501/com.mentagen.scs.daemon"),
+            check=False,
+        ) == 1
+
+    assert run.call_args.kwargs["stdout"] is not None
+    assert run.call_args.kwargs["stderr"] is not None
