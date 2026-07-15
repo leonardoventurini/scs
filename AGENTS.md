@@ -10,6 +10,9 @@ and the agent-facing MCP endpoint.
 - SCS reads repository source but never mutates it.
 - Persistent state lives only under `SCS_HOME`; runtime sockets and discovery
   live under `~/Library/Application Support/SCS`.
+- The proxy exclusively owns `mcp.json` and `proxy-service.json`; the daemon
+  exclusively owns `scs.sock` and `daemon-service.json`. Cleanup must match
+  service and generation and never touch the sibling process's artifacts.
 - SCS never reads, imports, copies, or derives state from External product `brain.db` or
   its sidecars. A new installation starts with an empty index.
 - External product is an optional client. SCS must build, test, start, index, search, and
@@ -43,14 +46,19 @@ and the agent-facing MCP endpoint.
 - Only one daemon writes an SCS data root.
 - Unknown SCSWire fields are ignored; unsupported protocol ranges fail with a
   typed compatibility error.
+- SCSWire never unlinks a successfully connected live socket. Only a same-UID,
+  connection-refused stale socket may be reclaimed.
 - MCP exposes only the inventory in `scs.mcp.inventory`.
 - No repository-mutating LSP capability or MCP tool is allowed.
+- A fresh root stays empty across restart until an explicit index request.
 
 ## Development discipline
 
 - Use `uv` for Python dependency changes and `cargo` for Rust dependencies.
 - Every behavior change receives tests.
 - Run targeted tests first, then `just verify` before committing.
+- Run `cd proxy && uv run --all-groups pytest -v` for proxy changes. Preserve
+  `tests/performance/` ceilings unless measured evidence and an accepted
+  decision revise them.
 - Use semantic commits and path-limited staging. Never commit secrets or local
   runtime data.
-

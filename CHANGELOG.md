@@ -8,3 +8,8 @@
 - feat: add bounded SCSWire framing, routing, events, and Unix socket transport
 - feat: add the standalone daemon, explicit indexing CLI, and launchd lifecycle
 - feat(mcp): serve SCS code intelligence independently
+- feat: publish generation-scoped proxy and daemon ownership records
+- fix: preserve live foreign sockets during stale-owner detection
+- fix: emit machine-readable unavailable status when the daemon is stopped
+- test: enforce empty-index, External product independence, source read-only, bounded
+  transport, restart ownership, RSS, indexing, and query convergence gates
