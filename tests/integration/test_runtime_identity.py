@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -50,29 +51,32 @@ async def test_daemon_restart_replaces_only_daemon_identity(tmp_path: Path) -> N
     )
     daemon_record = runtime / "daemon-service.json"
 
-    first = SCSDaemon(settings)
-    await first.start()
-    first_identity = json.loads(daemon_record.read_text(encoding="utf-8"))
-    assert set(first_identity) == {
-        "service",
-        "pid",
-        "start_time",
-        "generation",
-        "artifact_sha256",
-        "protocol_min",
-        "protocol_max",
-    }
-    await first.stop()
-    assert not daemon_record.exists()
-    assert proxy_record.exists()
-
-    second = SCSDaemon(settings)
-    await second.start()
     try:
-        second_identity = json.loads(daemon_record.read_text(encoding="utf-8"))
-        assert second_identity["generation"] != first_identity["generation"]
-        assert json.loads(proxy_record.read_text(encoding="utf-8"))["generation"] == "proxy-stable"
-    finally:
-        await second.stop()
+        first = SCSDaemon(settings)
+        await first.start()
+        first_identity = json.loads(daemon_record.read_text(encoding="utf-8"))
+        assert set(first_identity) == {
+            "service",
+            "pid",
+            "start_time",
+            "generation",
+            "artifact_sha256",
+            "protocol_min",
+            "protocol_max",
+        }
+        await first.stop()
+        assert not daemon_record.exists()
+        assert proxy_record.exists()
 
-    assert proxy_record.exists()
+        second = SCSDaemon(settings)
+        await second.start()
+        try:
+            second_identity = json.loads(daemon_record.read_text(encoding="utf-8"))
+            assert second_identity["generation"] != first_identity["generation"]
+            assert json.loads(proxy_record.read_text(encoding="utf-8"))["generation"] == "proxy-stable"
+        finally:
+            await second.stop()
+
+        assert proxy_record.exists()
+    finally:
+        shutil.rmtree(runtime, ignore_errors=True)

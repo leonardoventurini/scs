@@ -72,20 +72,75 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if arguments.command == "doctor":
         settings = SCSSettings()
-        settings.paths.ensure()
-        result = asyncio.run(_call_daemon("system.health"))
-        print(json.dumps(result, sort_keys=True))
+        try:
+            settings.paths.ensure()
+        except Exception as error:
+            print(
+                json.dumps(
+                    {
+                        "storage": {
+                            "available": False,
+                            "error": type(error).__name__,
+                            "message": str(error),
+                        },
+                        "daemon": {"available": False, "ready": False},
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 1
+        try:
+            result = asyncio.run(_call_daemon("system.health"))
+        except Exception as error:
+            print(
+                json.dumps(
+                    {
+                        "storage": {
+                            "available": True,
+                            "home": str(settings.paths.home),
+                        },
+                        "daemon": {
+                            "available": False,
+                            "ready": False,
+                            "error": type(error).__name__,
+                            "message": str(error),
+                        },
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {
+                    "storage": {"available": True, "home": str(settings.paths.home)},
+                    "daemon": {"available": True, **result},
+                },
+                sort_keys=True,
+            )
+        )
         return 0 if result.get("ready") is True else 1
     if arguments.command == "status":
         service_status = ServiceManager().status()
-        daemon_status = asyncio.run(_call_daemon("system.health"))
+        try:
+            daemon_result = asyncio.run(_call_daemon("system.health"))
+            daemon_status = {"available": True, **daemon_result}
+            exit_code = 0 if daemon_result.get("ready") is True else 1
+        except Exception as error:
+            daemon_status = {
+                "available": False,
+                "ready": False,
+                "error": type(error).__name__,
+                "message": str(error),
+            }
+            exit_code = 1
         print(
             json.dumps(
                 {"launchd": asdict(service_status), "daemon": daemon_status},
                 sort_keys=True,
             )
         )
-        return 0
+        return exit_code
     if arguments.command in {"index", "reindex"}:
         method = f"repository.{arguments.command}"
         result = asyncio.run(

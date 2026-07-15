@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import cast
@@ -16,8 +17,14 @@ from scs.main import SCSDaemon
 from scs.wire.client import SCSClient
 
 
-def _fingerprint(path: Path) -> tuple[str, int]:
-    return hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns
+def _fingerprint(path: Path) -> tuple[int, int, int, str]:
+    metadata = path.stat()
+    return (
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
 
 
 @pytest.mark.asyncio
@@ -27,11 +34,33 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
 ) -> None:
     legacy = tmp_path / "legacy-external-product"
     legacy.mkdir()
-    sentinels = tuple(legacy / name for name in ("brain.db", "brain.db-wal", "brain.usearch"))
+    sentinels = tuple(
+        legacy / name
+        for name in (
+            "brain.db",
+            "brain.db-wal",
+            "brain.db-shm",
+            "brain.usearch",
+            "repositories.json",
+        )
+    )
     for index, sentinel in enumerate(sentinels):
         sentinel.write_bytes(f"legacy-{index}".encode())
     before = {sentinel: _fingerprint(sentinel) for sentinel in sentinels}
     monkeypatch.setenv("EXTERNAL_PRODUCT_HOME", str(legacy))
+    sentinel_paths = {str(path.resolve()) for path in sentinels}
+    audit_active = True
+
+    def deny_legacy_access(event: str, arguments: tuple[object, ...]) -> None:
+        if not audit_active or event not in {"open", "sqlite3.connect"} or not arguments:
+            return
+        attempted = arguments[0]
+        if isinstance(attempted, (str, bytes, Path)):
+            candidate = str(Path(attempted).resolve())
+            if candidate in sentinel_paths:
+                raise AssertionError(f"SCS attempted to open legacy sentinel: {candidate}")
+
+    sys.addaudithook(deny_legacy_access)
 
     scs_home = tmp_path / "fresh-scs"
     runtime = Path(tempfile.mkdtemp(prefix="scs-test-", dir="/tmp"))
@@ -42,11 +71,21 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
         model_cache=tmp_path / "models",
     )
     daemon = SCSDaemon(settings)
-    await daemon.start()
     try:
+        await daemon.start()
         client = SCSClient(runtime / "scs.sock")
         initial = await client.call("jobs.recent")
         assert initial == {"jobs": []}
+        stats = await client.call("knowledge.stats")
+        assert stats["total_nodes"] == 0
+        assert stats["ingestion_stats"] == {}
+
+        await daemon.stop()
+        daemon = SCSDaemon(settings)
+        await daemon.start()
+        client = SCSClient(runtime / "scs.sock")
+        assert await client.call("jobs.recent") == {"jobs": []}
+        assert (await client.call("knowledge.stats"))["total_nodes"] == 0
 
         repository = tmp_path / "repository"
         repository.mkdir()
@@ -75,6 +114,7 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
     finally:
         await daemon.stop()
         shutil.rmtree(runtime, ignore_errors=True)
+        audit_active = False
 
     assert {sentinel: _fingerprint(sentinel) for sentinel in sentinels} == before
     assert (scs_home / "index.db").exists()
