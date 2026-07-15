@@ -1,0 +1,26 @@
+[project]
+name = "scs-mcp-proxy"
+version = "0.1.0"
+description = "Persistent MCP front-door that survives daemon hot-reloads and replays queued requests"
+requires-python = ">=3.14"
+dependencies = [
+    "aiohttp>=3.9",
+]
+
+[project.scripts]
+scs-mcp-proxy = "scs_mcp_proxy.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-aiohttp>=1.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
