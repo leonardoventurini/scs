@@ -69,6 +69,7 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
         runtime_dir=runtime,
         log_dir=tmp_path / "logs",
         model_cache=tmp_path / "models",
+        mcp_internal_port=0,
     )
     daemon = SCSDaemon(settings)
     try:
