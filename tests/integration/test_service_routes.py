@@ -10,7 +10,9 @@ import pytest
 
 from scs.config import SCSSettings
 from scs.main import SCSDaemon
+from scs.mcp.http import MCPHTTPServer
 from scs.providers.base import ProviderMetadata, ProviderUnavailableError
+from scs.service import ProcessLock
 from scs.wire.client import SCSClient
 
 MCP_GATEWAY_METHODS = frozenset(
@@ -211,3 +213,76 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         assert results["diagnostics.snapshot"]["status"] == "healthy"
     finally:
         await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_internal_mcp_failure_unwinds_wire_and_process_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = Path(tempfile.mkdtemp(prefix="scs-unwind-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+        mcp_internal_port=0,
+    )
+
+    async def fail_start(_server: MCPHTTPServer) -> None:
+        raise RuntimeError("synthetic MCP startup failure")
+
+    monkeypatch.setattr(MCPHTTPServer, "start", fail_start)
+    daemon = SCSDaemon(settings)
+
+    with pytest.raises(RuntimeError, match="synthetic MCP startup failure"):
+        await daemon.start()
+
+    assert not (runtime / "scs.sock").exists()
+    assert daemon._server is None
+    assert daemon._graph is None
+    assert daemon._jobs is None
+    ownership = ProcessLock(settings.paths.home / ".daemon.lock")
+    ownership.acquire()
+    ownership.release()
+
+
+@pytest.mark.asyncio
+async def test_daemon_stops_internal_mcp_before_scswire(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = Path(tempfile.mkdtemp(prefix="scs-stop-order-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+        mcp_internal_port=0,
+    )
+    daemon = SCSDaemon(settings)
+    await daemon.start()
+    assert daemon._mcp_server is not None
+    assert daemon._server is not None
+    mcp_server = daemon._mcp_server
+    wire_server = daemon._server
+    original_mcp_stop = mcp_server.stop
+    original_wire_stop = wire_server.stop
+    stop_order: list[str] = []
+
+    async def stop_mcp() -> None:
+        stop_order.append("mcp")
+        await original_mcp_stop()
+
+    async def stop_wire() -> None:
+        stop_order.append("wire")
+        await original_wire_stop()
+
+    monkeypatch.setattr(mcp_server, "stop", stop_mcp)
+    monkeypatch.setattr(wire_server, "stop", stop_wire)
+
+    await daemon.stop()
+
+    assert stop_order[:2] == ["mcp", "wire"]
