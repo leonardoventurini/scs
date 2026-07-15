@@ -16,6 +16,7 @@ from scs.indexing.parser.native import NativeParser
 from scs.indexing.pipeline import IngestionPipeline, IngestionProgress
 from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.indexing.runner import IngestionJobRunner
+from scs.indexing.watcher import RepositoryWatcher
 from scs.providers.mlx import MLXEmbeddingProvider
 from scs.providers.openai import OpenAIFileSummarizer
 from scs.service import ProcessLock
@@ -48,6 +49,7 @@ class SCSDaemon:
         self._jobs: IngestionJobStore | None = None
         self._graph: NativeGraph | None = None
         self._runner: IngestionJobRunner | None = None
+        self._watchers: dict[str, RepositoryWatcher] = {}
         self._events = EventBroker()
         self._started = False
         self._register_methods()
@@ -112,9 +114,20 @@ class SCSDaemon:
                 event_sink=BrokerEventSink(self._events),
             )
             await runner.start()
+            existing_repositories = await asyncio.to_thread(graph.get_ingestion_stats_sync)
+            for repo_path in existing_repositories:
+                await self._ensure_watcher(
+                    repo_path,
+                    graph=graph,
+                    jobs=jobs,
+                    parser=parser,
+                )
             server = WireServer(self._router, socket_path=paths.runtime / "scs.sock")
             await server.start()
         except BaseException:
+            watchers, self._watchers = tuple(self._watchers.values()), {}
+            for watcher in watchers:
+                await watcher.stop()
             if "runner" in locals():
                 await runner.stop()
             process_lock.release()
@@ -133,6 +146,9 @@ class SCSDaemon:
         self._server = None
         if server is not None:
             await server.stop()
+        watchers, self._watchers = tuple(self._watchers.values()), {}
+        for watcher in watchers:
+            await watcher.stop()
         runner = self._runner
         self._runner = None
         if runner is not None:
@@ -225,6 +241,9 @@ class SCSDaemon:
                 mode="drop_index",
                 reason="explicit_drop_index",
             )
+            watcher = self._watchers.pop(canonicalize_repo_path(raw_repo_path), None)
+            if watcher is not None:
+                await watcher.stop()
             return {"accepted": True, "job": job_to_dict(job)}
 
         @self._router.method("jobs.recent")
@@ -262,6 +281,7 @@ class SCSDaemon:
             mode="force_full" if force else "full",
             reason="explicit_reindex" if force else "explicit_index",
         )
+        await self._ensure_watcher(str(repo_path))
         return {"accepted": True, "job": job_to_dict(job)}
 
     def _require_jobs(self) -> IngestionJobStore:
@@ -275,6 +295,29 @@ class SCSDaemon:
         if graph is None:
             raise RuntimeError("SCS graph is not ready")
         return graph
+
+    async def _ensure_watcher(
+        self,
+        repo_path: str,
+        *,
+        graph: NativeGraph | None = None,
+        jobs: IngestionJobStore | None = None,
+        parser: NativeParser | None = None,
+    ) -> None:
+        canonical = canonicalize_repo_path(repo_path)
+        if canonical in self._watchers or not Path(canonical).is_dir():
+            return
+        active_graph = graph or self._require_graph()
+        active_jobs = jobs or self._require_jobs()
+        active_parser = parser or NativeParser()
+        watcher = RepositoryWatcher(
+            graph=active_graph,
+            jobs=active_jobs,
+            base_dir=Path(canonical),
+            supported_extensions=active_parser.supported_extensions(),
+        )
+        await watcher.start()
+        self._watchers[canonical] = watcher
 
 
 async def serve(settings: SCSSettings | None = None) -> None:
