@@ -67,6 +67,15 @@ class SCSDaemon:
         )
         self._register_methods()
 
+    @property
+    def mcp_address(self) -> tuple[str, int]:
+        """Return the bound internal MCP address for health checks and tests."""
+
+        server = self._mcp_server
+        if server is None:
+            raise RuntimeError("SCS MCP server is not started")
+        return server.address
+
     async def start(self) -> None:
         """Validate isolation, acquire ownership, and begin accepting requests."""
 
