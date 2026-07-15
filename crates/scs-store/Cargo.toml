@@ -1,0 +1,27 @@
+[package]
+name = "scs-store"
+description = "SQLite + USearch storage layer for the SCS knowledge graph."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+scs-core = { workspace = true, features = ["rusqlite"] }
+rusqlite = { workspace = true }
+r2d2 = { workspace = true }
+r2d2_sqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+usearch = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+env_logger = { workspace = true }

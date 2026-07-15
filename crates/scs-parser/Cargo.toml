@@ -1,0 +1,19 @@
+[package]
+name = "scs-parser"
+description = "Tree-sitter code parsers for SCS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+scs-core = { workspace = true }
+serde = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-python = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-swift = { workspace = true }
+tree-sitter-elixir = { workspace = true }
+tree-sitter-bash = { workspace = true }
+tree-sitter-css = { workspace = true }

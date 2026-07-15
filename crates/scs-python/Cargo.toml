@@ -1,0 +1,27 @@
+[package]
+name = "scs-python"
+description = "PyO3 Python bindings for the SCS knowledge graph engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "_scs_native"
+crate-type = ["cdylib"]
+
+[features]
+default = []
+python = ["pyo3"]
+
+[dependencies]
+scs-core = { workspace = true }
+scs-store = { workspace = true }
+scs-parser = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+strum = { workspace = true }
+
+# Optional: Python bindings
+pyo3 = { workspace = true, optional = true }
