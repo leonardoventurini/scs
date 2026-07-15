@@ -217,14 +217,28 @@ async def test_proxy_atomically_publishes_and_removes_owned_discovery(
     discovery_path = ctx.config.discovery_path
     assert discovery_path is not None
     payload = json.loads(discovery_path.read_text(encoding="utf-8"))
+    identity_path = discovery_path.with_name("proxy-service.json")
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
 
     assert payload["service"] == "scs"
     assert payload["url"] == f"{ctx.url}/mcp"
     assert payload["generation"]
     assert not list(discovery_path.parent.glob(f".{discovery_path.name}.*.tmp"))
+    assert set(identity) == {
+        "service",
+        "pid",
+        "start_time",
+        "generation",
+        "artifact_sha256",
+        "protocol_min",
+        "protocol_max",
+    }
+    assert identity["service"] == "scs-proxy"
+    assert identity["generation"] == payload["generation"]
 
     await ctx.proxy.stop()
     assert not discovery_path.exists()
+    assert not identity_path.exists()
 
 
 async def test_proxy_preserves_newer_discovery_generation(proxy_pair) -> None:
@@ -247,6 +261,32 @@ async def test_proxy_preserves_newer_discovery_generation(proxy_pair) -> None:
         json.loads(discovery_path.read_text(encoding="utf-8"))["generation"]
         == "new-owner"
     )
+
+
+async def test_proxy_cleanup_preserves_newer_identity_and_daemon_artifacts(
+    proxy_pair,
+) -> None:
+    async def handler(_: web.Request) -> web.Response:
+        return web.json_response({"ok": True})
+
+    ctx = await proxy_pair([("POST", "/mcp", handler)])
+    discovery_path = ctx.config.discovery_path
+    assert discovery_path is not None
+    identity_path = discovery_path.with_name("proxy-service.json")
+    daemon_path = discovery_path.with_name("daemon-service.json")
+    identity_path.write_text(
+        json.dumps({"service": "scs-proxy", "generation": "new-proxy"}),
+        encoding="utf-8",
+    )
+    daemon_path.write_text(
+        json.dumps({"service": "scs-daemon", "generation": "stable-daemon"}),
+        encoding="utf-8",
+    )
+
+    await ctx.proxy.stop()
+
+    assert json.loads(identity_path.read_text(encoding="utf-8"))["generation"] == "new-proxy"
+    assert json.loads(daemon_path.read_text(encoding="utf-8"))["generation"] == "stable-daemon"
 
 
 async def test_replays_request_across_upstream_restart(proxy_pair) -> None:

@@ -17,6 +17,7 @@ from scs.indexing.pipeline import IngestionPipeline, IngestionProgress
 from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
+from scs.identity import IdentityPublisher
 from scs.mcp.gateway import SCSWireGateway
 from scs.mcp.http import MCPHTTPServer
 from scs.mcp.server import build_mcp
@@ -51,6 +52,7 @@ class SCSDaemon:
         self._router = Router()
         self._server: WireServer | None = None
         self._mcp_server: MCPHTTPServer | None = None
+        self._identity: IdentityPublisher | None = None
         self._lock: ProcessLock | None = None
         self._jobs: IngestionJobStore | None = None
         self._graph: NativeGraph | None = None
@@ -157,7 +159,16 @@ class SCSDaemon:
             self._embeddings = embeddings
             self._server = server
             await mcp_server.start()
+            identity = IdentityPublisher(
+                paths.runtime / "daemon-service.json",
+                service="scs-daemon",
+                generation=self._generation,
+                artifact_path=Path(__file__),
+            )
+            identity.publish()
         except BaseException:
+            if "identity" in locals():
+                identity.remove_owned()
             if "mcp_server" in locals():
                 await mcp_server.stop()
             if "server" in locals():
@@ -175,6 +186,7 @@ class SCSDaemon:
             self._embeddings = None
             raise
         self._mcp_server = mcp_server
+        self._identity = identity
         self._lock = process_lock
         self._started = True
 
@@ -189,6 +201,10 @@ class SCSDaemon:
         self._server = None
         if server is not None:
             await server.stop()
+        identity = self._identity
+        self._identity = None
+        if identity is not None:
+            identity.remove_owned()
         watchers, self._watchers = tuple(self._watchers.values()), {}
         for watcher in watchers:
             await watcher.stop()

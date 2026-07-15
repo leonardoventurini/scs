@@ -33,7 +33,7 @@ from typing import Any, Awaitable, Callable
 import aiohttp
 from aiohttp import web
 
-from scs_mcp_proxy.discovery import DiscoveryPublisher
+from scs_mcp_proxy.discovery import DiscoveryPublisher, ServiceIdentityPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ class ProxyConfig:
     response_sock_read_seconds: float = 300.0
     connect_timeout_seconds: float = 2.0
     discovery_path: Path | None = _DEFAULT_DISCOVERY_PATH
+    identity_path: Path | None = None
 
     @property
     def upstream_base(self) -> str:
@@ -365,6 +366,18 @@ class ProxyServer:
             if config.discovery_path is not None
             else None
         )
+        identity_path = config.identity_path
+        if identity_path is None and config.discovery_path is not None:
+            identity_path = config.discovery_path.with_name("proxy-service.json")
+        self._identity = (
+            ServiceIdentityPublisher(
+                identity_path,
+                generation=self._generation,
+                artifact_path=Path(__file__),
+            )
+            if identity_path is not None
+            else None
+        )
 
     @property
     def config(self) -> ProxyConfig:
@@ -389,10 +402,23 @@ class ProxyServer:
             ) from error
         self._runner = runner
         self._site = site
-        if self._discovery is not None:
-            self._discovery.publish(
-                url=f"http://{self._config.public_host}:{self._config.public_port}/mcp"
-            )
+        try:
+            if self._identity is not None:
+                self._identity.publish()
+            if self._discovery is not None:
+                self._discovery.publish(
+                    url=f"http://{self._config.public_host}:{self._config.public_port}/mcp"
+                )
+        except BaseException:
+            if self._discovery is not None:
+                self._discovery.remove_owned()
+            if self._identity is not None:
+                self._identity.remove_owned()
+            await site.stop()
+            await runner.cleanup()
+            self._site = None
+            self._runner = None
+            raise
         logger.info(
             "MCP proxy listening on http://%s:%d -> http://%s:%d",
             self._config.public_host,
@@ -411,6 +437,8 @@ class ProxyServer:
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
+        if self._identity is not None:
+            self._identity.remove_owned()
         self._closed.set()
 
     async def wait_closed(self) -> None:

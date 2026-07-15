@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import os
 import stat
+import uuid
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -23,6 +24,7 @@ from scs.wire.router import Router
 
 SOCKET_MODE = 0o600
 RUNTIME_DIRECTORY_MODE = 0o700
+OWNERSHIP_PROBE_TIMEOUT_SECONDS = 0.5
 
 
 class WireServer:
@@ -148,15 +150,46 @@ class WireServer:
         if metadata.st_uid != os.getuid():
             raise RuntimeError(f"refusing socket owned by another user: {path}")
         try:
-            reader, writer = await asyncio.open_unix_connection(path)
-        except (ConnectionError, OSError):
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(path),
+                timeout=OWNERSHIP_PROBE_TIMEOUT_SECONDS,
+            )
+        except (ConnectionError, OSError, TimeoutError):
             path.unlink()
             return
-        writer.close()
-        with contextlib.suppress(ConnectionError):
-            await writer.wait_closed()
-        del reader
-        raise RuntimeError(f"SCSWire server is already active: {path}")
+        request_id = f"ownership-{uuid.uuid4().hex}"
+        try:
+            await asyncio.wait_for(
+                write_frame(
+                    writer,
+                    {
+                        "kind": "request",
+                        "id": request_id,
+                        "version": PROTOCOL_VERSION,
+                        "method": "system.health",
+                        "params": {},
+                    },
+                ),
+                timeout=OWNERSHIP_PROBE_TIMEOUT_SECONDS,
+            )
+            response = await asyncio.wait_for(
+                read_frame(reader),
+                timeout=OWNERSHIP_PROBE_TIMEOUT_SECONDS,
+            )
+            is_scswire = (
+                response.get("id") == request_id
+                and response.get("version") == PROTOCOL_VERSION
+                and response.get("kind") in {"response", "error"}
+            )
+        except (ConnectionError, OSError, TimeoutError, FrameError):
+            is_scswire = False
+        finally:
+            writer.close()
+            with contextlib.suppress(ConnectionError):
+                await writer.wait_closed()
+        if is_scswire:
+            raise RuntimeError(f"SCSWire server is already active: {path}")
+        path.unlink()
 
     def _remove_owned_socket(self) -> None:
         path = self._socket_path

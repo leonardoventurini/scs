@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import socket
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -59,3 +60,57 @@ async def test_duplicate_live_server_is_refused(short_runtime_path: Path) -> Non
             await second.start()
     finally:
         await first.stop()
+
+
+@pytest.mark.asyncio
+async def test_stale_same_user_socket_is_reclaimed(short_runtime_path: Path) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(socket_path))
+    stale.close()
+
+    server = WireServer(Router(), socket_path=socket_path)
+    await server.start()
+    try:
+        assert socket_path.is_socket()
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("occupant", ["file", "symlink"])
+async def test_unsafe_socket_path_occupants_are_refused(
+    short_runtime_path: Path,
+    occupant: str,
+) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+    if occupant == "file":
+        socket_path.write_text("not a socket", encoding="utf-8")
+    else:
+        target = short_runtime_path / "target"
+        target.write_text("not a socket", encoding="utf-8")
+        socket_path.symlink_to(target)
+
+    with pytest.raises(RuntimeError, match="refusing"):
+        await WireServer(Router(), socket_path=socket_path).start()
+
+    assert socket_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_preserves_replacement_socket_generation(
+    short_runtime_path: Path,
+) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+    server = WireServer(Router(), socket_path=socket_path)
+    await server.start()
+    socket_path.unlink()
+    replacement = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    replacement.bind(str(socket_path))
+    replacement.listen()
+    try:
+        await server.stop()
+        assert socket_path.is_socket()
+    finally:
+        replacement.close()
+        socket_path.unlink(missing_ok=True)
