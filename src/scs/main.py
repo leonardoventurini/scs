@@ -17,9 +17,14 @@ from scs.indexing.pipeline import IngestionPipeline, IngestionProgress
 from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
+from scs.mcp.gateway import SCSWireGateway
+from scs.mcp.http import MCPHTTPServer
+from scs.mcp.server import build_mcp
 from scs.providers.mlx import MLXEmbeddingProvider
+from scs.providers.base import EmbeddingProvider
 from scs.providers.openai import OpenAIFileSummarizer
 from scs.service import ProcessLock
+from scs.services import SCSServiceRoutes
 from scs.wire.events import EventBroker
 from scs.wire.router import Router
 from scs.wire.server import WireServer
@@ -45,13 +50,21 @@ class SCSDaemon:
         self._generation = uuid.uuid4().hex
         self._router = Router()
         self._server: WireServer | None = None
+        self._mcp_server: MCPHTTPServer | None = None
         self._lock: ProcessLock | None = None
         self._jobs: IngestionJobStore | None = None
         self._graph: NativeGraph | None = None
         self._runner: IngestionJobRunner | None = None
+        self._embeddings: EmbeddingProvider | None = None
         self._watchers: dict[str, RepositoryWatcher] = {}
         self._events = EventBroker()
         self._started = False
+        self._services = SCSServiceRoutes(
+            graph=self._require_graph,
+            jobs=self._require_jobs,
+            embeddings=self._require_embeddings,
+            settings=self.settings,
+        )
         self._register_methods()
 
     async def start(self) -> None:
@@ -124,24 +137,45 @@ class SCSDaemon:
                 )
             server = WireServer(self._router, socket_path=paths.runtime / "scs.sock")
             await server.start()
+            mcp_server = MCPHTTPServer(
+                build_mcp(SCSWireGateway(server.socket_path)),
+                host=self.settings.mcp_internal_host,
+                port=self.settings.mcp_internal_port,
+            )
+            self._graph = graph
+            self._jobs = jobs
+            self._runner = runner
+            self._embeddings = embeddings
+            self._server = server
+            await mcp_server.start()
         except BaseException:
+            if "mcp_server" in locals():
+                await mcp_server.stop()
+            if "server" in locals():
+                await server.stop()
             watchers, self._watchers = tuple(self._watchers.values()), {}
             for watcher in watchers:
                 await watcher.stop()
             if "runner" in locals():
                 await runner.stop()
             process_lock.release()
+            self._server = None
+            self._graph = None
+            self._jobs = None
+            self._runner = None
+            self._embeddings = None
             raise
-        self._graph = graph
-        self._jobs = jobs
-        self._runner = runner
-        self._server = server
+        self._mcp_server = mcp_server
         self._lock = process_lock
         self._started = True
 
     async def stop(self) -> None:
         """Stop new requests before releasing the root-scoped ownership lock."""
 
+        mcp_server = self._mcp_server
+        self._mcp_server = None
+        if mcp_server is not None:
+            await mcp_server.stop()
         server = self._server
         self._server = None
         if server is not None:
@@ -162,6 +196,7 @@ class SCSDaemon:
         if process_lock is not None:
             process_lock.release()
         self._jobs = None
+        self._embeddings = None
         self._started = False
 
     def _register_methods(self) -> None:
@@ -262,6 +297,35 @@ class SCSDaemon:
             )
             return {"jobs": [job_to_dict(job) for job in recent]}
 
+        service_methods = {
+            "knowledge.search": self._services.search,
+            "knowledge.related": self._services.related,
+            "knowledge.graph_context": self._services.graph_context,
+            "knowledge.nodes.list": self._services.nodes_list,
+            "knowledge.nodes.get": self._services.node_get,
+            "knowledge.stats": self._services.stats,
+            "knowledge.inspect": self._services.inspect,
+            "knowledge.sample": self._services.sample,
+            "knowledge.inspect_file": self._services.inspect_file,
+            "knowledge.composite.test_coverage": self._services.composite_test_coverage,
+            "knowledge.composite.regression_risk": self._services.composite_regression_risk,
+            "knowledge.composite.consistency_check": self._services.composite_consistency,
+            "knowledge.composite.contract_check": self._services.composite_contract_check,
+            "repository.ingest_files": self._services.ingest_files,
+            "repository.ingest_git_history": self._services.ingest_git_history,
+            "diagnostics.snapshot": self._services.diagnostics_snapshot,
+            "diagnostics.recent_failures": self._services.diagnostics_recent_failures,
+            "diagnostics.index_health": self._services.diagnostics_index_health,
+            "diagnostics.dev_doctor": self._services.diagnostics_dev_doctor,
+            "diagnostics.test_recommendations": self._services.diagnostics_test_recommendations,
+            "lsp.symbols": self._services.lsp_symbols,
+            "lsp.find_symbol": self._services.lsp_find_symbol,
+            "lsp.references": self._services.lsp_references,
+            "lsp.hover": self._services.lsp_hover,
+        }
+        for method_name, handler in service_methods.items():
+            self._router.method(method_name)(handler)
+
     async def _enqueue(
         self,
         params: dict[str, object],
@@ -295,6 +359,12 @@ class SCSDaemon:
         if graph is None:
             raise RuntimeError("SCS graph is not ready")
         return graph
+
+    def _require_embeddings(self) -> EmbeddingProvider:
+        embeddings = self._embeddings
+        if embeddings is None:
+            raise RuntimeError("SCS embedding provider is not ready")
+        return embeddings
 
     async def _ensure_watcher(
         self,

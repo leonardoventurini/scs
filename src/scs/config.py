@@ -12,6 +12,8 @@ from scs.paths import SCSPaths
 
 DEFAULT_EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
 DEFAULT_EMBEDDING_DIMENSION = 768
+DEFAULT_MCP_INTERNAL_HOST = "127.0.0.1"
+DEFAULT_MCP_INTERNAL_PORT = 28465
 
 
 class SCSSettings(BaseSettings):
@@ -32,6 +34,8 @@ class SCSSettings(BaseSettings):
     openai_api_key: str | None = None
     summarizer_model: str = "gpt-4.1-mini"
     summarizer_timeout_seconds: float = Field(default=45.0, gt=0, le=300)
+    mcp_internal_host: str = DEFAULT_MCP_INTERNAL_HOST
+    mcp_internal_port: int = Field(default=DEFAULT_MCP_INTERNAL_PORT, ge=0, le=65535)
 
     @cached_property
     def paths(self) -> SCSPaths:
