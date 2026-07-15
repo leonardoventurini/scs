@@ -1,0 +1,12 @@
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+target/
+dist/
+*.db
+*.db-wal
+*.db-shm
+*.usearch
+
