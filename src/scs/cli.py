@@ -18,7 +18,9 @@ from scs.wire.client import SCSClient
 def build_parser() -> argparse.ArgumentParser:
     """Build the complete non-graphical SCS command contract."""
 
-    parser = argparse.ArgumentParser(prog="scs", description="Semantic Code Search service")
+    parser = argparse.ArgumentParser(
+        prog="scs", description="Semantic Code Search service"
+    )
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("serve", help="run the SCS daemon in the foreground")
     subcommands.add_parser("proxy", help="run the stable MCP proxy in the foreground")
@@ -27,7 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     index = subcommands.add_parser("index", help="explicitly index a repository")
     index.add_argument("repo_path", type=Path)
-    reindex = subcommands.add_parser("reindex", help="explicitly rebuild a repository index")
+    reindex = subcommands.add_parser(
+        "reindex", help="explicitly rebuild a repository index"
+    )
     reindex.add_argument("repo_path", type=Path)
 
     service = subcommands.add_parser("service", help="manage SCS user services")
@@ -38,7 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _call_daemon(method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+async def _call_daemon(
+    method: str, params: dict[str, object] | None = None
+) -> dict[str, object]:
     settings = SCSSettings()
     client = SCSClient(settings.paths.runtime / "scs.sock")
     return await client.call(method, params)
@@ -52,9 +58,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         asyncio.run(serve())
         return 0
     if arguments.command == "proxy":
-        from scs.proxy.main import run_proxy
+        from scs_mcp_proxy.main import main as run_proxy
 
-        return run_proxy()
+        return run_proxy(())
     if arguments.command == "service":
         manager = ServiceManager()
         action = getattr(manager, arguments.action)
@@ -82,7 +88,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if arguments.command in {"index", "reindex"}:
         method = f"repository.{arguments.command}"
-        result = asyncio.run(_call_daemon(method, {"repo_path": str(arguments.repo_path)}))
+        result = asyncio.run(
+            _call_daemon(method, {"repo_path": str(arguments.repo_path)})
+        )
         print(json.dumps(result, sort_keys=True))
         return 0
     raise AssertionError(f"unhandled SCS command: {arguments.command}")
