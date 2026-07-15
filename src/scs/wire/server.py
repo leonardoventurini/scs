@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import socket
 import stat
 from pathlib import Path
 
