@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import socket
 import tempfile
@@ -113,4 +114,32 @@ async def test_shutdown_preserves_replacement_socket_generation(
         assert socket_path.is_socket()
     finally:
         replacement.close()
+        socket_path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_live_foreign_socket_is_never_unlinked(
+    short_runtime_path: Path,
+) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+
+    async def ignore_scswire_probe(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        await reader.read(1024)
+        writer.write(b"\x00\x00\x00\x01x")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    foreign = await asyncio.start_unix_server(ignore_scswire_probe, path=socket_path)
+    identity = socket_path.stat().st_ino
+    try:
+        with pytest.raises(RuntimeError, match="live foreign peer"):
+            await WireServer(Router(), socket_path=socket_path).start()
+        assert socket_path.stat().st_ino == identity
+    finally:
+        foreign.close()
+        await foreign.wait_closed()
         socket_path.unlink(missing_ok=True)

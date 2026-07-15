@@ -176,10 +176,18 @@ class WireServer:
                 read_frame(reader),
                 timeout=OWNERSHIP_PROBE_TIMEOUT_SECONDS,
             )
+            result = response.get("result")
             is_scswire = (
                 response.get("id") == request_id
                 and response.get("version") == PROTOCOL_VERSION
-                and response.get("kind") in {"response", "error"}
+                and (
+                    response.get("kind") == "error"
+                    or (
+                        response.get("kind") == "response"
+                        and isinstance(result, dict)
+                        and result.get("service") == "scs"
+                    )
+                )
             )
         except (ConnectionError, OSError, TimeoutError, FrameError):
             is_scswire = False
@@ -189,7 +197,7 @@ class WireServer:
                 await writer.wait_closed()
         if is_scswire:
             raise RuntimeError(f"SCSWire server is already active: {path}")
-        path.unlink()
+        raise RuntimeError(f"SCSWire socket path is occupied by a live foreign peer: {path}")
 
     def _remove_owned_socket(self) -> None:
         path = self._socket_path
