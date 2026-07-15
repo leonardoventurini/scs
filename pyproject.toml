@@ -4,8 +4,10 @@ version = "0.1.0"
 description = "Headless semantic code indexing and intelligence service"
 requires-python = ">=3.14"
 dependencies = [
+    "pathspec>=1.1.1",
     "pydantic>=2.11",
     "pydantic-settings>=2.10",
+    "watchfiles>=1.2.0",
 ]
 
 [project.scripts]
@@ -13,6 +15,7 @@ scs = "scs.cli:main"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.156.6",
     "pytest>=8.4",
     "pytest-asyncio>=1.0",
 ]
