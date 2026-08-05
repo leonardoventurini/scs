@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import cached_property
 from pathlib import Path
+from typing import ClassVar
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,14 +20,20 @@ DEFAULT_MCP_INTERNAL_PORT = 28465
 class SCSSettings(BaseSettings):
     """Environment-backed SCS settings with no External product configuration dependency."""
 
-    model_config = SettingsConfigDict(env_prefix="SCS_", extra="ignore")
+    model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
+        env_prefix="SCS_", extra="ignore"
+    )
 
     home: Path = Field(default_factory=lambda: Path.home() / ".scs")
-    model_cache: Path = Field(default_factory=lambda: Path.home() / ".cache" / "scs" / "models")
+    model_cache: Path = Field(
+        default_factory=lambda: Path.home() / ".cache" / "scs" / "models"
+    )
     runtime_dir: Path = Field(
         default_factory=lambda: Path.home() / "Library" / "Application Support" / "SCS"
     )
-    log_dir: Path = Field(default_factory=lambda: Path.home() / "Library" / "Logs" / "SCS")
+    log_dir: Path = Field(
+        default_factory=lambda: Path.home() / "Library" / "Logs" / "SCS"
+    )
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     embedding_dimension: int = Field(default=DEFAULT_EMBEDDING_DIMENSION, gt=0)
     embedding_batch_size: int = Field(default=32, ge=1, le=256)

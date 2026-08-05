@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,7 +13,7 @@ PROTOCOL_VERSION = 1
 class StrictModel(BaseModel):
     """Base contract that is immutable while accepting additive fields."""
 
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", frozen=True)
 
 
 class ProtocolRange(StrictModel):
@@ -67,4 +68,3 @@ class RepositoryStatus(StrictModel):
     file_count: int = Field(default=0, ge=0)
     last_indexed: str | None = None
     active_job_id: str | None = None
-

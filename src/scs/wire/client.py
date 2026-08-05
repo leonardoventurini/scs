@@ -28,8 +28,8 @@ class SCSClient:
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
-        self._socket_path = socket_path
-        self._timeout_seconds = timeout_seconds
+        self._socket_path: Path = socket_path
+        self._timeout_seconds: float = timeout_seconds
 
     async def call(
         self,

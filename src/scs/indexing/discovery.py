@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pathspec
+from pathspec.pattern import Pattern
 
 from scs.indexing.parser.native import NativeParser
 
@@ -23,33 +24,42 @@ def supported_extensions() -> frozenset[str]:
 
     return NativeParser().supported_extensions()
 
+
 HASH_CHUNK_SIZE_BYTES = 65536
 GIT_CHECK_IGNORE_TIMEOUT_SECONDS = 5.0
 GIT_CHECK_IGNORE_COMMAND: tuple[str, ...] = ("git", "check-ignore", "--stdin", "-z")
 GIT_LS_FILES_TIMEOUT_SECONDS = 30.0
-GIT_LS_FILES_COMMAND: tuple[str, ...] = ("git", "ls-files", "-co", "--exclude-standard", "-z")
+GIT_LS_FILES_COMMAND: tuple[str, ...] = (
+    "git",
+    "ls-files",
+    "-co",
+    "--exclude-standard",
+    "-z",
+)
 
 # Directories always skipped regardless of .gitignore.
 # These are either VCS internals, build artifacts, or virtual environments
 # that should never be indexed.
-ALWAYS_SKIP_DIRS: frozenset[str] = frozenset({
-    ".git",
-    ".ci-cargo",
-    ".venv",
-    "venv",
-    "node_modules",
-    "__pycache__",
-    "build",
-    "dist",
-    "DerivedData",
-    ".tox",
-    ".mypy_cache",
-    ".pytest_cache",
-    "eggs",
-    ".eggs",
-    "_build",  # Elixir/Mix build directory.
-    "deps",    # Elixir/Mix dependency directory.
-})
+ALWAYS_SKIP_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        ".ci-cargo",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        "build",
+        "dist",
+        "DerivedData",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "eggs",
+        ".eggs",
+        "_build",  # Elixir/Mix build directory.
+        "deps",  # Elixir/Mix dependency directory.
+    }
+)
 
 
 @dataclass
@@ -88,7 +98,7 @@ _EXTENSION_TO_LANGUAGE: dict[str, str] = {
 }
 
 
-def _load_gitignore_spec(repo_path: Path) -> pathspec.PathSpec | None:
+def _load_gitignore_spec(repo_path: Path) -> pathspec.PathSpec[Pattern] | None:
     """Load root ``.gitignore`` patterns as a fallback matcher.
 
     Git is the source of truth when available because it understands
@@ -130,7 +140,9 @@ def _git_check_ignored_paths(repo_path: Path, rel_paths: list[str]) -> set[str] 
     if not rel_paths:
         return set()
 
-    encoded_input = b"\0".join(path.encode("utf-8", errors="surrogateescape") for path in rel_paths)
+    encoded_input = b"\0".join(
+        path.encode("utf-8", errors="surrogateescape") for path in rel_paths
+    )
     encoded_input += b"\0"
 
     try:
@@ -170,7 +182,7 @@ def _git_check_ignored_paths(repo_path: Path, rel_paths: list[str]) -> set[str] 
 def _resolve_ignored_paths(
     repo_path: Path,
     rel_paths: list[str],
-    fallback_spec: pathspec.PathSpec | None,
+    fallback_spec: pathspec.PathSpec[Pattern] | None,
 ) -> set[str]:
     """Resolve ignored paths using Git first, then the legacy fallback."""
     ignored_paths = _git_check_ignored_paths(repo_path, rel_paths)
@@ -357,8 +369,7 @@ def discover(
         )
     else:
         iterable = (
-            (repo_path / rel_path, rel_path)
-            for rel_path in candidate_rel_paths
+            (repo_path / rel_path, rel_path) for rel_path in candidate_rel_paths
         )
 
     for file_path, rel_path in iterable:

@@ -5,9 +5,12 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter, deque
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from typing import override
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ContentBlock
 
 DEFAULT_EVENT_CAPACITY = 2_000
 
@@ -30,9 +33,9 @@ class ToolRecorder:
         if capacity < 1:
             raise ValueError("MCP event capacity must be positive")
         self._events: deque[ToolEvent] = deque(maxlen=capacity)
-        self._capacity = capacity
-        self._dropped = 0
-        self._lock = threading.Lock()
+        self._capacity: int = capacity
+        self._dropped: int = 0
+        self._lock: threading.Lock = threading.Lock()
 
     def record(self, event: ToolEvent) -> None:
         """Record one event and account for bounded-window eviction."""
@@ -63,9 +66,12 @@ class ObservedFastMCP(FastMCP):
 
     def __init__(self, name: str, *, recorder: ToolRecorder) -> None:
         super().__init__(name)
-        self.recorder = recorder
+        self.recorder: ToolRecorder = recorder
 
-    async def call_tool(self, name: str, arguments: dict[str, object]) -> object:
+    @override
+    async def call_tool(
+        self, name: str, arguments: dict[str, object]
+    ) -> Sequence[ContentBlock] | dict[str, object]:
         started_at_unix_ms = int(time.time() * 1_000)
         started_at = time.perf_counter()
         try:

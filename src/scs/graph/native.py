@@ -10,7 +10,8 @@ import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, cast
+from collections.abc import Callable
+from typing import NotRequired, Protocol, TypedDict, Unpack, cast
 
 from scs.graph.models import Edge, Node, NodeType, SearchResult
 from scs.providers.base import ProviderMetadata
@@ -41,19 +42,49 @@ class _NativeGraphHandle(Protocol):
     def delete_ingested_file(self, repo_path: str, rel_path: str) -> None: ...
     def delete_ingestion_record(self, repo_path: str, rel_path: str) -> None: ...
     def upsert_ingested_file(self, **kwargs: object) -> None: ...
-    def search_by_name(self, query: str, node_type: str | None, limit: int, repo_id: int | None) -> object: ...
-    def search_by_vector(self, embedding: list[float], node_type: str | None, limit: int, repo_id: int | None) -> object: ...
+    def search_by_name(
+        self, query: str, node_type: str | None, limit: int, repo_id: int | None
+    ) -> object: ...
+    def search_by_vector(
+        self,
+        embedding: list[float],
+        node_type: str | None,
+        limit: int,
+        repo_id: int | None,
+    ) -> object: ...
     def get_node(self, node_id: str) -> object | None: ...
-    def list_nodes(self, node_type: str | None, limit: int, offset: int, repo_id: int | None) -> object: ...
+    def list_nodes(
+        self, node_type: str | None, limit: int, offset: int, repo_id: int | None
+    ) -> object: ...
     def count_nodes(self, node_type: str | None, repo_id: int | None) -> int: ...
     def count_nodes_by_type(self, repo_id: int | None) -> object: ...
     def count_embeddings(self) -> int: ...
-    def get_edges(self, node_id: str, relationship: str | None, direction: str) -> object: ...
+    def get_edges(
+        self, node_id: str, relationship: str | None, direction: str
+    ) -> object: ...
     def batch_get_edges(self, node_ids: list[str], direction: str) -> object: ...
-    def get_neighbors(self, node_id: str, relationship: str | None, direction: str, limit: int) -> object: ...
-    def traverse(self, node_id: str, depth: int, relationship: str | None, direction: str) -> object: ...
+    def get_neighbors(
+        self, node_id: str, relationship: str | None, direction: str, limit: int
+    ) -> object: ...
+    def traverse(
+        self, node_id: str, depth: int, relationship: str | None, direction: str
+    ) -> object: ...
     def delete_repo(self, repo_path: str) -> object: ...
     def get_ingestion_stats(self) -> object: ...
+
+
+class _NativeModule(Protocol):
+    """Constructor exposed by the separately built native extension."""
+
+    KnowledgeGraph: Callable[[str, int], _NativeGraphHandle]
+
+
+class _SearchByNameOptions(TypedDict):
+    """Keyword options accepted by asynchronous name search."""
+
+    node_type: NotRequired[NodeType | None]
+    limit: NotRequired[int]
+    repo_id: NotRequired[int | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +98,7 @@ class VectorState:
 
 def _json_value(value: object) -> object:
     if isinstance(value, str):
-        return json.loads(value)
+        return cast(object, json.loads(value))
     return value
 
 
@@ -111,32 +142,52 @@ class NativeGraph:
         provider: ProviderMetadata,
         native_handle: _NativeGraphHandle | None = None,
     ) -> None:
-        self.database_path = database_path
-        self.vector_path = vector_path
-        self.provider_metadata_path = provider_metadata_path
-        self.provider = provider
-        self.vector_state = self._prepare_vector_state()
-        self._inner = native_handle or self._open_native()
+        self.database_path: Path = database_path
+        self.vector_path: Path = vector_path
+        self.provider_metadata_path: Path = provider_metadata_path
+        self.provider: ProviderMetadata = provider
+        self.vector_state: VectorState = self._prepare_vector_state()
+        self._inner: _NativeGraphHandle = native_handle or self._open_native()
         if provider.available:
             _atomic_write_json(
                 provider_metadata_path,
-                {"schema_version": PROVIDER_METADATA_SCHEMA_VERSION, **provider.to_dict()},
+                {
+                    "schema_version": PROVIDER_METADATA_SCHEMA_VERSION,
+                    **provider.to_dict(),
+                },
             )
 
     def _prepare_vector_state(self) -> VectorState:
         if not self.provider.available:
-            return VectorState(False, self.provider.reason or "embedding provider unavailable")
+            return VectorState(
+                False, self.provider.reason or "embedding provider unavailable"
+            )
         if not self.vector_path.exists():
             return VectorState(True)
         try:
-            persisted = json.loads(self.provider_metadata_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            decoded = cast(
+                object,
+                json.loads(self.provider_metadata_path.read_text(encoding="utf-8")),
+            )
+        except OSError, json.JSONDecodeError:
             quarantined = _quarantine(self.vector_path)
-            return VectorState(False, "vector provider metadata is missing or invalid", quarantined)
+            return VectorState(
+                False, "vector provider metadata is missing or invalid", quarantined
+            )
+        # Keep quarantine semantics generation-compatible: syntactically valid
+        # non-object JSON historically raised on `.get` without moving vectors.
+        persisted = cast(dict[object, object], decoded)
         expected = self.provider.to_dict()
-        if any(persisted.get(key) != expected[key] for key in ("provider", "model", "dimension")):
+        if any(
+            persisted.get(key) != expected[key]
+            for key in ("provider", "model", "dimension")
+        ):
             quarantined = _quarantine(self.vector_path)
-            return VectorState(False, "vector provider metadata does not match active provider", quarantined)
+            return VectorState(
+                False,
+                "vector provider metadata does not match active provider",
+                quarantined,
+            )
         return VectorState(True)
 
     def _open_native(self) -> _NativeGraphHandle:
@@ -146,7 +197,10 @@ class NativeGraph:
             raise NativeModuleUnavailableError(
                 "_scs_native is not installed; build the standalone SCS native extension"
             ) from exc
-        return cast(_NativeGraphHandle, module.KnowledgeGraph(str(self.database_path), self.provider.dimension))
+        native_module = cast(_NativeModule, cast(object, module))
+        return native_module.KnowledgeGraph(
+            str(self.database_path), self.provider.dimension
+        )
 
     def get_or_create_repo_sync(self, path: str) -> int:
         return self._inner.get_or_create_repo(path)
@@ -168,14 +222,18 @@ class NativeGraph:
     def batch_upsert_edges_sync(self, edges: list[dict[str, object]]) -> int:
         return self._inner.batch_upsert_edges(json.dumps(edges, default=str))
 
-    def batch_upsert_embeddings_sync(self, embeddings: list[tuple[str, list[float]]]) -> int:
+    def batch_upsert_embeddings_sync(
+        self, embeddings: list[tuple[str, list[float]]]
+    ) -> int:
         return self._inner.batch_upsert_embeddings(json.dumps(embeddings))
 
     def flush_vector_index_sync(self) -> bool:
         return self._inner.flush_vector_index()
 
     def get_all_ingested_files_sync(self, repo_path: str) -> dict[str, str]:
-        return cast(dict[str, str], _json_value(self._inner.get_all_ingested_files(repo_path)))
+        return cast(
+            dict[str, str], _json_value(self._inner.get_all_ingested_files(repo_path))
+        )
 
     def get_file_paths_for_repo_sync(self, repo_path: str) -> list[str]:
         return self._inner.get_file_paths_for_repo(repo_path)
@@ -215,7 +273,9 @@ class NativeGraph:
         )
         return [Node.model_validate(item) for item in cast(list[object], raw)]
 
-    async def search_by_name(self, query: str, **kwargs: object) -> list[Node]:
+    async def search_by_name(
+        self, query: str, **kwargs: Unpack[_SearchByNameOptions]
+    ) -> list[Node]:
         return await asyncio.to_thread(self.search_by_name_sync, query, **kwargs)
 
     def get_node_sync(self, node_id: str) -> Node | None:
@@ -243,7 +303,9 @@ class NativeGraph:
         return self._inner.count_nodes(node_type.value if node_type else None, repo_id)
 
     def count_nodes_by_type_sync(self, repo_id: int | None = None) -> dict[str, int]:
-        return cast(dict[str, int], _json_value(self._inner.count_nodes_by_type(repo_id)))
+        return cast(
+            dict[str, int], _json_value(self._inner.count_nodes_by_type(repo_id))
+        )
 
     def count_embeddings_sync(self) -> int:
         return self._inner.count_embeddings()
@@ -320,4 +382,6 @@ class NativeGraph:
         return _json_value(self._inner.delete_repo(repo_path))
 
     def get_ingestion_stats_sync(self) -> dict[str, dict[str, object]]:
-        return cast(dict[str, dict[str, object]], _json_value(self._inner.get_ingestion_stats()))
+        return cast(
+            dict[str, dict[str, object]], _json_value(self._inner.get_ingestion_stats())
+        )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from typing import cast
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
@@ -15,9 +16,9 @@ class MCPHTTPServer:
     def __init__(
         self, app: FastMCP, *, host: str = "127.0.0.1", port: int = 28465
     ) -> None:
-        self._app = app
-        self._host = host
-        self._port = port
+        self._app: FastMCP = app
+        self._host: str = host
+        self._port: int = port
         self._socket: socket.socket | None = None
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task[None] | None = None
@@ -28,8 +29,14 @@ class MCPHTTPServer:
 
         if self._socket is None:
             raise RuntimeError("SCS MCP HTTP server is not started")
-        host, port = self._socket.getsockname()[:2]
-        return str(host), int(port)
+        address = cast(object, self._socket.getsockname())
+        if not isinstance(address, tuple):
+            raise RuntimeError("SCS MCP HTTP server returned a non-IP address")
+        parts = cast(tuple[object, ...], address)
+        host, port = parts[:2]
+        if not isinstance(host, str) or not isinstance(port, int):
+            raise RuntimeError("SCS MCP HTTP server returned an invalid IP address")
+        return host, port
 
     async def start(self) -> None:
         """Bind the configured localhost port and start serving in the background."""

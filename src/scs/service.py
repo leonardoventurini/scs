@@ -24,6 +24,8 @@ class CommandRunner(Protocol):
     def run(self, command: tuple[str, ...], *, check: bool = True) -> int:
         """Return the process exit code or raise when required."""
 
+        ...
+
 
 class SubprocessRunner:
     """Production command runner that never invokes a shell."""
@@ -44,7 +46,7 @@ class ProcessLock:
     """Root-scoped exclusive lock preventing duplicate SCS daemons."""
 
     def __init__(self, path: Path) -> None:
-        self._path = path
+        self._path: Path = path
         self._file: BinaryIO | None = None
 
     def acquire(self) -> None:
@@ -58,7 +60,9 @@ class ProcessLock:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             lock_file.close()
-            raise RuntimeError("SCS daemon is already running for this storage root") from error
+            raise RuntimeError(
+                "SCS daemon is already running for this storage root"
+            ) from error
         lock_file.seek(0)
         lock_file.truncate()
         lock_file.write(f"{os.getpid()}\n".encode())
@@ -104,14 +108,17 @@ class ServiceManager:
         runner: CommandRunner | None = None,
         user_id: int | None = None,
     ) -> None:
-        self._launch_agents_dir = launch_agents_dir or Path.home() / "Library" / "LaunchAgents"
+        self._launch_agents_dir: Path = (
+            launch_agents_dir or Path.home() / "Library" / "LaunchAgents"
+        )
         discovered_executable = shutil.which("scs") or sys.argv[0]
-        self._executable = executable or Path(
-            os.environ.get("SCS_EXECUTABLE", discovered_executable)
-        ).resolve()
-        self._log_dir = log_dir or Path.home() / "Library" / "Logs" / "SCS"
-        self._runner = runner or SubprocessRunner()
-        self._user_id = os.getuid() if user_id is None else user_id
+        self._executable: Path = (
+            executable
+            or Path(os.environ.get("SCS_EXECUTABLE", discovered_executable)).resolve()
+        )
+        self._log_dir: Path = log_dir or Path.home() / "Library" / "Logs" / "SCS"
+        self._runner: CommandRunner = runner or SubprocessRunner()
+        self._user_id: int = os.getuid() if user_id is None else user_id
 
     @property
     def domain(self) -> str:
@@ -138,7 +145,9 @@ class ServiceManager:
                     ("launchctl", "kickstart", "-k", f"{self.domain}/{label}")
                 )
             else:
-                self._runner.run(("launchctl", "bootstrap", self.domain, str(plist_path)))
+                self._runner.run(
+                    ("launchctl", "bootstrap", self.domain, str(plist_path))
+                )
 
     def stop(self) -> None:
         """Unload daemon then proxy while preserving all persistent data."""

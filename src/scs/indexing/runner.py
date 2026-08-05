@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
+from typing import Protocol, cast
 
 from scs.indexing.jobs import IngestionJob, IngestionJobStore, job_to_dict
 from scs.indexing.pipeline import IngestionPipeline
@@ -18,6 +19,12 @@ from scs.providers.base import EventSink, NullEventSink
 PipelineFactory = Callable[[IngestionJob], IngestionPipeline]
 
 
+class DeletableGraph(Protocol):
+    """Graph operation needed by the destructive queue job."""
+
+    def delete_repo_sync(self, repo_path: str) -> object: ...
+
+
 class IngestionJobRunner:
     """Drain durable jobs in the background and publish transport-neutral events."""
 
@@ -25,20 +32,20 @@ class IngestionJobRunner:
         self,
         *,
         store: IngestionJobStore,
-        graph: object,
+        graph: DeletableGraph,
         pipeline_factory: PipelineFactory,
         event_sink: EventSink | None = None,
         poll_interval_seconds: float = 1.0,
         lease_seconds: float = 300.0,
     ) -> None:
-        self._store = store
-        self._graph = graph
-        self._pipeline_factory = pipeline_factory
-        self._events = event_sink or NullEventSink()
-        self._poll_interval_seconds = poll_interval_seconds
-        self._lease_seconds = lease_seconds
-        self._owner = f"{socket.gethostname()}:{os.getpid()}:{id(self)}"
-        self._stop = asyncio.Event()
+        self._store: IngestionJobStore = store
+        self._graph: DeletableGraph = graph
+        self._pipeline_factory: PipelineFactory = pipeline_factory
+        self._events: EventSink = event_sink or NullEventSink()
+        self._poll_interval_seconds: float = poll_interval_seconds
+        self._lease_seconds: float = lease_seconds
+        self._owner: str = f"{socket.gethostname()}:{os.getpid()}:{id(self)}"
+        self._stop: asyncio.Event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -82,10 +89,14 @@ class IngestionJobRunner:
             if current is not None and current.status == "cancelling":
                 final = await asyncio.to_thread(self._store.mark_cancelled, job.id)
             else:
-                final = await asyncio.to_thread(self._store.complete, job.id, result=result)
+                final = await asyncio.to_thread(
+                    self._store.complete, job.id, result=result
+                )
             await self._publish(final)
         except Exception as exc:
-            final = await asyncio.to_thread(self._store.fail_or_retry, job.id, error=str(exc))
+            final = await asyncio.to_thread(
+                self._store.fail_or_retry, job.id, error=str(exc)
+            )
             await self._publish(final)
         finally:
             heartbeat.cancel()
@@ -98,7 +109,9 @@ class IngestionJobRunner:
             if await self.run_once():
                 continue
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval_seconds)
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self._poll_interval_seconds
+                )
             except TimeoutError:
                 pass
 
@@ -122,8 +135,11 @@ class IngestionJobRunner:
             result = await asyncio.to_thread(
                 pipeline.ingest_files,
                 repo,
-                [Path(path) for path in job.payload.get("file_paths", [])],
-                job.payload.get("deleted_paths", []),
+                [
+                    Path(path)
+                    for path in cast(Sequence[str], job.payload.get("file_paths", []))
+                ],
+                cast(Sequence[str], job.payload.get("deleted_paths", [])),
             )
         elif job.mode == "cleanup":
             result = await asyncio.to_thread(pipeline.cleanup_stale_files, repo)
@@ -134,8 +150,7 @@ class IngestionJobRunner:
                 force=job.mode == "force_full",
             )
         elif job.mode == "drop_index":
-            delete_repo = getattr(self._graph, "delete_repo_sync")
-            await asyncio.to_thread(delete_repo, job.repo_path)
+            await asyncio.to_thread(self._graph.delete_repo_sync, job.repo_path)
             return {"repo_deleted": True}
         else:
             raise ValueError(f"Unsupported indexing job mode: {job.mode}")

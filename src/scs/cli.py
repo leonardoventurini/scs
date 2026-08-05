@@ -6,8 +6,9 @@ import argparse
 import asyncio
 import json
 from collections.abc import Sequence
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict
 from pathlib import Path
+from typing import cast
 
 from scs.config import SCSSettings
 from scs.main import serve
@@ -54,23 +55,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Execute one CLI command and return a process exit code."""
 
     arguments = build_parser().parse_args(argv)
-    if arguments.command == "serve":
+    values = cast(dict[str, object], vars(arguments))
+    command = values.get("command")
+    if command == "serve":
         asyncio.run(serve())
         return 0
-    if arguments.command == "proxy":
+    if command == "proxy":
         from scs_mcp_proxy.main import main as run_proxy
 
         return run_proxy(())
-    if arguments.command == "service":
+    if command == "service":
         manager = ServiceManager()
-        action = getattr(manager, arguments.action)
-        result = action()
+        action = values.get("action")
+        if action == "install":
+            result = manager.install()
+        elif action == "start":
+            result = manager.start()
+        elif action == "stop":
+            result = manager.stop()
+        elif action == "restart":
+            result = manager.restart()
+        elif action == "status":
+            result = manager.status()
+        elif action == "uninstall":
+            result = manager.uninstall()
+        else:
+            raise AssertionError(f"unhandled service action: {action}")
         if result is not None:
-            if not is_dataclass(result):
-                raise TypeError("service command returned an unsupported result")
             print(json.dumps(asdict(result), sort_keys=True))
         return 0
-    if arguments.command == "doctor":
+    if command == "doctor":
         settings = SCSSettings()
         try:
             settings.paths.ensure()
@@ -120,7 +134,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return 0 if result.get("ready") is True else 1
-    if arguments.command == "status":
+    if command == "status":
         service_status = ServiceManager().status()
         try:
             daemon_result = asyncio.run(_call_daemon("system.health"))
@@ -141,14 +155,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return exit_code
-    if arguments.command in {"index", "reindex"}:
-        method = f"repository.{arguments.command}"
-        result = asyncio.run(
-            _call_daemon(method, {"repo_path": str(arguments.repo_path)})
-        )
+    if command in {"index", "reindex"}:
+        repo_path = values.get("repo_path")
+        if not isinstance(repo_path, Path):
+            raise AssertionError("index command requires a repository path")
+        method = f"repository.{command}"
+        result = asyncio.run(_call_daemon(method, {"repo_path": str(repo_path)}))
         print(json.dumps(result, sort_keys=True))
         return 0
-    raise AssertionError(f"unhandled SCS command: {arguments.command}")
+    raise AssertionError(f"unhandled SCS command: {command}")
 
 
 if __name__ == "__main__":

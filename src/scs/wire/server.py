@@ -8,6 +8,7 @@ import os
 import stat
 import uuid
 from pathlib import Path
+from typing import cast
 
 from pydantic import ValidationError
 
@@ -36,8 +37,8 @@ class WireServer:
         *,
         socket_path: Path | None = None,
     ) -> None:
-        self._router = router
-        self._socket_path = socket_path
+        self._router: Router = router
+        self._socket_path: Path | None = socket_path
         self._server: asyncio.AbstractServer | None = None
         self._socket_identity: tuple[int, int] | None = None
         self._client_tasks: set[asyncio.Task[object]] = set()
@@ -129,7 +130,7 @@ class WireServer:
                     break
                 response = await self.dispatch_envelope(envelope)
                 await write_frame(writer, response)
-        except (ConnectionError, asyncio.IncompleteReadError):
+        except ConnectionError, asyncio.IncompleteReadError:
             pass
         finally:
             writer.close()
@@ -154,7 +155,7 @@ class WireServer:
                 asyncio.open_unix_connection(path),
                 timeout=OWNERSHIP_PROBE_TIMEOUT_SECONDS,
             )
-        except (ConnectionError, OSError, TimeoutError):
+        except ConnectionError, OSError, TimeoutError:
             path.unlink()
             return
         request_id = f"ownership-{uuid.uuid4().hex}"
@@ -177,6 +178,9 @@ class WireServer:
                 timeout=OWNERSHIP_PROBE_TIMEOUT_SECONDS,
             )
             result = response.get("result")
+            result_values = (
+                cast(dict[object, object], result) if isinstance(result, dict) else None
+            )
             is_scswire = (
                 response.get("id") == request_id
                 and response.get("version") == PROTOCOL_VERSION
@@ -184,12 +188,12 @@ class WireServer:
                     response.get("kind") == "error"
                     or (
                         response.get("kind") == "response"
-                        and isinstance(result, dict)
-                        and result.get("service") == "scs"
+                        and result_values is not None
+                        and result_values.get("service") == "scs"
                     )
                 )
             )
-        except (ConnectionError, OSError, TimeoutError, FrameError):
+        except ConnectionError, OSError, TimeoutError, FrameError:
             is_scswire = False
         finally:
             writer.close()
@@ -197,7 +201,9 @@ class WireServer:
                 await writer.wait_closed()
         if is_scswire:
             raise RuntimeError(f"SCSWire server is already active: {path}")
-        raise RuntimeError(f"SCSWire socket path is occupied by a live foreign peer: {path}")
+        raise RuntimeError(
+            f"SCSWire socket path is occupied by a live foreign peer: {path}"
+        )
 
     def _remove_owned_socket(self) -> None:
         path = self._socket_path
@@ -209,7 +215,10 @@ class WireServer:
             metadata = path.lstat()
         except FileNotFoundError:
             return
-        if stat.S_ISSOCK(metadata.st_mode) and (metadata.st_dev, metadata.st_ino) == identity:
+        if (
+            stat.S_ISSOCK(metadata.st_mode)
+            and (metadata.st_dev, metadata.st_ino) == identity
+        ):
             path.unlink()
 
     @staticmethod

@@ -6,7 +6,7 @@ import asyncio
 import json
 import struct
 from collections.abc import Mapping
-from typing import Protocol
+from typing import Protocol, cast
 
 FRAME_HEADER_BYTES = 4
 MAX_FRAME_BYTES = 16 * 1024 * 1024
@@ -34,7 +34,7 @@ async def read_frame(reader: asyncio.StreamReader) -> dict[str, object]:
     except asyncio.IncompleteReadError as error:
         raise FrameError("incomplete SCSWire frame header") from error
 
-    (body_length,) = struct.unpack(">I", header)
+    body_length = int.from_bytes(header, byteorder="big")
     if body_length == 0:
         raise FrameError("SCSWire frame body cannot be empty")
     if body_length > MAX_FRAME_BYTES:
@@ -48,14 +48,15 @@ async def read_frame(reader: asyncio.StreamReader) -> dict[str, object]:
         raise FrameError("incomplete SCSWire frame body") from error
 
     try:
-        decoded = json.loads(body)
+        decoded = cast(object, json.loads(body))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise FrameError("SCSWire frame body is not valid JSON") from error
     if not isinstance(decoded, dict):
         raise FrameError("SCSWire frame JSON must be an object")
-    if not all(isinstance(key, str) for key in decoded):
+    values = cast(dict[object, object], decoded)
+    if not all(isinstance(key, str) for key in values):
         raise FrameError("SCSWire frame keys must be strings")
-    return decoded
+    return {cast(str, key): value for key, value in values.items()}
 
 
 async def write_frame(

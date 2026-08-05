@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scs.graph.native import NativeGraph
 from scs.providers.base import ProviderMetadata
 
@@ -43,4 +45,27 @@ def test_provider_dimension_mismatch_quarantines_vectors(tmp_path: Path) -> None
         native_handle=FakeHandle(),
     )
 
-    assert graph.vector_state.reason == "vector provider metadata does not match active provider"
+    assert (
+        graph.vector_state.reason
+        == "vector provider metadata does not match active provider"
+    )
+
+
+def test_non_object_provider_metadata_does_not_mutate_vectors(tmp_path: Path) -> None:
+    """Valid non-object JSON preserves the historical fail-without-quarantine rule."""
+
+    vector = tmp_path / "index.usearch"
+    vector.write_bytes(b"vectors")
+    metadata = tmp_path / "provider.json"
+    metadata.write_text("[]")
+
+    with pytest.raises(AttributeError):
+        NativeGraph(
+            database_path=tmp_path / "index.db",
+            vector_path=vector,
+            provider_metadata_path=metadata,
+            provider=ProviderMetadata("fake", "v1", 2),
+            native_handle=FakeHandle(),
+        )
+
+    assert vector.read_bytes() == b"vectors"

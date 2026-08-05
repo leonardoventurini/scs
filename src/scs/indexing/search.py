@@ -17,7 +17,12 @@ class SearchGraph(Protocol):
         self, query: str, *, node_type: NodeType | None, limit: int, repo_id: int | None
     ) -> list[Node]: ...
     def search_by_vector_sync(
-        self, vector: list[float], *, node_type: NodeType | None, limit: int, repo_id: int | None
+        self,
+        vector: list[float],
+        *,
+        node_type: NodeType | None,
+        limit: int,
+        repo_id: int | None,
     ) -> list[SearchResult]: ...
 
 
@@ -33,9 +38,11 @@ class CodeSearchResponse:
 class CodeSearchService:
     """Prefer semantic matches and always retain lexical code search."""
 
-    def __init__(self, graph: SearchGraph, embeddings: EmbeddingProvider | None) -> None:
-        self._graph = graph
-        self._embeddings = embeddings
+    def __init__(
+        self, graph: SearchGraph, embeddings: EmbeddingProvider | None
+    ) -> None:
+        self._graph: SearchGraph = graph
+        self._embeddings: EmbeddingProvider | None = embeddings
 
     async def search(
         self,
@@ -56,7 +63,11 @@ class CodeSearchService:
         )
         provider = self._embeddings
         if provider is None or not provider.metadata.available:
-            reason = provider.metadata.reason if provider else "embedding provider is not configured"
+            reason = (
+                provider.metadata.reason
+                if provider
+                else "embedding provider is not configured"
+            )
             return CodeSearchResponse(lexical, False, reason)
         try:
             vector = await provider.embed_query(query)

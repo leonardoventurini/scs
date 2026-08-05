@@ -33,7 +33,7 @@ and the agent-facing MCP endpoint.
 - `just setup` — sync Python dependencies and build the native extension.
 - `just test` — run Python tests.
 - `just native-test` — run the Rust workspace tests.
-- `just typecheck` — compile-check typed Python sources.
+- `just typecheck` — strict-check first-party Python sources with Basedpyright.
 - `just verify` — run all required checks.
 
 ## Invariants

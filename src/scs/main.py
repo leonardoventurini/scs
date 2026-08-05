@@ -7,6 +7,7 @@ import signal
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 from scs import __version__
 from scs.config import SCSSettings
@@ -31,11 +32,20 @@ from scs.wire.router import Router
 from scs.wire.server import WireServer
 
 
+def _metadata_integer(values: Mapping[str, object], key: str) -> int:
+    """Convert one graph statistic while rejecting structurally invalid metadata."""
+
+    value = values.get(key, 0)
+    if not isinstance(value, (str, bytes, bytearray, int, float)):
+        raise TypeError(f"{key} must be numeric")
+    return int(value)
+
+
 class BrokerEventSink:
     """Adapt transport-neutral indexing events to the daemon event broker."""
 
     def __init__(self, broker: EventBroker) -> None:
-        self._broker = broker
+        self._broker: EventBroker = broker
 
     async def publish(self, event: str, payload: Mapping[str, object]) -> None:
         """Publish an indexing event on its stable SCSWire topic."""
@@ -47,9 +57,9 @@ class SCSDaemon:
     """Own SCS storage, durable jobs, and the local control socket as one unit."""
 
     def __init__(self, settings: SCSSettings | None = None) -> None:
-        self.settings = settings or SCSSettings()
-        self._generation = uuid.uuid4().hex
-        self._router = Router()
+        self.settings: SCSSettings = settings or SCSSettings()
+        self._generation: str = uuid.uuid4().hex
+        self._router: Router = Router()
         self._server: WireServer | None = None
         self._mcp_server: MCPHTTPServer | None = None
         self._identity: IdentityPublisher | None = None
@@ -59,9 +69,9 @@ class SCSDaemon:
         self._runner: IngestionJobRunner | None = None
         self._embeddings: EmbeddingProvider | None = None
         self._watchers: dict[str, RepositoryWatcher] = {}
-        self._events = EventBroker()
-        self._started = False
-        self._services = SCSServiceRoutes(
+        self._events: EventBroker = EventBroker()
+        self._started: bool = False
+        self._services: SCSServiceRoutes = SCSServiceRoutes(
             graph=self._require_graph,
             jobs=self._require_jobs,
             embeddings=self._require_embeddings,
@@ -87,6 +97,10 @@ class SCSDaemon:
         paths.ensure()
         process_lock = ProcessLock(paths.home / ".daemon.lock")
         process_lock.acquire()
+        runner: IngestionJobRunner | None = None
+        server: WireServer | None = None
+        mcp_server: MCPHTTPServer | None = None
+        identity: IdentityPublisher | None = None
         try:
             embeddings = MLXEmbeddingProvider(
                 model_name=self.settings.embedding_model,
@@ -138,7 +152,9 @@ class SCSDaemon:
                 event_sink=BrokerEventSink(self._events),
             )
             await runner.start()
-            existing_repositories = await asyncio.to_thread(graph.get_ingestion_stats_sync)
+            existing_repositories = await asyncio.to_thread(
+                graph.get_ingestion_stats_sync
+            )
             for repo_path in existing_repositories:
                 await self._ensure_watcher(
                     repo_path,
@@ -167,16 +183,16 @@ class SCSDaemon:
             )
             identity.publish()
         except BaseException:
-            if "identity" in locals():
+            if identity is not None:
                 identity.remove_owned()
-            if "mcp_server" in locals():
+            if mcp_server is not None:
                 await mcp_server.stop()
-            if "server" in locals():
+            if server is not None:
                 await server.stop()
             watchers, self._watchers = tuple(self._watchers.values()), {}
             for watcher in watchers:
                 await watcher.stop()
-            if "runner" in locals():
+            if runner is not None:
                 await runner.stop()
             process_lock.release()
             self._server = None
@@ -239,10 +255,12 @@ class SCSDaemon:
         @self._router.method("repositories.status")
         async def repository_statuses(params: dict[str, object]) -> dict[str, object]:
             raw_paths = params.get("repo_paths", [])
-            if not isinstance(raw_paths, list) or not all(
-                isinstance(path, str) for path in raw_paths
-            ):
+            if not isinstance(raw_paths, list):
                 raise ValueError("repo_paths must be a list of strings")
+            path_values = cast(list[object], raw_paths)
+            if not all(isinstance(path, str) for path in path_values):
+                raise ValueError("repo_paths must be a list of strings")
+            repo_paths = [path for path in path_values if isinstance(path, str)]
             graph = self._require_graph()
             jobs = self._require_jobs()
             stats, recent = await asyncio.gather(
@@ -258,12 +276,16 @@ class SCSDaemon:
                 job.repo_path: job for job in recent if job.status == "failed"
             }
             repositories: list[dict[str, object]] = []
-            for raw_path in raw_paths:
+            for raw_path in repo_paths:
                 path = canonicalize_repo_path(raw_path)
                 active = active_by_repo.get(path)
                 repo_stats = stats.get(path, {})
                 if active is not None:
-                    state = "indexing" if active.status in {"running", "cancelling"} else "queued"
+                    state = (
+                        "indexing"
+                        if active.status in {"running", "cancelling"}
+                        else "queued"
+                    )
                 elif repo_stats:
                     state = "indexed"
                 elif path in failed_by_repo:
@@ -274,7 +296,7 @@ class SCSDaemon:
                     {
                         "repo_path": path,
                         "state": state,
-                        "file_count": int(repo_stats.get("file_count", 0)),
+                        "file_count": _metadata_integer(repo_stats, "file_count"),
                         "last_indexed": repo_stats.get("last_indexed"),
                         "active_job_id": active.id if active is not None else None,
                     }

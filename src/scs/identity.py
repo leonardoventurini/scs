@@ -7,6 +7,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from scs.models import PROTOCOL_VERSION, ServiceIdentity
 
@@ -40,8 +41,8 @@ class IdentityPublisher:
         generation: str,
         artifact_path: Path,
     ) -> None:
-        self._path = path
-        self._identity = ServiceIdentity(
+        self._path: Path = path
+        self._identity: ServiceIdentity = ServiceIdentity(
             service=service,
             pid=os.getpid(),
             start_time=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -77,12 +78,15 @@ class IdentityPublisher:
         try:
             if self._path.is_symlink():
                 return False
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            payload = cast(object, json.loads(self._path.read_text(encoding="utf-8")))
+        except FileNotFoundError, OSError, json.JSONDecodeError:
             return False
+        if not isinstance(payload, dict):
+            return False
+        values = cast(dict[object, object], payload)
         if (
-            payload.get("service") != self._identity.service
-            or payload.get("generation") != self._identity.generation
+            values.get("service") != self._identity.service
+            or values.get("generation") != self._identity.generation
         ):
             return False
         self._path.unlink()

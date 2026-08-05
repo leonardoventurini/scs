@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol, cast
+
+if TYPE_CHECKING:
+    from watchfiles import Change
 
 from scs.indexing.jobs import IngestionJobStore
 from scs.indexing.repository_paths import canonicalize_repo_path
@@ -20,6 +25,12 @@ class IndexedRepoResolver(Protocol):
     """Read-only repository lookup required by watcher routing."""
 
     def resolve_repo_id_sync(self, path: str) -> int | None: ...
+
+
+class _WatchfilesModule(Protocol):
+    """Typed surface used from the lazily loaded watcher dependency."""
+
+    awatch: Callable[..., AsyncIterator[set[tuple[Change, str]]]]
 
 
 @dataclass(slots=True)
@@ -44,17 +55,17 @@ class RepositoryWatcher:
         debounce_seconds: float = 0.75,
         mass_change_threshold: int = MASS_CHANGE_THRESHOLD,
     ) -> None:
-        self._graph = graph
-        self._jobs = jobs
-        self._base_dir = base_dir.expanduser().resolve()
-        self._extensions = supported_extensions
-        self._debounce = debounce_seconds
-        self._mass_threshold = mass_change_threshold
+        self._graph: IndexedRepoResolver = graph
+        self._jobs: IngestionJobStore = jobs
+        self._base_dir: Path = base_dir.expanduser().resolve()
+        self._extensions: frozenset[str] = supported_extensions
+        self._debounce: float = debounce_seconds
+        self._mass_threshold: int = mass_change_threshold
         self._pending: dict[str, PendingChanges] = {}
         self._timers: dict[str, asyncio.Task[None]] = {}
-        self._stop = asyncio.Event()
+        self._stop: asyncio.Event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start observation without enqueuing startup or discovery work."""
@@ -78,12 +89,14 @@ class RepositoryWatcher:
         await asyncio.gather(*timers, return_exceptions=True)
 
     async def _watch(self) -> None:
-        from watchfiles import awatch
+        watchfiles = cast(_WatchfilesModule, importlib.import_module("watchfiles"))
 
-        async for changes in awatch(self._base_dir, stop_event=self._stop, recursive=True):
+        async for changes in watchfiles.awatch(
+            self._base_dir, stop_event=self._stop, recursive=True
+        ):
             await self.record(changes)
 
-    async def record(self, changes: set[tuple[object, str]]) -> None:
+    async def record(self, changes: Iterable[tuple[Change | int, str]]) -> None:
         """Route supported source changes to the nearest indexed Git root."""
 
         async with self._lock:
@@ -112,7 +125,9 @@ class RepositoryWatcher:
                 previous = self._timers.get(repo_str)
                 if previous is not None:
                     previous.cancel()
-                self._timers[repo_str] = asyncio.create_task(self._flush_later(repo_str))
+                self._timers[repo_str] = asyncio.create_task(
+                    self._flush_later(repo_str)
+                )
 
     def _repository_for(self, path: Path) -> Path | None:
         current = path.parent
@@ -132,7 +147,10 @@ class RepositoryWatcher:
             async with self._lock:
                 pending = self._pending.pop(repo_path, PendingChanges())
                 self._timers.pop(repo_path, None)
-            if pending.requires_full or len(pending.changed) + len(pending.deleted) >= self._mass_threshold:
+            if (
+                pending.requires_full
+                or len(pending.changed) + len(pending.deleted) >= self._mass_threshold
+            ):
                 await asyncio.to_thread(
                     self._jobs.enqueue,
                     repo_path=repo_path,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-05
+
+- ci: enforce strict Python types before commit
+
 ## 2026-07-15
 
 - feat: establish independent SCS service contracts

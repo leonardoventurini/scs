@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from scs.config import SCSSettings
 from scs.graph.models import Edge, Node, NodeType
@@ -55,20 +56,68 @@ def _node_type(value: object) -> NodeType | None:
         raise ValueError(f"unsupported node_type: {value}") from error
 
 
-def _integer(params: dict[str, object], key: str, default: int, *, minimum: int = 0) -> int:
+def _integer(
+    params: dict[str, object], key: str, default: int, *, minimum: int = 0
+) -> int:
     value = params.get(key, default)
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"{key} must be an integer")
     return max(minimum, value)
 
 
-def _string(params: dict[str, object], key: str, *, required: bool = False) -> str | None:
+def _string(
+    params: dict[str, object], key: str, *, required: bool = False
+) -> str | None:
     value = params.get(key)
     if value is None and not required:
         return None
     if not isinstance(value, str) or (required and not value):
         raise ValueError(f"{key} must be a non-empty string")
     return value
+
+
+def _string_list(
+    params: dict[str, object], key: str, *, default: bool = True
+) -> list[str]:
+    """Validate an untrusted route parameter as a concrete string list."""
+
+    value = params.get(key, []) if default else params.get(key)
+    if not isinstance(value, list):
+        raise ValueError(f"{key} must be a list of strings")
+    items = cast(list[object], value)
+    if not all(isinstance(item, str) for item in items):
+        raise ValueError(f"{key} must be a list of strings")
+    return [item for item in items if isinstance(item, str)]
+
+
+def _dict_list(value: object, *, key: str) -> list[dict[str, object]]:
+    """Narrow a service response field before downstream composition."""
+
+    if not isinstance(value, list):
+        raise TypeError(f"{key} must be a list of objects")
+    items = cast(list[object], value)
+    if not all(isinstance(item, dict) for item in items):
+        raise TypeError(f"{key} must be a list of objects")
+    return [cast(dict[str, object], item) for item in items]
+
+
+def _nested_value(item: dict[str, object], container: str, key: str) -> object:
+    """Read one value from an object-valued nested response field."""
+
+    nested = item.get(container)
+    if not isinstance(nested, dict):
+        return None
+    return cast(dict[str, object], nested).get(key)
+
+
+def _integer_metadata(value: object, *, key: str, default: int) -> int:
+    """Convert graph metadata that originated outside Python's type boundary."""
+
+    if value is None:
+        return default
+    if not isinstance(value, (str, bytes, bytearray, int, float)):
+        raise TypeError(f"{key} must be numeric")
+    return int(value)
 
 
 class SCSServiceRoutes:
@@ -82,10 +131,10 @@ class SCSServiceRoutes:
         embeddings: Callable[[], EmbeddingProvider],
         settings: SCSSettings,
     ) -> None:
-        self._graph = graph
-        self._jobs = jobs
-        self._embeddings = embeddings
-        self._settings = settings
+        self._graph: Callable[[], NativeGraph] = graph
+        self._jobs: Callable[[], IngestionJobStore] = jobs
+        self._embeddings: Callable[[], EmbeddingProvider] = embeddings
+        self._settings: SCSSettings = settings
 
     def _repo_id(self, repo_path: object) -> int | None:
         if repo_path is None:
@@ -162,7 +211,9 @@ class SCSServiceRoutes:
                 offset=offset,
                 repo_id=repo_id,
             ),
-            asyncio.to_thread(graph.count_nodes_sync, node_type=node_type, repo_id=repo_id),
+            asyncio.to_thread(
+                graph.count_nodes_sync, node_type=node_type, repo_id=repo_id
+            ),
         )
         return {
             "nodes": [_node_dict(node) for node in nodes],
@@ -251,19 +302,25 @@ class SCSServiceRoutes:
         graph = self._graph()
         context: list[dict[str, object]] = []
         seen: set[str] = set()
-        for seed in seeds["results"]:
-            assert isinstance(seed, dict)
+        seed_results = _dict_list(seeds.get("results"), key="results")
+        for seed in seed_results:
             traversal = await asyncio.to_thread(
                 graph.traverse_sync,
                 str(seed["id"]),
                 depth=min(3, _integer(params, "hop_limit", 2, minimum=1)),
             )
             for item in traversal:
-                key = str(item.get("node", item).get("id", "")) if isinstance(item.get("node", item), dict) else repr(item)
+                raw_node = item.get("node", item)
+                node = (
+                    cast(dict[str, object], raw_node)
+                    if isinstance(raw_node, dict)
+                    else None
+                )
+                key = str(node.get("id", "")) if node is not None else repr(item)
                 if key not in seen:
                     seen.add(key)
                     context.append(item)
-        return {"query": seeds["query"], "seeds": seeds["results"], "context": context}
+        return {"query": seeds["query"], "seeds": seed_results, "context": context}
 
     async def inspect(self, params: dict[str, object]) -> dict[str, object]:
         repo_id = self._repo_id(params.get("repo_path"))
@@ -285,20 +342,20 @@ class SCSServiceRoutes:
         listing = await self.nodes_list({**params, "offset": 0})
         file_path = _string(params, "file_path")
         summary_status = _string(params, "summary_status")
-        nodes = list(listing["nodes"])
+        nodes = _dict_list(listing.get("nodes"), key="nodes")
         if file_path:
             nodes = [
                 node
                 for node in nodes
-                if isinstance(node, dict)
-                and node.get("metadata", {}).get("file_path") == file_path
+                if _nested_value(node, "metadata", "file_path") == file_path
             ]
         if summary_status:
             nodes = [
                 node
                 for node in nodes
-                if isinstance(node, dict)
-                and ("fresh" if node.get("metadata", {}).get("summary") else "missing")
+                if (
+                    "fresh" if _nested_value(node, "metadata", "summary") else "missing"
+                )
                 == summary_status
             ]
         return {"nodes": nodes, "total": len(nodes)}
@@ -316,9 +373,14 @@ class SCSServiceRoutes:
         nodes = [
             node
             for node_id in node_ids
-            if (node := await asyncio.to_thread(graph.get_node_sync, node_id)) is not None
+            if (node := await asyncio.to_thread(graph.get_node_sync, node_id))
+            is not None
         ]
-        edges = await asyncio.to_thread(graph.batch_get_edges_sync, node_ids) if node_ids else {}
+        edges = (
+            await asyncio.to_thread(graph.batch_get_edges_sync, node_ids)
+            if node_ids
+            else {}
+        )
         return {
             "repo_path": canonicalize_repo_path(repo_path),
             "file_path": Path(file_path).as_posix(),
@@ -333,24 +395,22 @@ class SCSServiceRoutes:
         repo_path = _string(params, "repo_path", required=True)
         assert repo_path is not None
         canonical = canonicalize_repo_path(repo_path)
-        raw_files = params.get("file_paths", [])
-        raw_deleted = params.get("deleted_paths", [])
-        if not isinstance(raw_files, list) or not all(isinstance(path, str) for path in raw_files):
-            raise ValueError("file_paths must be a list of strings")
-        if not isinstance(raw_deleted, list) or not all(isinstance(path, str) for path in raw_deleted):
-            raise ValueError("deleted_paths must be a list of strings")
+        raw_files = _string_list(params, "file_paths")
+        raw_deleted = _string_list(params, "deleted_paths")
         root = Path(canonical)
-        files = []
+        files: list[str] = []
         for raw_path in raw_files:
             resolved = Path(raw_path).expanduser().resolve(strict=True)
             if not resolved.is_file() or not resolved.is_relative_to(root):
                 raise ValueError(f"source path escapes repository: {resolved}")
             files.append(str(resolved))
-        deleted = []
+        deleted: list[str] = []
         for raw_path in raw_deleted:
             candidate = Path(raw_path)
             if candidate.is_absolute() or ".." in candidate.parts:
-                raise ValueError(f"deleted path must remain repository-relative: {raw_path}")
+                raise ValueError(
+                    f"deleted path must remain repository-relative: {raw_path}"
+                )
             deleted.append(candidate.as_posix())
         if not files and not deleted:
             raise ValueError("at least one changed or deleted file is required")
@@ -378,17 +438,32 @@ class SCSServiceRoutes:
             "edges_created": result.edges_created,
         }
 
-    async def composite_test_coverage(self, params: dict[str, object]) -> dict[str, object]:
+    async def composite_test_coverage(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
         requested_type = _node_type(params.get("node_type", NodeType.FUNCTION.value))
         if requested_type not in TESTABLE_NODE_TYPES:
-            return {"covered": [], "uncovered": [], "coverage_percentage": 0.0, "total_test_files": 0}
+            return {
+                "covered": [],
+                "uncovered": [],
+                "coverage_percentage": 0.0,
+                "total_test_files": 0,
+            }
         repo_id = self._repo_id(params.get("repo_path"))
         graph = self._graph()
-        files = await asyncio.to_thread(graph.list_nodes_sync, node_type=NodeType.FILE, limit=MAX_SCAN_NODES, repo_id=repo_id)
+        files = await asyncio.to_thread(
+            graph.list_nodes_sync,
+            node_type=NodeType.FILE,
+            limit=MAX_SCAN_NODES,
+            repo_id=repo_id,
+        )
         test_files = {
             node.id
             for node in files
-            if any(marker in str(node.metadata.get("file_path", node.name)) for marker in TEST_PATH_MARKERS)
+            if any(
+                marker in str(node.metadata.get("file_path", node.name))
+                for marker in TEST_PATH_MARKERS
+            )
         }
         symbols = await asyncio.to_thread(
             graph.list_nodes_sync,
@@ -396,18 +471,36 @@ class SCSServiceRoutes:
             limit=min(200, _integer(params, "limit", 50, minimum=1)),
             repo_id=repo_id,
         )
-        edge_map = await asyncio.to_thread(graph.batch_get_edges_sync, [node.id for node in symbols])
+        edge_map = await asyncio.to_thread(
+            graph.batch_get_edges_sync, [node.id for node in symbols]
+        )
         covered: list[dict[str, object]] = []
         uncovered: list[dict[str, object]] = []
         for symbol in symbols:
-            incoming = [edge for edge in edge_map.get(symbol.id, []) if edge.target_id == symbol.id]
+            incoming = [
+                edge
+                for edge in edge_map.get(symbol.id, [])
+                if edge.target_id == symbol.id
+            ]
             source_ids = [edge.source_id for edge in incoming]
             source_nodes = [
                 node
                 for source_id in source_ids
-                if (node := await asyncio.to_thread(graph.get_node_sync, source_id)) is not None
+                if (node := await asyncio.to_thread(graph.get_node_sync, source_id))
+                is not None
             ]
-            target = covered if any(node.id in test_files or any(marker in str(node.metadata.get("file_path", "")) for marker in TEST_PATH_MARKERS) for node in source_nodes) else uncovered
+            target = (
+                covered
+                if any(
+                    node.id in test_files
+                    or any(
+                        marker in str(node.metadata.get("file_path", ""))
+                        for marker in TEST_PATH_MARKERS
+                    )
+                    for node in source_nodes
+                )
+                else uncovered
+            )
             target.append(_node_dict(symbol))
         total = len(symbols)
         return {
@@ -417,7 +510,9 @@ class SCSServiceRoutes:
             "total_test_files": len(test_files),
         }
 
-    async def composite_contract_check(self, params: dict[str, object]) -> dict[str, object]:
+    async def composite_contract_check(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
         symbol = _string(params, "symbol_name", required=True)
         assert symbol is not None
         matches = await asyncio.to_thread(
@@ -426,19 +521,28 @@ class SCSServiceRoutes:
             limit=50,
             repo_id=self._repo_id(params.get("repo_path")),
         )
-        edge_map = await asyncio.to_thread(self._graph().batch_get_edges_sync, [node.id for node in matches])
+        edge_map = await asyncio.to_thread(
+            self._graph().batch_get_edges_sync, [node.id for node in matches]
+        )
         return {
             "symbol_name": symbol,
             "contracts": [
-                {"node": _node_dict(node), "incoming_edges": [_edge_dict(edge) for edge in edge_map.get(node.id, []) if edge.target_id == node.id]}
+                {
+                    "node": _node_dict(node),
+                    "incoming_edges": [
+                        _edge_dict(edge)
+                        for edge in edge_map.get(node.id, [])
+                        if edge.target_id == node.id
+                    ],
+                }
                 for node in matches
             ],
         }
 
-    async def composite_regression_risk(self, params: dict[str, object]) -> dict[str, object]:
-        raw_paths = params.get("file_paths")
-        if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
-            raise ValueError("file_paths must be a list of strings")
+    async def composite_regression_risk(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
+        raw_paths = _string_list(params, "file_paths", default=False)
         repo_path = _string(params, "repo_path")
         graph = self._graph()
         affected_ids: list[str] = []
@@ -446,35 +550,78 @@ class SCSServiceRoutes:
             path = Path(raw_path)
             if repo_path:
                 root = Path(canonicalize_repo_path(repo_path))
-                resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+                resolved = (
+                    path.resolve() if path.is_absolute() else (root / path).resolve()
+                )
                 if not resolved.is_relative_to(root):
                     raise ValueError(f"source path escapes repository: {resolved}")
                 rel_path = resolved.relative_to(root).as_posix()
-                affected_ids.extend(await asyncio.to_thread(graph.get_node_ids_for_file_sync, str(root), rel_path))
-        edges = await asyncio.to_thread(graph.batch_get_edges_sync, affected_ids) if affected_ids else {}
-        dependent_ids = sorted({edge.source_id for values in edges.values() for edge in values if edge.target_id in affected_ids})
+                affected_ids.extend(
+                    await asyncio.to_thread(
+                        graph.get_node_ids_for_file_sync, str(root), rel_path
+                    )
+                )
+        edges = (
+            await asyncio.to_thread(graph.batch_get_edges_sync, affected_ids)
+            if affected_ids
+            else {}
+        )
+        dependent_ids = sorted(
+            {
+                edge.source_id
+                for values in edges.values()
+                for edge in values
+                if edge.target_id in affected_ids
+            }
+        )
         dependents = [
             node
             for node_id in dependent_ids
-            if (node := await asyncio.to_thread(graph.get_node_sync, node_id)) is not None
+            if (node := await asyncio.to_thread(graph.get_node_sync, node_id))
+            is not None
         ]
         return {
             "file_paths": raw_paths,
             "affected_node_ids": affected_ids,
             "dependents": [_node_dict(node) for node in dependents],
-            "test_dependents": [_node_dict(node) for node in dependents if any(marker in str(node.metadata.get("file_path", "")) for marker in TEST_PATH_MARKERS)],
+            "test_dependents": [
+                _node_dict(node)
+                for node in dependents
+                if any(
+                    marker in str(node.metadata.get("file_path", ""))
+                    for marker in TEST_PATH_MARKERS
+                )
+            ],
         }
 
-    async def composite_consistency(self, params: dict[str, object]) -> dict[str, object]:
+    async def composite_consistency(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
         file_path = _string(params, "file_path", required=True)
         assert file_path is not None
         repo_path = _string(params, "repo_path")
         if repo_path:
             root = Path(canonicalize_repo_path(repo_path))
-            resolved = Path(file_path).resolve() if Path(file_path).is_absolute() else (root / file_path).resolve()
+            resolved = (
+                Path(file_path).resolve()
+                if Path(file_path).is_absolute()
+                else (root / file_path).resolve()
+            )
             rel_path = resolved.relative_to(root).as_posix()
-            node_ids = await asyncio.to_thread(self._graph().get_node_ids_for_file_sync, str(root), rel_path)
-            nodes = [node for node_id in node_ids if (node := await asyncio.to_thread(self._graph().get_node_sync, node_id)) is not None and node.type in SYMBOL_NODE_TYPES]
+            node_ids = await asyncio.to_thread(
+                self._graph().get_node_ids_for_file_sync, str(root), rel_path
+            )
+            nodes = [
+                node
+                for node_id in node_ids
+                if (
+                    node := await asyncio.to_thread(
+                        self._graph().get_node_sync, node_id
+                    )
+                )
+                is not None
+                and node.type in SYMBOL_NODE_TYPES
+            ]
         else:
             nodes = []
         by_type: dict[str, int] = {}
@@ -483,7 +630,12 @@ class SCSServiceRoutes:
             by_type[node.type.value] = by_type.get(node.type.value, 0) + 1
             if not node.metadata.get("docstring"):
                 undocumented.append(node.name)
-        return {"file_path": file_path, "symbol_counts": by_type, "undocumented_symbols": undocumented, "symbols": [_node_dict(node) for node in nodes]}
+        return {
+            "file_path": file_path,
+            "symbol_counts": by_type,
+            "undocumented_symbols": undocumented,
+            "symbols": [_node_dict(node) for node in nodes],
+        }
 
     async def lsp_symbols(self, params: dict[str, object]) -> dict[str, object]:
         file_path = _string(params, "file_path", required=True)
@@ -491,34 +643,81 @@ class SCSServiceRoutes:
         resolved = Path(file_path).resolve(strict=True)
         repo_path, rel_path = self._indexed_location(resolved)
         if repo_path is None:
-            return self._lsp_unavailable(file_path, "file is not part of an indexed repository")
-        node_ids = await asyncio.to_thread(self._graph().get_node_ids_for_file_sync, repo_path, rel_path)
-        nodes = [node for node_id in node_ids if (node := await asyncio.to_thread(self._graph().get_node_sync, node_id)) is not None and node.type != NodeType.FILE]
-        return {"available": True, "source": "index", "file_path": str(resolved), "symbols": [_node_dict(node) for node in nodes]}
+            return self._lsp_unavailable(
+                file_path, "file is not part of an indexed repository"
+            )
+        node_ids = await asyncio.to_thread(
+            self._graph().get_node_ids_for_file_sync, repo_path, rel_path
+        )
+        nodes = [
+            node
+            for node_id in node_ids
+            if (node := await asyncio.to_thread(self._graph().get_node_sync, node_id))
+            is not None
+            and node.type != NodeType.FILE
+        ]
+        return {
+            "available": True,
+            "source": "index",
+            "file_path": str(resolved),
+            "symbols": [_node_dict(node) for node in nodes],
+        }
 
     async def lsp_find_symbol(self, params: dict[str, object]) -> dict[str, object]:
         name = _string(params, "name", required=True)
         assert name is not None
-        nodes = await asyncio.to_thread(self._graph().search_by_name_sync, name, limit=100)
-        return {"available": True, "source": "index", "name": name, "symbols": [_node_dict(node) for node in nodes]}
+        nodes = await asyncio.to_thread(
+            self._graph().search_by_name_sync, name, limit=100
+        )
+        return {
+            "available": True,
+            "source": "index",
+            "name": name,
+            "symbols": [_node_dict(node) for node in nodes],
+        }
 
     async def lsp_references(self, params: dict[str, object]) -> dict[str, object]:
         node = await self._node_at_position(params)
         if node is None:
-            return self._lsp_unavailable(str(params.get("file_path", "")), "no indexed symbol exists at this position")
-        edges = await asyncio.to_thread(self._graph().get_edges_sync, node.id, direction="incoming")
+            return self._lsp_unavailable(
+                str(params.get("file_path", "")),
+                "no indexed symbol exists at this position",
+            )
+        edges = await asyncio.to_thread(
+            self._graph().get_edges_sync, node.id, direction="incoming"
+        )
         references = [
             related
             for edge in edges
-            if (related := await asyncio.to_thread(self._graph().get_node_sync, edge.source_id)) is not None
+            if (
+                related := await asyncio.to_thread(
+                    self._graph().get_node_sync, edge.source_id
+                )
+            )
+            is not None
         ]
-        return {"available": True, "source": "index", "symbol": _node_dict(node), "references": [_node_dict(item) for item in references]}
+        return {
+            "available": True,
+            "source": "index",
+            "symbol": _node_dict(node),
+            "references": [_node_dict(item) for item in references],
+        }
 
     async def lsp_hover(self, params: dict[str, object]) -> dict[str, object]:
         node = await self._node_at_position(params)
         if node is None:
-            return self._lsp_unavailable(str(params.get("file_path", "")), "no indexed symbol exists at this position")
-        return {"available": True, "source": "index", "symbol": _node_dict(node), "contents": node.metadata.get("signature") or node.metadata.get("docstring") or node.content}
+            return self._lsp_unavailable(
+                str(params.get("file_path", "")),
+                "no indexed symbol exists at this position",
+            )
+        return {
+            "available": True,
+            "source": "index",
+            "symbol": _node_dict(node),
+            "contents": node.metadata.get("signature")
+            or node.metadata.get("docstring")
+            or node.content,
+        }
 
     def _indexed_location(self, file_path: Path) -> tuple[str | None, str]:
         for repo_path in self._graph().get_ingestion_stats_sync():
@@ -531,32 +730,80 @@ class SCSServiceRoutes:
         file_path = _string(params, "file_path", required=True)
         assert file_path is not None
         line = _integer(params, "line", 0)
-        repo_path, rel_path = self._indexed_location(Path(file_path).resolve(strict=True))
+        repo_path, rel_path = self._indexed_location(
+            Path(file_path).resolve(strict=True)
+        )
         if repo_path is None:
             return None
-        node_ids = await asyncio.to_thread(self._graph().get_node_ids_for_file_sync, repo_path, rel_path)
-        candidates = [node for node_id in node_ids if (node := await asyncio.to_thread(self._graph().get_node_sync, node_id)) is not None]
-        containing = [node for node in candidates if int(node.metadata.get("start_line", -1)) <= line <= int(node.metadata.get("end_line", -1))]
-        return min(containing, key=lambda node: int(node.metadata.get("end_line", line)) - int(node.metadata.get("start_line", line)), default=None)
+        node_ids = await asyncio.to_thread(
+            self._graph().get_node_ids_for_file_sync, repo_path, rel_path
+        )
+        candidates = [
+            node
+            for node_id in node_ids
+            if (node := await asyncio.to_thread(self._graph().get_node_sync, node_id))
+            is not None
+        ]
+        containing = [
+            node
+            for node in candidates
+            if _integer_metadata(
+                node.metadata.get("start_line"), key="start_line", default=-1
+            )
+            <= line
+            <= _integer_metadata(
+                node.metadata.get("end_line"), key="end_line", default=-1
+            )
+        ]
+        return min(
+            containing,
+            key=lambda node: (
+                _integer_metadata(
+                    node.metadata.get("end_line"), key="end_line", default=line
+                )
+                - _integer_metadata(
+                    node.metadata.get("start_line"), key="start_line", default=line
+                )
+            ),
+            default=None,
+        )
 
     @staticmethod
     def _lsp_unavailable(file_path: str, reason: str) -> dict[str, object]:
-        return {"available": False, "source": "index", "file_path": file_path, "reason": reason, "language_server_configured": False}
+        return {
+            "available": False,
+            "source": "index",
+            "file_path": file_path,
+            "reason": reason,
+            "language_server_configured": False,
+        }
 
-    async def diagnostics_snapshot(self, params: dict[str, object]) -> dict[str, object]:
+    async def diagnostics_snapshot(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
         stats = await self.stats({})
         log = self._settings.paths.logs / "scs.log"
         recent = self._recent_failures(80) if bool(params.get("include_logs")) else []
         return {
             "status": "healthy",
             "generated_at": _now(),
-            "storage": {"home": str(self._settings.paths.home), "database": str(self._settings.paths.database), "database_exists": self._settings.paths.database.exists()},
+            "storage": {
+                "home": str(self._settings.paths.home),
+                "database": str(self._settings.paths.database),
+                "database_exists": self._settings.paths.database.exists(),
+            },
             "index": stats,
-            "log": {"path": str(log), "exists": log.exists(), "size_bytes": log.stat().st_size if log.exists() else 0},
+            "log": {
+                "path": str(log),
+                "exists": log.exists(),
+                "size_bytes": log.stat().st_size if log.exists() else 0,
+            },
             "recent_failures": recent,
         }
 
-    async def diagnostics_recent_failures(self, params: dict[str, object]) -> dict[str, object]:
+    async def diagnostics_recent_failures(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
         limit = min(200, _integer(params, "limit", 50, minimum=1))
         return {"failures": self._recent_failures(limit), "generated_at": _now()}
 
@@ -564,49 +811,111 @@ class SCSServiceRoutes:
         log = self._settings.paths.logs / "scs.log"
         if not log.exists():
             return []
-        lines = log.read_bytes()[-131_072:].decode("utf-8", errors="replace").splitlines()
-        return [{"line": line} for line in lines if "error" in line.lower() or "traceback" in line.lower()][-limit:]
+        lines = (
+            log.read_bytes()[-131_072:].decode("utf-8", errors="replace").splitlines()
+        )
+        failures: list[dict[str, object]] = [
+            {"line": line}
+            for line in lines
+            if "error" in line.lower() or "traceback" in line.lower()
+        ]
+        return failures[-limit:]
 
-    async def diagnostics_index_health(self, params: dict[str, object]) -> dict[str, object]:
+    async def diagnostics_index_health(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
         repo_path = params.get("repo_path")
         quality = await self.inspect({"repo_path": repo_path})
         status = "healthy" if quality["total_nodes"] else "empty"
-        result: dict[str, object] = {"status": status, "generated_at": _now(), "repo_path": repo_path}
+        result: dict[str, object] = {
+            "status": status,
+            "generated_at": _now(),
+            "repo_path": repo_path,
+        }
         if bool(params.get("include_quality")):
             result["quality"] = quality
         return result
 
-    async def diagnostics_dev_doctor(self, params: dict[str, object]) -> dict[str, object]:
+    async def diagnostics_dev_doctor(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
         repo_path = _string(params, "repo_path")
-        tools = [self._tool_version("git", "--version"), self._tool_version("uv", "--version"), self._tool_version("cargo", "--version")]
+        tools = [
+            self._tool_version("git", "--version"),
+            self._tool_version("uv", "--version"),
+            self._tool_version("cargo", "--version"),
+        ]
         findings: list[dict[str, str]] = []
         if repo_path and not Path(repo_path).is_dir():
-            findings.append({"severity": "error", "message": f"repository directory does not exist: {repo_path}"})
+            findings.append(
+                {
+                    "severity": "error",
+                    "message": f"repository directory does not exist: {repo_path}",
+                }
+            )
         for tool in tools:
             if not tool["available"]:
-                findings.append({"severity": "error", "message": f"required development tool is unavailable: {tool['binary']}"})
-        return {"status": "healthy" if not findings else "degraded", "generated_at": _now(), "tools": tools, "findings": findings}
+                findings.append(
+                    {
+                        "severity": "error",
+                        "message": f"required development tool is unavailable: {tool['binary']}",
+                    }
+                )
+        return {
+            "status": "healthy" if not findings else "degraded",
+            "generated_at": _now(),
+            "tools": tools,
+            "findings": findings,
+        }
 
     @staticmethod
     def _tool_version(binary: str, argument: str) -> dict[str, object]:
         path = shutil.which(binary)
         if path is None:
             return {"binary": binary, "available": False}
-        completed = subprocess.run([path, argument], capture_output=True, text=True, timeout=5, check=False)
+        completed = subprocess.run(
+            [path, argument], capture_output=True, text=True, timeout=5, check=False
+        )
         output = (completed.stdout or completed.stderr).strip().splitlines()
-        return {"binary": binary, "available": True, "path": path, "version": output[0] if output else "", "returncode": completed.returncode}
+        return {
+            "binary": binary,
+            "available": True,
+            "path": path,
+            "version": output[0] if output else "",
+            "returncode": completed.returncode,
+        }
 
-    async def diagnostics_test_recommendations(self, params: dict[str, object]) -> dict[str, object]:
-        raw_files = params.get("changed_files", [])
-        if not isinstance(raw_files, list) or not all(isinstance(path, str) for path in raw_files):
-            raise ValueError("changed_files must be a list of strings")
+    async def diagnostics_test_recommendations(
+        self, params: dict[str, object]
+    ) -> dict[str, object]:
+        raw_files = _string_list(params, "changed_files")
         commands: list[dict[str, str]] = []
-        if any(path.startswith("src/scs/mcp/") or path.startswith("src/scs/services/") for path in raw_files):
-            commands.append({"command": "uv run pytest tests/integration/test_service_routes.py tests/integration/test_mcp_server.py -v", "reason": "Public gateway or MCP transport changed."})
+        if any(
+            path.startswith("src/scs/mcp/") or path.startswith("src/scs/services/")
+            for path in raw_files
+        ):
+            commands.append(
+                {
+                    "command": "uv run pytest tests/integration/test_service_routes.py tests/integration/test_mcp_server.py -v",
+                    "reason": "Public gateway or MCP transport changed.",
+                }
+            )
         if any(path.startswith("crates/") for path in raw_files):
-            commands.append({"command": "cargo test --workspace", "reason": "Native graph implementation changed."})
+            commands.append(
+                {
+                    "command": "cargo test --workspace",
+                    "reason": "Native graph implementation changed.",
+                }
+            )
         if any(path.startswith("src/scs/indexing/") for path in raw_files):
-            commands.append({"command": "uv run pytest tests/integration/indexing tests/unit/test_indexing_runner.py -v", "reason": "Indexing behavior changed."})
+            commands.append(
+                {
+                    "command": "uv run pytest tests/integration/indexing tests/unit/test_indexing_runner.py -v",
+                    "reason": "Indexing behavior changed.",
+                }
+            )
         if not commands:
-            commands.append({"command": "uv run pytest", "reason": "Default SCS regression suite."})
+            commands.append(
+                {"command": "uv run pytest", "reason": "Default SCS regression suite."}
+            )
         return {"commands": commands}

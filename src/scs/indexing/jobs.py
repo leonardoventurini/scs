@@ -6,11 +6,12 @@ import json
 import logging
 import sqlite3
 import uuid
+from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal, cast
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class IngestionJob:
     repo_path: str
     mode: IngestionJobMode
     reason: str
-    payload: dict[str, Any]
+    payload: dict[str, object]
     status: IngestionJobStatus
     phase: str
     current: int
@@ -60,7 +61,7 @@ class IngestionJob:
     lease_owner: str | None
     lease_expires_at: str | None
     error: str | None
-    result: dict[str, Any] | None
+    result: dict[str, object] | None
     created_at: str
     updated_at: str
     finished_at: str | None
@@ -82,19 +83,21 @@ def utc_now() -> str:
 
 def _utc_after(seconds: float) -> str:
     return (
-        datetime.now(UTC)
-        .replace(microsecond=0)
-        + timedelta(seconds=seconds)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=seconds))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
-def _normalize_payload(mode: IngestionJobMode, payload: dict[str, Any] | None) -> dict[str, Any]:
+def _normalize_payload(
+    mode: IngestionJobMode, payload: dict[str, object] | None
+) -> dict[str, object]:
     normalized = dict(payload or {})
     if mode == "files":
-        normalized["file_paths"] = sorted({str(path) for path in normalized.get("file_paths", [])})
-        normalized["deleted_paths"] = sorted(
-            {str(path) for path in normalized.get("deleted_paths", [])}
-        )
+        file_paths = cast(Iterable[object], normalized.get("file_paths", []))
+        normalized["file_paths"] = sorted({str(path) for path in file_paths})
+        deleted_paths = cast(Iterable[object], normalized.get("deleted_paths", []))
+        normalized["deleted_paths"] = sorted({str(path) for path in deleted_paths})
     return normalized
 
 
@@ -110,22 +113,24 @@ def _mode_rank(mode: str) -> int:
 
 def _merge_payload(
     existing_mode: IngestionJobMode,
-    existing_payload: dict[str, Any],
+    existing_payload: dict[str, object],
     new_mode: IngestionJobMode,
-    new_payload: dict[str, Any],
-) -> tuple[IngestionJobMode, dict[str, Any]]:
+    new_payload: dict[str, object],
+) -> tuple[IngestionJobMode, dict[str, object]]:
     """Merge a queued job with a new request for the same repository."""
     if existing_mode == "drop_index" or new_mode == "drop_index":
         return "drop_index", {}
 
-    winner = new_mode if _mode_rank(new_mode) > _mode_rank(existing_mode) else existing_mode
+    winner = (
+        new_mode if _mode_rank(new_mode) > _mode_rank(existing_mode) else existing_mode
+    )
     if winner in {"full", "force_full", "cleanup"}:
         return winner, {}
 
-    file_paths = set(existing_payload.get("file_paths", []))
-    file_paths.update(new_payload.get("file_paths", []))
-    deleted_paths = set(existing_payload.get("deleted_paths", []))
-    deleted_paths.update(new_payload.get("deleted_paths", []))
+    file_paths = set(cast(Iterable[str], existing_payload.get("file_paths", [])))
+    file_paths.update(cast(Iterable[str], new_payload.get("file_paths", [])))
+    deleted_paths = set(cast(Iterable[str], existing_payload.get("deleted_paths", [])))
+    deleted_paths.update(cast(Iterable[str], new_payload.get("deleted_paths", [])))
 
     return "files", {
         "file_paths": sorted(file_paths),
@@ -142,7 +147,9 @@ def _is_recoverable_sqlite_corruption(error: sqlite3.DatabaseError) -> bool:
 
 
 def _database_file_family(db_path: Path) -> tuple[Path, ...]:
-    return tuple(Path(f"{db_path}{suffix}") for suffix in SQLITE_DATABASE_FAMILY_SUFFIXES)
+    return tuple(
+        Path(f"{db_path}{suffix}") for suffix in SQLITE_DATABASE_FAMILY_SUFFIXES
+    )
 
 
 def _unique_quarantine_path(source_path: Path, timestamp: str) -> Path:
@@ -160,6 +167,32 @@ def _unique_quarantine_path(source_path: Path, timestamp: str) -> Path:
         collision_index += 1
 
 
+def _row_object(row: sqlite3.Row, key: str) -> object:
+    """Contain sqlite3's untyped row access at the persistence boundary."""
+
+    return cast(object, row[key])
+
+
+def _row_str(row: sqlite3.Row, key: str) -> str:
+    return cast(str, _row_object(row, key))
+
+
+def _row_optional_str(row: sqlite3.Row, key: str) -> str | None:
+    return cast(str | None, _row_object(row, key))
+
+
+def _row_int(row: sqlite3.Row, key: str) -> int:
+    return int(cast(int | str, _row_object(row, key)))
+
+
+def _row_mode(row: sqlite3.Row, key: str = "mode") -> IngestionJobMode:
+    return cast(IngestionJobMode, _row_str(row, key))
+
+
+def _row_status(row: sqlite3.Row, key: str = "status") -> IngestionJobStatus:
+    return cast(IngestionJobStatus, _row_str(row, key))
+
+
 class IngestionJobStore:
     """SQLite-backed durable ingestion queue.
 
@@ -168,7 +201,7 @@ class IngestionJobStore:
     """
 
     def __init__(self, db_path: Path) -> None:
-        self.db_path = Path(db_path)
+        self.db_path: Path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self._init_schema()
@@ -185,7 +218,9 @@ class IngestionJobStore:
             )
             self._init_schema()
 
-    def _quarantine_corrupt_database(self, error: sqlite3.DatabaseError) -> DatabaseQuarantine:
+    def _quarantine_corrupt_database(
+        self, error: sqlite3.DatabaseError
+    ) -> DatabaseQuarantine:
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         moved_paths: list[Path] = []
         for source_path in _database_file_family(self.db_path):
@@ -206,26 +241,29 @@ class IngestionJobStore:
         repo_path: str,
         mode: IngestionJobMode,
         reason: str,
-        payload: dict[str, Any] | None = None,
+        payload: dict[str, object] | None = None,
         max_attempts: int = 3,
     ) -> IngestionJob:
         normalized_payload = _normalize_payload(mode, payload)
         now = utc_now()
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            existing = conn.execute(
-                """
+            existing = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    """
                 SELECT * FROM ingestion_jobs
                 WHERE repo_path = ? AND status IN ('queued', 'retrying')
                 ORDER BY created_at ASC
                 LIMIT 1
                 """,
-                (repo_path,),
-            ).fetchone()
+                    (repo_path,),
+                ).fetchone(),
+            )
             if existing is not None:
-                existing_payload = _loads(existing["payload_json"])
+                existing_payload = _loads(_row_str(existing, "payload_json"))
                 merged_mode, merged_payload = _merge_payload(
-                    existing["mode"],
+                    _row_mode(existing),
                     existing_payload,
                     mode,
                     normalized_payload,
@@ -239,14 +277,14 @@ class IngestionJobStore:
                     """,
                     (
                         merged_mode,
-                        reason or existing["reason"],
+                        reason or _row_str(existing, "reason"),
                         json.dumps(merged_payload, sort_keys=True),
                         now,
-                        existing["id"],
+                        _row_str(existing, "id"),
                     ),
                 )
                 conn.commit()
-                return self._get_locked(conn, existing["id"])
+                return self._get_locked(conn, _row_str(existing, "id"))
 
             job_id = f"ingest_{uuid.uuid4().hex[:12]}"
             conn.execute(
@@ -272,13 +310,17 @@ class IngestionJobStore:
             conn.commit()
             return self._get_locked(conn, job_id)
 
-    def claim_next(self, *, lease_owner: str, lease_seconds: float = 300) -> IngestionJob | None:
+    def claim_next(
+        self, *, lease_owner: str, lease_seconds: float = 300
+    ) -> IngestionJob | None:
         now = utc_now()
         lease_expires_at = _utc_after(lease_seconds)
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                """
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    """
                 SELECT candidate.*
                 FROM ingestion_jobs AS candidate
                 WHERE candidate.status IN ('queued', 'retrying')
@@ -293,7 +335,8 @@ class IngestionJobStore:
                   candidate.created_at ASC
                 LIMIT 1
                 """
-            ).fetchone()
+                ).fetchone(),
+            )
             if row is None:
                 conn.rollback()
                 return None
@@ -305,12 +348,14 @@ class IngestionJobStore:
                     lease_owner = ?, lease_expires_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (lease_owner, lease_expires_at, now, row["id"]),
+                (lease_owner, lease_expires_at, now, _row_str(row, "id")),
             )
             conn.commit()
-            return self._get_locked(conn, row["id"])
+            return self._get_locked(conn, _row_str(row, "id"))
 
-    def heartbeat(self, job_id: str, *, lease_owner: str, lease_seconds: float = 300) -> None:
+    def heartbeat(
+        self, job_id: str, *, lease_owner: str, lease_seconds: float = 300
+    ) -> None:
         now = utc_now()
         with closing(self._connect()) as conn, conn:
             conn.execute(
@@ -342,14 +387,21 @@ class IngestionJobStore:
                 (phase, max(0, current), max(0, total), message, now, job_id),
             )
 
-    def complete(self, job_id: str, *, result: dict[str, Any] | None = None) -> IngestionJob:
+    def complete(
+        self, job_id: str, *, result: dict[str, object] | None = None
+    ) -> IngestionJob:
         now = utc_now()
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT status FROM ingestion_jobs WHERE id = ?", (job_id,)).fetchone()
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    "SELECT status FROM ingestion_jobs WHERE id = ?", (job_id,)
+                ).fetchone(),
+            )
             if row is None:
                 raise KeyError(job_id)
-            status = "cancelled" if row["status"] == "cancelling" else "completed"
+            status = "cancelled" if _row_status(row) == "cancelling" else "completed"
             conn.execute(
                 """
                 UPDATE ingestion_jobs
@@ -374,32 +426,38 @@ class IngestionJobStore:
         now = utc_now()
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT * FROM ingestion_jobs WHERE id = ?",
-                (job_id,),
-            ).fetchone()
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    "SELECT * FROM ingestion_jobs WHERE id = ?",
+                    (job_id,),
+                ).fetchone(),
+            )
             if row is None:
                 raise KeyError(job_id)
 
-            attempts = int(row["attempts"]) + 1
-            status = "failed" if attempts >= int(row["max_attempts"]) else "queued"
+            attempts = _row_int(row, "attempts") + 1
+            status = "failed" if attempts >= _row_int(row, "max_attempts") else "queued"
             if status == "queued":
-                queued = conn.execute(
-                    """
+                queued = cast(
+                    sqlite3.Row | None,
+                    conn.execute(
+                        """
                     SELECT *
                     FROM ingestion_jobs
                     WHERE repo_path = ? AND status IN ('queued', 'retrying') AND id != ?
                     ORDER BY created_at ASC
                     LIMIT 1
                     """,
-                    (row["repo_path"], job_id),
-                ).fetchone()
+                        (_row_str(row, "repo_path"), job_id),
+                    ).fetchone(),
+                )
                 if queued is not None:
                     merged_mode, merged_payload = _merge_payload(
-                        queued["mode"],
-                        _loads(queued["payload_json"]),
-                        row["mode"],
-                        _loads(row["payload_json"]),
+                        _row_mode(queued),
+                        _loads(_row_str(queued, "payload_json")),
+                        _row_mode(row),
+                        _loads(_row_str(row, "payload_json")),
                     )
                     conn.execute(
                         """
@@ -411,7 +469,7 @@ class IngestionJobStore:
                             merged_mode,
                             json.dumps(merged_payload, sort_keys=True),
                             now,
-                            queued["id"],
+                            _row_str(queued, "id"),
                         ),
                     )
                     conn.execute(
@@ -431,7 +489,7 @@ class IngestionJobStore:
                         ),
                     )
                     conn.commit()
-                    return self._get_locked(conn, queued["id"])
+                    return self._get_locked(conn, _row_str(queued, "id"))
 
             finished_at = now if status == "failed" else None
             conn.execute(
@@ -451,10 +509,15 @@ class IngestionJobStore:
         now = utc_now()
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT status FROM ingestion_jobs WHERE id = ?", (job_id,)).fetchone()
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    "SELECT status FROM ingestion_jobs WHERE id = ?", (job_id,)
+                ).fetchone(),
+            )
             if row is None:
                 raise KeyError(job_id)
-            status = row["status"]
+            status = _row_status(row)
             if status in ACTIVE_QUEUE_STATUSES:
                 conn.execute(
                     """
@@ -505,12 +568,14 @@ class IngestionJobStore:
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             owner_clause = ""
-            params: list[Any] = [now]
+            params: list[object] = [now]
             if reclaim_other_owners and lease_owner:
                 owner_clause = " OR lease_owner IS NULL OR lease_owner != ?"
                 params.append(lease_owner)
-            stale_rows = conn.execute(
-                f"""
+            stale_rows = cast(
+                list[sqlite3.Row],
+                conn.execute(
+                    f"""
                 SELECT *
                 FROM ingestion_jobs
                 WHERE status IN ('running', 'cancelling')
@@ -518,31 +583,38 @@ class IngestionJobStore:
                   AND (lease_expires_at < ?{owner_clause})
                 ORDER BY created_at ASC
                 """,
-                params,
-            ).fetchall()
+                    params,
+                ).fetchall(),
+            )
 
             for row in stale_rows:
                 owner_mismatch = bool(
                     reclaim_other_owners
                     and lease_owner
-                    and (row["lease_owner"] is None or row["lease_owner"] != lease_owner)
+                    and (
+                        _row_optional_str(row, "lease_owner") is None
+                        or _row_optional_str(row, "lease_owner") != lease_owner
+                    )
                 )
-                queued = conn.execute(
-                    """
+                queued = cast(
+                    sqlite3.Row | None,
+                    conn.execute(
+                        """
                     SELECT *
                     FROM ingestion_jobs
                     WHERE repo_path = ? AND status IN ('queued', 'retrying')
                     ORDER BY created_at ASC
                     LIMIT 1
                     """,
-                    (row["repo_path"],),
-                ).fetchone()
+                        (_row_str(row, "repo_path"),),
+                    ).fetchone(),
+                )
                 if queued is not None:
                     merged_mode, merged_payload = _merge_payload(
-                        queued["mode"],
-                        _loads(queued["payload_json"]),
-                        row["mode"],
-                        _loads(row["payload_json"]),
+                        _row_mode(queued),
+                        _loads(_row_str(queued, "payload_json")),
+                        _row_mode(row),
+                        _loads(_row_str(row, "payload_json")),
                     )
                     conn.execute(
                         """
@@ -554,7 +626,7 @@ class IngestionJobStore:
                             merged_mode,
                             json.dumps(merged_payload, sort_keys=True),
                             now,
-                            queued["id"],
+                            _row_str(queued, "id"),
                         ),
                     )
                     conn.execute(
@@ -566,16 +638,24 @@ class IngestionJobStore:
                             updated_at = ?, finished_at = ?
                         WHERE id = ?
                         """,
-                        (now, now, row["id"]),
+                        (now, now, _row_str(row, "id")),
                     )
-                    reclaimed.append(self._row_to_job(conn.execute(
-                        "SELECT * FROM ingestion_jobs WHERE id = ?",
-                        (queued["id"],),
-                    ).fetchone()))
+                    queued_row = cast(
+                        sqlite3.Row,
+                        conn.execute(
+                            "SELECT * FROM ingestion_jobs WHERE id = ?",
+                            (_row_str(queued, "id"),),
+                        ).fetchone(),
+                    )
+                    reclaimed.append(self._row_to_job(queued_row))
                     continue
 
-                attempts = int(row["attempts"]) if owner_mismatch else int(row["attempts"]) + 1
-                status = "failed" if attempts >= int(row["max_attempts"]) else "queued"
+                attempts = _row_int(row, "attempts")
+                if not owner_mismatch:
+                    attempts += 1
+                status = (
+                    "failed" if attempts >= _row_int(row, "max_attempts") else "queued"
+                )
                 finished_at = now if status == "failed" else None
                 error = (
                     "Reclaimed from previous worker process"
@@ -597,20 +677,29 @@ class IngestionJobStore:
                         error,
                         now,
                         finished_at,
-                        row["id"],
+                        _row_str(row, "id"),
                     ),
                 )
-                reclaimed.append(self._row_to_job(conn.execute(
-                    "SELECT * FROM ingestion_jobs WHERE id = ?",
-                    (row["id"],),
-                ).fetchone()))
+                reclaimed_row = cast(
+                    sqlite3.Row,
+                    conn.execute(
+                        "SELECT * FROM ingestion_jobs WHERE id = ?",
+                        (_row_str(row, "id"),),
+                    ).fetchone(),
+                )
+                reclaimed.append(self._row_to_job(reclaimed_row))
 
             conn.commit()
         return reclaimed
 
     def get(self, job_id: str) -> IngestionJob | None:
         with closing(self._connect()) as conn, conn:
-            row = conn.execute("SELECT * FROM ingestion_jobs WHERE id = ?", (job_id,)).fetchone()
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    "SELECT * FROM ingestion_jobs WHERE id = ?", (job_id,)
+                ).fetchone(),
+            )
         return self._row_to_job(row) if row is not None else None
 
     def list_recent(
@@ -621,7 +710,7 @@ class IngestionJobStore:
         limit: int = 50,
     ) -> list[IngestionJob]:
         clauses: list[str] = []
-        params: list[Any] = []
+        params: list[object] = []
         if repo_path:
             clauses.append("repo_path = ?")
             params.append(repo_path)
@@ -631,16 +720,19 @@ class IngestionJobStore:
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(1, min(limit, 200)))
         with closing(self._connect()) as conn, conn:
-            rows = conn.execute(
-                f"""
+            rows = cast(
+                list[sqlite3.Row],
+                conn.execute(
+                    f"""
                 SELECT *
                 FROM ingestion_jobs
                 {where}
                 ORDER BY updated_at DESC, created_at DESC
                 LIMIT ?
                 """,
-                params,
-            ).fetchall()
+                    params,
+                ).fetchall(),
+            )
         return [self._row_to_job(row) for row in rows]
 
     def _connect(self) -> sqlite3.Connection:
@@ -688,46 +780,55 @@ class IngestionJobStore:
             )
 
     def _get_locked(self, conn: sqlite3.Connection, job_id: str) -> IngestionJob:
-        row = conn.execute("SELECT * FROM ingestion_jobs WHERE id = ?", (job_id,)).fetchone()
+        row = cast(
+            sqlite3.Row | None,
+            conn.execute(
+                "SELECT * FROM ingestion_jobs WHERE id = ?", (job_id,)
+            ).fetchone(),
+        )
         if row is None:
             raise KeyError(job_id)
         return self._row_to_job(row)
 
     def _row_to_job(self, row: sqlite3.Row) -> IngestionJob:
         return IngestionJob(
-            id=row["id"],
-            repo_path=row["repo_path"],
-            mode=row["mode"],
-            reason=row["reason"],
-            payload=_loads(row["payload_json"]),
-            status=row["status"],
-            phase=row["phase"],
-            current=int(row["current"]),
-            total=int(row["total"]),
-            message=row["message"],
-            attempts=int(row["attempts"]),
-            max_attempts=int(row["max_attempts"]),
-            lease_owner=row["lease_owner"],
-            lease_expires_at=row["lease_expires_at"],
-            error=row["error"],
-            result=_loads(row["result_json"]) if row["result_json"] else None,
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            finished_at=row["finished_at"],
+            id=_row_str(row, "id"),
+            repo_path=_row_str(row, "repo_path"),
+            mode=_row_mode(row),
+            reason=_row_str(row, "reason"),
+            payload=_loads(_row_str(row, "payload_json")),
+            status=_row_status(row),
+            phase=_row_str(row, "phase"),
+            current=_row_int(row, "current"),
+            total=_row_int(row, "total"),
+            message=_row_str(row, "message"),
+            attempts=_row_int(row, "attempts"),
+            max_attempts=_row_int(row, "max_attempts"),
+            lease_owner=_row_optional_str(row, "lease_owner"),
+            lease_expires_at=_row_optional_str(row, "lease_expires_at"),
+            error=_row_optional_str(row, "error"),
+            result=(
+                _loads(_row_str(row, "result_json"))
+                if _row_optional_str(row, "result_json")
+                else None
+            ),
+            created_at=_row_str(row, "created_at"),
+            updated_at=_row_str(row, "updated_at"),
+            finished_at=_row_optional_str(row, "finished_at"),
         )
 
 
-def _loads(value: str | None) -> dict[str, Any]:
+def _loads(value: str | None) -> dict[str, object]:
     if not value:
         return {}
     try:
-        data = json.loads(value)
+        data = cast(object, json.loads(value))
     except json.JSONDecodeError:
         return {}
-    return data if isinstance(data, dict) else {}
+    return cast(dict[str, object], data) if isinstance(data, dict) else {}
 
 
-def job_to_dict(job: IngestionJob) -> dict[str, Any]:
+def job_to_dict(job: IngestionJob) -> dict[str, object]:
     """Serialize an ingestion job for wire/API responses."""
     return {
         "id": job.id,

@@ -16,9 +16,21 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Protocol
 
 logger = logging.getLogger(__name__)
+
+
+class RepositoryGraph(Protocol):
+    """Graph read required by repository path policy."""
+
+    def get_ingestion_stats_sync(self) -> dict[str, dict[str, object]]: ...
+
+
+class RepositoryCleanupGraph(RepositoryGraph, Protocol):
+    """Graph operations required by duplicate repository cleanup."""
+
+    def delete_repo_sync(self, repo_path: str) -> object: ...
 
 
 def canonicalize_repo_path(path: str | Path) -> str:
@@ -108,7 +120,9 @@ def find_indexed_parent_repo(
     return str(nearest_parent) if nearest_parent else None
 
 
-def find_indexed_parent_repo_for_graph(graph: Any, repo_path: str | Path) -> str | None:
+def find_indexed_parent_repo_for_graph(
+    graph: RepositoryGraph, repo_path: str | Path
+) -> str | None:
     """Return the indexed parent repo for ``repo_path`` using graph stats."""
     stats = graph.get_ingestion_stats_sync()
     return find_indexed_parent_repo(repo_path, set(stats.keys()))
@@ -130,7 +144,9 @@ def assert_not_user_home_repo(repo_path: str | Path) -> None:
         )
 
 
-def assert_not_nested_under_indexed_repo(graph: Any, repo_path: str | Path) -> None:
+def assert_not_nested_under_indexed_repo(
+    graph: RepositoryGraph, repo_path: str | Path
+) -> None:
     """Raise if ``repo_path`` is inside an already-indexed parent repo."""
     parent = find_indexed_parent_repo_for_graph(graph, repo_path)
     if parent:
@@ -140,13 +156,13 @@ def assert_not_nested_under_indexed_repo(graph: Any, repo_path: str | Path) -> N
         )
 
 
-def assert_ingestable_repo_path(graph: Any, repo_path: str | Path) -> None:
+def assert_ingestable_repo_path(graph: RepositoryGraph, repo_path: str | Path) -> None:
     """Raise if ``repo_path`` violates repository ingestion safety policy."""
     assert_not_user_home_repo(repo_path)
     assert_not_nested_under_indexed_repo(graph, repo_path)
 
 
-def deduplicate_repo_entries(graph: Any) -> dict[str, Any]:
+def deduplicate_repo_entries(graph: RepositoryCleanupGraph) -> dict[str, object]:
     """Find and merge duplicate repo entries caused by non-canonical paths.
 
     Queries all distinct ``repo_path`` values from the ingested_files table,
@@ -165,35 +181,43 @@ def deduplicate_repo_entries(graph: Any) -> dict[str, Any]:
         return {"groups_found": 0, "duplicates_removed": 0, "details": []}
 
     # Group repo_path strings by their canonical form.
-    canonical_groups: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    canonical_groups: dict[str, list[tuple[str, dict[str, object]]]] = {}
     for repo_path, info in stats.items():
         canonical = canonicalize_repo_path(repo_path)
         canonical_groups.setdefault(canonical, []).append((repo_path, info))
 
     duplicates_removed = 0
-    details: list[dict[str, Any]] = []
+    details: list[dict[str, object]] = []
 
     for canonical, group in canonical_groups.items():
         if len(group) <= 1:
             continue
 
         # Keep the entry with the most files; delete the rest.
-        group.sort(key=lambda item: item[1].get("file_count", 0), reverse=True)
+        def file_count(item: tuple[str, dict[str, object]]) -> int:
+            count = item[1].get("file_count", 0)
+            return count if isinstance(count, int) else 0
+
+        group.sort(key=file_count, reverse=True)
         keeper = group[0]
         victims = group[1:]
 
-        for victim_path, victim_info in victims:
+        for victim_path, _victim_info in victims:
             try:
                 graph.delete_repo_sync(victim_path)
                 duplicates_removed += 1
             except Exception:
-                logger.exception("Failed to delete duplicate repo entry: %s", victim_path)
+                logger.exception(
+                    "Failed to delete duplicate repo entry: %s", victim_path
+                )
 
-        details.append({
-            "canonical": canonical,
-            "kept": keeper[0],
-            "removed": [v[0] for v in victims],
-        })
+        details.append(
+            {
+                "canonical": canonical,
+                "kept": keeper[0],
+                "removed": [v[0] for v in victims],
+            }
+        )
 
     return {
         "groups_found": len([g for g in canonical_groups.values() if len(g) > 1]),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from typing import Protocol, cast
+from typing import NotRequired, Protocol, TypedDict, cast
 
 from scs.graph.models import NodeType, RelationshipType
 from scs.indexing.parser.base import ParsedEdge, ParsedEntity
@@ -15,15 +15,51 @@ class _NativeParserModule(Protocol):
     def parse_file_supported_extensions(self) -> list[str]: ...
 
 
+class _NativeEntity(TypedDict):
+    """Serialized entity contract returned by the native parser."""
+
+    kind: str
+    name: str
+    qualified_name: str
+    start_line: int
+    end_line: int
+    signature: NotRequired[str]
+    docstring: NotRequired[str]
+    raw_text: NotRequired[str]
+    parent_qualified_name: NotRequired[str | None]
+    bases: NotRequired[list[str]]
+    imports: NotRequired[list[str]]
+    calls: NotRequired[list[str]]
+    cyclomatic_complexity: NotRequired[int | None]
+
+
+class _NativeEdge(TypedDict):
+    """Serialized edge contract returned by the native parser."""
+
+    source_qualified_name: str
+    target_qualified_name: str
+    relationship: str
+    weight: NotRequired[float]
+
+
+class _NativePayload(TypedDict):
+    """Top-level JSON contract returned by the native parser."""
+
+    entities: list[_NativeEntity]
+    edges: list[_NativeEdge]
+
+
 class NativeParser:
     """Delegate syntax extraction to ``_scs_native`` without product coupling."""
 
     def __init__(self, module: _NativeParserModule | None = None) -> None:
-        self._module = module
+        self._module: _NativeParserModule | None = module
 
     def _native(self) -> _NativeParserModule:
         if self._module is None:
-            self._module = cast(_NativeParserModule, importlib.import_module("_scs_native"))
+            self._module = cast(
+                _NativeParserModule, importlib.import_module("_scs_native")
+            )
         return self._module
 
     def supported_extensions(self) -> frozenset[str]:
@@ -31,13 +67,18 @@ class NativeParser:
 
         return frozenset(self._native().parse_file_supported_extensions())
 
-    def parse(self, source: str, file_path: str) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
+    def parse(
+        self, source: str, file_path: str
+    ) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
         """Deserialize one native parser result into strict code-only types."""
 
         result = self._native().parse_file(source, file_path)
         if result is None:
             return [], []
-        payload = json.loads(result)
+        # The native extension is the producer of this internal JSON contract;
+        # its Rust tests own schema validation while this cast prevents an
+        # untyped stdlib decode from contaminating first-party Python types.
+        payload = cast(_NativePayload, json.loads(result))
         entities = [
             ParsedEntity(
                 kind=NodeType(item["kind"]),

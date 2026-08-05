@@ -22,7 +22,9 @@ class SCSWireGateway:
     """Adapt the public SCSWire client to the MCP service gateway."""
 
     def __init__(self, socket_path: Path, *, timeout_seconds: float = 20.0) -> None:
-        self._client = SCSClient(socket_path, timeout_seconds=timeout_seconds)
+        self._client: SCSClient = SCSClient(
+            socket_path, timeout_seconds=timeout_seconds
+        )
 
     async def call(
         self,

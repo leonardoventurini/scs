@@ -41,7 +41,7 @@ class GitHistoryIngester:
     """Read Git history through subprocesses without mutating the repository."""
 
     def __init__(self, graph: ProvenanceGraph) -> None:
-        self._graph = graph
+        self._graph: ProvenanceGraph = graph
 
     def ingest(self, repo_path: Path, *, limit: int = 1_000) -> GitIngestionResult:
         """Persist commits, contributors, authorship, and modified-file provenance."""
@@ -53,7 +53,13 @@ class GitHistoryIngester:
         # ``--name-only`` lines remain attached to that commit when split.
         format_value = f"{RECORD_SEPARATOR}%H{FIELD_SEPARATOR}%an{FIELD_SEPARATOR}%ae{FIELD_SEPARATOR}%aI{FIELD_SEPARATOR}%s"
         process = subprocess.run(
-            ["git", "log", f"--max-count={limit}", f"--format={format_value}", "--name-only"],
+            [
+                "git",
+                "log",
+                f"--max-count={limit}",
+                f"--format={format_value}",
+                "--name-only",
+            ],
             cwd=root,
             capture_output=True,
             text=True,

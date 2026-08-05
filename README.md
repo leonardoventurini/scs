@@ -31,9 +31,10 @@ just setup
 just verify
 ```
 
-`just setup` installs Python dependencies and builds the private `_scs_native`
-extension. The daemon can then be run directly with `scs serve`, while explicit
-repository enrollment uses `scs index <repo>` or `scs reindex <repo>`.
+`just setup` installs Python dependencies, builds the private `_scs_native`
+extension, and installs the repository's pre-commit hook. The daemon can then
+be run directly with `scs serve`, while explicit repository enrollment uses
+`scs index <repo>` or `scs reindex <repo>`.
 
 Install and operate the independent user services with:
 
@@ -56,9 +57,10 @@ index and never enrolls repositories merely because External product knows about
 
 ## Verification
 
-`just verify` runs compile checks, Ruff, all Python tests, and the Rust
-workspace. `cd proxy && uv run --all-groups pytest -v` verifies the separately
-packaged public proxy. Isolation gates cover exact MCP inventory, bounded
-frames, generation-safe cleanup, stale/live socket ownership, legacy sentinel
+`just verify` runs strict Basedpyright checks, Ruff, all Python tests, and the
+Rust workspace. The pre-commit hook runs the same whole-source type gate.
+`cd proxy && uv run --all-groups pytest -v` verifies the separately packaged
+public proxy. Isolation gates cover exact MCP inventory, bounded frames,
+generation-safe cleanup, stale/live socket ownership, legacy sentinel
 preservation, External product-import denial, repository source fingerprints, and
 committed RSS/index/query budgets.

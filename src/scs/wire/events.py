@@ -19,10 +19,10 @@ class EventSubscription:
         topic: str,
         queue: asyncio.Queue[WireEvent],
     ) -> None:
-        self._broker = broker
-        self._topic = topic
-        self._queue = queue
-        self._closed = False
+        self._broker: EventBroker = broker
+        self._topic: str = topic
+        self._queue: asyncio.Queue[WireEvent] = queue
+        self._closed: bool = False
 
     def __aiter__(self) -> "EventSubscription":
         return self
@@ -41,7 +41,7 @@ class EventSubscription:
         if self._closed:
             return
         self._closed = True
-        self._broker._remove(self._topic, self._queue)
+        self._broker.remove(self._topic, self._queue)
 
 
 class EventBroker:
@@ -49,9 +49,9 @@ class EventBroker:
 
     def __init__(self) -> None:
         self._sequences: defaultdict[str, int] = defaultdict(int)
-        self._subscribers: defaultdict[
-            str, set[asyncio.Queue[WireEvent]]
-        ] = defaultdict(set)
+        self._subscribers: defaultdict[str, set[asyncio.Queue[WireEvent]]] = (
+            defaultdict(set)
+        )
 
     def subscribe(self, topic: str) -> EventSubscription:
         """Attach a subscriber before returning so early events cannot be lost."""
@@ -88,7 +88,9 @@ class EventBroker:
 
         return len(self._subscribers.get(topic, ()))
 
-    def _remove(self, topic: str, queue: asyncio.Queue[WireEvent]) -> None:
+    def remove(self, topic: str, queue: asyncio.Queue[WireEvent]) -> None:
+        """Remove one subscription owned by this broker."""
+
         subscribers = self._subscribers.get(topic)
         if subscribers is None:
             return

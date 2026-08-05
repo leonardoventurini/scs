@@ -9,13 +9,20 @@ from collections.abc import Callable, Coroutine, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from scs.graph.models import NodeType
 from scs.indexing.discovery import FileEntry, build_file_entry, discover
 from scs.indexing.parser.base import LanguageParser, ParsedEdge, ParsedEntity
-from scs.indexing.repository_paths import assert_ingestable_repo_path, canonicalize_repo_path
-from scs.providers.base import EmbeddingProvider, FileSummarizer, ProviderUnavailableError
+from scs.indexing.repository_paths import (
+    assert_ingestable_repo_path,
+    canonicalize_repo_path,
+)
+from scs.providers.base import (
+    EmbeddingProvider,
+    FileSummarizer,
+    ProviderUnavailableError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +39,14 @@ class GraphStore(Protocol):
     def resolve_repo_id_sync(self, path: str) -> int | None: ...
     def get_all_ingested_files_sync(self, repo_path: str) -> dict[str, str]: ...
     def get_file_paths_for_repo_sync(self, repo_path: str) -> list[str]: ...
-    def get_node_ids_for_file_sync(self, repo_path: str, rel_path: str) -> list[str]: ...
+    def get_node_ids_for_file_sync(
+        self, repo_path: str, rel_path: str
+    ) -> list[str]: ...
     def batch_upsert_nodes_sync(self, nodes: list[dict[str, object]]) -> int: ...
     def batch_upsert_edges_sync(self, edges: list[dict[str, object]]) -> int: ...
-    def batch_upsert_embeddings_sync(self, embeddings: list[tuple[str, list[float]]]) -> int: ...
+    def batch_upsert_embeddings_sync(
+        self, embeddings: list[tuple[str, list[float]]]
+    ) -> int: ...
     def flush_vector_index_sync(self) -> bool: ...
     def delete_node_sync(self, node_id: str) -> bool: ...
     def delete_ingested_file_sync(self, repo_path: str, rel_path: str) -> int: ...
@@ -109,13 +120,21 @@ class IngestionPipeline:
         summarizer: FileSummarizer | None = None,
         progress: Callable[[IngestionProgress], None] | None = None,
     ) -> None:
-        self._graph = graph
-        self._parser = parser
-        self._embeddings = embeddings
-        self._summarizer = summarizer
-        self._progress = progress or (lambda _: None)
+        self._graph: GraphStore = graph
+        self._parser: LanguageParser = parser
+        self._embeddings: EmbeddingProvider | None = embeddings
+        self._summarizer: FileSummarizer | None = summarizer
+        self._progress: Callable[[IngestionProgress], None] = (
+            progress or self._ignore_progress
+        )
 
-    def _report(self, phase: str, current: int, total: int, *, path: str = "", message: str = "") -> None:
+    @staticmethod
+    def _ignore_progress(_progress: IngestionProgress) -> None:
+        """Provide a typed no-op when no progress observer is configured."""
+
+    def _report(
+        self, phase: str, current: int, total: int, *, path: str = "", message: str = ""
+    ) -> None:
         self._progress(IngestionProgress(phase, current, total, path, message))
 
     def ingest(self, repo_path: Path, *, force: bool = False) -> IngestionResult:
@@ -141,9 +160,12 @@ class IngestionPipeline:
         entries = [
             entry
             for path in file_paths
-            if (entry := build_file_entry(path, Path(canonical), extensions)) is not None
+            if (entry := build_file_entry(path, Path(canonical), extensions))
+            is not None
         ]
-        result = self._ingest_entries(canonical, entries, force=False, sweep_deleted=False)
+        result = self._ingest_entries(
+            canonical, entries, force=False, sweep_deleted=False
+        )
         for rel_path in sorted(set(deleted_paths)):
             self._graph.delete_ingested_file_sync(canonical, rel_path)
             result.files_deleted += 1
@@ -154,7 +176,8 @@ class IngestionPipeline:
 
         canonical = canonicalize_repo_path(repo_path)
         discovered = {
-            entry.rel_path for entry in discover(Path(canonical), self._parser.supported_extensions())
+            entry.rel_path
+            for entry in discover(Path(canonical), self._parser.supported_extensions())
         }
         indexed = set(self._graph.get_file_paths_for_repo_sync(canonical))
         result = IngestionResult(files_discovered=len(discovered))
@@ -183,7 +206,9 @@ class IngestionPipeline:
 
         if sweep_deleted:
             discovered_paths = {entry.rel_path for entry in entries}
-            indexed_paths = set(self._graph.get_file_paths_for_repo_sync(repo_path)) | set(hashes)
+            indexed_paths = set(
+                self._graph.get_file_paths_for_repo_sync(repo_path)
+            ) | set(hashes)
             for rel_path in sorted(indexed_paths - discovered_paths):
                 self._graph.delete_ingested_file_sync(repo_path, rel_path)
                 result.files_deleted += 1
@@ -207,7 +232,9 @@ class IngestionPipeline:
             result.entities_created = self._graph.batch_upsert_nodes_sync(nodes)
 
         edges = self._prepare_edges(parsed, node_ids)
-        result.edges_created = self._graph.batch_upsert_edges_sync(edges) if edges else 0
+        result.edges_created = (
+            self._graph.batch_upsert_edges_sync(edges) if edges else 0
+        )
         result.edges_dropped = sum(len(item.edges) for item in parsed) - len(edges)
 
         summaries = self._summarize(parsed, result)
@@ -234,7 +261,9 @@ class IngestionPipeline:
             )
         return result
 
-    def _parse_files(self, entries: list[FileEntry]) -> tuple[list[_ParsedFile], list[FileEntry]]:
+    def _parse_files(
+        self, entries: list[FileEntry]
+    ) -> tuple[list[_ParsedFile], list[FileEntry]]:
         def parse(entry: FileEntry) -> _ParsedFile:
             source = entry.abs_path.read_text(encoding="utf-8", errors="replace")
             entities, edges = self._parser.parse(source, entry.rel_path)
@@ -322,11 +351,15 @@ class IngestionPipeline:
                     )
         return edges
 
-    def _summarize(self, parsed: list[_ParsedFile], result: IngestionResult) -> dict[str, str]:
+    def _summarize(
+        self, parsed: list[_ParsedFile], result: IngestionResult
+    ) -> dict[str, str]:
         if self._summarizer is None:
             return {}
         files = {
-            item.entry.rel_path: "\n".join(entity.embed_text() for entity in item.entities)
+            item.entry.rel_path: "\n".join(
+                entity.embed_text() for entity in item.entities
+            )
             for item in parsed
         }
         try:
@@ -343,9 +376,13 @@ class IngestionPipeline:
     ) -> list[dict[str, object]]:
         updates: list[dict[str, object]] = []
         for node in nodes:
-            metadata = dict(node["metadata"])  # type: ignore[arg-type]
+            metadata = dict(cast(dict[str, object], node["metadata"]))
             path = metadata.get("file_path")
-            if node["type"] == NodeType.FILE.value and isinstance(path, str) and path in summaries:
+            if (
+                node["type"] == NodeType.FILE.value
+                and isinstance(path, str)
+                and path in summaries
+            ):
                 metadata["summary"] = summaries[path]
                 updates.append({**node, "metadata": metadata})
         return updates
@@ -363,7 +400,9 @@ class IngestionPipeline:
             return False
         entities = [entity for item in parsed for entity in item.entities]
         texts = [
-            f"{summaries.get(item.entry.rel_path, '')}. {entity.embed_text()}".lstrip(". ")
+            f"{summaries.get(item.entry.rel_path, '')}. {entity.embed_text()}".lstrip(
+                ". "
+            )
             for item in parsed
             for entity in item.entities
         ]
@@ -371,7 +410,11 @@ class IngestionPipeline:
             vectors: list[list[float]] = []
             for offset in range(0, len(texts), EMBED_BATCH_SIZE):
                 vectors.extend(
-                    _run(self._embeddings.embed_documents(texts[offset : offset + EMBED_BATCH_SIZE]))
+                    _run(
+                        self._embeddings.embed_documents(
+                            texts[offset : offset + EMBED_BATCH_SIZE]
+                        )
+                    )
                 )
         except (ProviderUnavailableError, OSError, RuntimeError) as exc:
             result.semantic_degraded_reason = str(exc)
@@ -380,5 +423,7 @@ class IngestionPipeline:
             (node_ids[entity.qualified_name], vector)
             for entity, vector in zip(entities, vectors, strict=True)
         ]
-        result.embeddings_created = self._graph.batch_upsert_embeddings_sync(pairs) if pairs else 0
+        result.embeddings_created = (
+            self._graph.batch_upsert_embeddings_sync(pairs) if pairs else 0
+        )
         return bool(pairs)
