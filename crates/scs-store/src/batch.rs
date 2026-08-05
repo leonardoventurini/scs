@@ -62,11 +62,8 @@ fn default_weight() -> f64 {
 ///
 /// Metadata is **merged** via `json_patch()` (RFC 7396) — incoming fields
 /// overwrite existing ones, but keys already in the DB that are absent from
-/// the update are preserved. This is critical for idempotency: the ingestion
-/// pipeline writes parser-derived metadata (file_path, start_line, …) while
-/// the summarizer later adds summary_content_hash, summary_model, summary_at.
-/// Without merging, re-ingestion would wipe summary tracking and force a
-/// full re-summarization.
+/// the update are preserved. This lets parser and independent analyzer fields
+/// coexist without one producer erasing metadata owned by another.
 pub fn batch_upsert_nodes(pool: &ConnectionPool, nodes: &[BatchNode]) -> SCSResult<usize> {
     observe_result(
         QueryBackend::Sqlite,
@@ -144,8 +141,8 @@ pub fn batch_upsert_embeddings(
 /// using UUID v5, matching the Python implementation.
 ///
 /// Metadata is **merged** via `json_patch()` — see `batch_upsert_nodes` for
-/// the rationale.  Edge summaries (summary_content_hash, summary) survive
-/// re-ingestion that only updates weight or adds new metadata keys.
+/// the rationale. Independently owned fields survive re-ingestion that only
+/// updates weight or adds new metadata keys.
 ///
 /// Edges that reference non-existent nodes (FK violation) are silently
 /// skipped rather than failing the entire batch. This is defensive against
@@ -377,9 +374,7 @@ mod tests {
         assert_eq!(total, 3);
     }
 
-    /// Re-upserting a node with new metadata must preserve existing keys
-    /// not present in the update — this is the core idempotency guarantee
-    /// that prevents summarization progress from being wiped by re-ingestion.
+    /// Re-upserting a node preserves metadata owned by another producer.
     #[test]
     fn batch_upsert_nodes_preserves_existing_metadata_keys() {
         let (_dir, pool, _idx) = setup();
@@ -403,15 +398,15 @@ mod tests {
         )
         .unwrap();
 
-        // Phase 2: Simulate summarizer adding summary metadata.
+        // Phase 2: Simulate an independent analyzer adding metadata.
         let conn = pool.get().unwrap();
         conn.execute(
             "UPDATE nodes SET metadata = json_patch(metadata, ?1) WHERE id = 'node-1'",
-            params![r#"{"summary_content_hash":"abc123","summary_model":"haiku","summary_at":1700000000}"#],
+            params![r#"{"semantic_label":"entrypoint","analysis_version":2}"#],
         )
         .unwrap();
 
-        // Verify summarizer fields are present.
+        // Verify independently owned fields are present.
         let meta: String = conn
             .query_row(
                 "SELECT metadata FROM nodes WHERE id = 'node-1'",
@@ -420,9 +415,9 @@ mod tests {
             )
             .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&meta).unwrap();
-        assert_eq!(parsed["summary_content_hash"], "abc123");
+        assert_eq!(parsed["semantic_label"], "entrypoint");
 
-        // Phase 3: Re-ingestion — same node ID, fresh parser metadata (no summary keys).
+        // Phase 3: Re-ingestion updates parser metadata only.
         let mut reingestion_meta = HashMap::new();
         reingestion_meta.insert("file_path".to_string(), json!("src/main.py"));
         reingestion_meta.insert("language".to_string(), json!("python"));
@@ -441,7 +436,7 @@ mod tests {
         )
         .unwrap();
 
-        // Verify: parser fields updated, summary fields preserved.
+        // Verify parser fields updated and analyzer fields survived.
         let meta: String = conn
             .query_row(
                 "SELECT metadata FROM nodes WHERE id = 'node-1'",
@@ -453,14 +448,11 @@ mod tests {
 
         // Parser field was updated.
         assert_eq!(parsed["start_line"], 12);
-        // Summary fields survived the re-ingestion.
-        assert_eq!(parsed["summary_content_hash"], "abc123");
-        assert_eq!(parsed["summary_model"], "haiku");
-        assert_eq!(parsed["summary_at"], 1700000000);
+        assert_eq!(parsed["semantic_label"], "entrypoint");
+        assert_eq!(parsed["analysis_version"], 2);
     }
 
-    /// Same preservation guarantee for edges — edge summary metadata must
-    /// survive re-ingestion that only touches weight or parser fields.
+    /// The same preservation guarantee applies to edge metadata.
     #[test]
     fn batch_upsert_edges_preserves_existing_metadata_keys() {
         let (_dir, pool, _idx) = setup();
@@ -499,13 +491,13 @@ mod tests {
         )
         .unwrap();
 
-        // Phase 2: Simulate summarizer writing edge summary.
+        // Phase 2: Simulate an independent analyzer writing edge metadata.
         let edge_id = make_edge_id("src", "tgt", "contains");
         let conn = pool.get().unwrap();
         conn.execute(
             "UPDATE edges SET metadata = json_patch(metadata, ?1) WHERE id = ?2",
             params![
-                r#"{"summary":"Engine contains start method","summary_content_hash":"def456"}"#,
+                r#"{"confidence_source":"static","analysis_version":2}"#,
                 edge_id
             ],
         )
@@ -524,7 +516,7 @@ mod tests {
         )
         .unwrap();
 
-        // Verify: weight updated, summary fields preserved.
+        // Verify the weight changed without erasing independent metadata.
         let (weight, meta): (f64, String) = conn
             .query_row(
                 "SELECT weight, metadata FROM edges WHERE id = ?1",
@@ -535,8 +527,8 @@ mod tests {
 
         assert_eq!(weight, 2.0);
         let parsed: serde_json::Value = serde_json::from_str(&meta).unwrap();
-        assert_eq!(parsed["summary_content_hash"], "def456");
-        assert_eq!(parsed["summary"], "Engine contains start method");
+        assert_eq!(parsed["confidence_source"], "static");
+        assert_eq!(parsed["analysis_version"], 2);
     }
 
     /// Edges referencing non-existent nodes must be skipped, not crash

@@ -8,6 +8,10 @@ SCS starts with an empty index. It does not migrate, inspect, or recreate any
 legacy External product graph data. Repositories are added only through an explicit CLI,
 MCP, or client request.
 
+Semantic embeddings are generated locally from parser-owned entity text. SCS
+does not call a remote file-summarization service and requires no API key for
+indexing or search.
+
 The service has no graphical interface. Use `scs status`, `scs doctor`, logs,
 SCSWire, or MCP diagnostics for operational visibility.
 

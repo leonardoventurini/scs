@@ -38,9 +38,6 @@ class SCSSettings(BaseSettings):
     embedding_dimension: int = Field(default=DEFAULT_EMBEDDING_DIMENSION, gt=0)
     embedding_batch_size: int = Field(default=32, ge=1, le=256)
     embedding_concurrency: int = Field(default=1, ge=1, le=4)
-    openai_api_key: str | None = None
-    summarizer_model: str = "gpt-4.1-mini"
-    summarizer_timeout_seconds: float = Field(default=45.0, gt=0, le=300)
     mcp_internal_host: str = DEFAULT_MCP_INTERNAL_HOST
     mcp_internal_port: int = Field(default=DEFAULT_MCP_INTERNAL_PORT, ge=0, le=65535)
 

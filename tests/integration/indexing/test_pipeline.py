@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 from scs.indexing.pipeline import IngestionPipeline
@@ -59,3 +60,24 @@ def test_vectors_flush_before_hash_commit(repository: Path) -> None:
 
     assert graph.flushes == 1
     assert graph.hashes[str(repository.resolve())]["main.py"]
+
+
+def test_embeddings_consume_only_parser_owned_entity_text(repository: Path) -> None:
+    """Retired remote enrichment cannot alter the durable vector input."""
+
+    source = repository / "main.py"
+    source.write_text("def run():\n    pass\n")
+    graph = FakeGraph()
+    embeddings = FakeEmbeddings()
+
+    IngestionPipeline(
+        graph=graph,
+        parser=FakeParser(),
+        embeddings=embeddings,
+    ).ingest(repository)
+
+    assert "summarizer" not in inspect.signature(IngestionPipeline).parameters
+    assert embeddings.document_inputs == [
+        "file: main",
+        "function main.run ",
+    ]

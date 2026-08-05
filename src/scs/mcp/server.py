@@ -152,7 +152,6 @@ def build_mcp(
     @mcp.tool()
     async def sample_nodes(
         node_type: str = "",
-        summary_status: str = "",
         file_path: str = "",
         limit: int = 10,
         repo_path: str | None = None,
@@ -162,7 +161,6 @@ def build_mcp(
             "knowledge.sample",
             {
                 "node_type": node_type or None,
-                "summary_status": summary_status or None,
                 "file_path": file_path or None,
                 "limit": _limit(limit),
                 "repo_path": canonical_repo_path(repo_path),

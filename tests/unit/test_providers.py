@@ -7,7 +7,6 @@ import pytest
 
 from scs.providers.base import EmbeddingProvider, ProviderUnavailableError
 from scs.providers.mlx import MLXEmbeddingProvider
-from scs.providers.openai import OpenAIFileSummarizer
 
 
 class FakeModel:
@@ -18,15 +17,6 @@ class FakeModel:
 class DecimalModel:
     def encode(self, texts: list[str]) -> list[list[Decimal]]:
         return [[Decimal("1.25"), Decimal("2.5")] for _ in texts]
-
-
-class FakeResponse:
-    output_text = json.dumps({"a.py": "Defines the application entry point."})
-
-
-class FakeResponses:
-    def create(self, **kwargs: object) -> FakeResponse:
-        return FakeResponse()
 
 
 def test_provider_metadata_is_persistable() -> None:
@@ -72,20 +62,3 @@ async def test_missing_optional_provider_degrades() -> None:
 
     assert provider.metadata.available is False
     assert provider.metadata.reason == "missing"
-
-
-@pytest.mark.asyncio
-async def test_missing_openai_key_degrades_truthfully() -> None:
-    summarizer = OpenAIFileSummarizer(api_key=None)
-
-    with pytest.raises(ProviderUnavailableError, match="SCS_OPENAI_API_KEY"):
-        await summarizer.summarize_files({"a.py": "print('a')"})
-
-
-@pytest.mark.asyncio
-async def test_openai_summarizer_filters_unknown_paths() -> None:
-    summarizer = OpenAIFileSummarizer(api_key=None, responses=FakeResponses())
-
-    assert await summarizer.summarize_files({"a.py": "print('a')"}) == {
-        "a.py": "Defines the application entry point."
-    }

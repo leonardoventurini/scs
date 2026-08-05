@@ -34,11 +34,12 @@ pub const DDL_NODES_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_nodes_type_updated_at_id ON nodes(type, updated_at DESC, id DESC);",
     "CREATE INDEX IF NOT EXISTS idx_nodes_repo_updated_at_id ON nodes(repo_id, updated_at DESC, id DESC);",
     "CREATE INDEX IF NOT EXISTS idx_nodes_repo_type_updated_at_id ON nodes(repo_id, type, updated_at DESC, id DESC);",
-    "CREATE INDEX IF NOT EXISTS idx_nodes_summarizable_repo_id_id
-     ON nodes(repo_id, id)
-     WHERE type IN ('file', 'module', 'class', 'function', 'method', 'type_alias', 'constant')
-       AND json_extract(metadata, '$.file_path') IS NOT NULL;",
 ];
+
+/// Remove schema objects owned by capabilities that SCS no longer exposes.
+const LEGACY_SCHEMA_CLEANUP: &str = "
+DROP INDEX IF EXISTS idx_nodes_summarizable_repo_id_id;
+";
 
 /// Normalized repository table — stores repo paths once, referenced by FK.
 ///
@@ -94,7 +95,7 @@ CREATE TABLE IF NOT EXISTS ingested_files (
 /// Returns all DDL statements in order for initial schema creation.
 ///
 pub fn all_ddl() -> Vec<String> {
-    let mut stmts = Vec::with_capacity(16);
+    let mut stmts = Vec::with_capacity(15);
     stmts.push(DDL_REPOS.to_string());
     stmts.push(DDL_NODES.to_string());
     for idx in DDL_NODES_INDEXES {
@@ -114,6 +115,7 @@ pub fn initialize_schema(conn: &Connection) -> SCSResult<()> {
         "DROP TABLE IF EXISTS community_assignments;
          DROP TABLE IF EXISTS communities;",
     )?;
+    conn.execute_batch(LEGACY_SCHEMA_CLEANUP)?;
     for ddl in all_ddl() {
         conn.execute_batch(&ddl)?;
     }
@@ -127,9 +129,9 @@ mod tests {
 
     #[test]
     fn all_ddl_returns_correct_count() {
-        // repos + nodes + 8 indexes + edges + 4 indexes + ingested_files
-        // = 16
-        assert_eq!(all_ddl().len(), 16);
+        // repos + nodes + 7 indexes + edges + 4 indexes + ingested_files
+        // = 15
+        assert_eq!(all_ddl().len(), 15);
     }
 
     #[test]
@@ -141,26 +143,72 @@ mod tests {
     }
 
     #[test]
-    fn initialize_schema_is_idempotent() {
+    fn initialize_schema_is_idempotent_and_removes_retired_indexes() {
         let dir = tempfile::tempdir().unwrap();
         let pool = create_test_pool(&dir.path().join("test.db")).unwrap();
         let conn = pool.get().unwrap();
 
         initialize_schema(&conn).unwrap();
+        let historical_node_metadata =
+            r#"{"file_path":"src/main.py","summary":"Legacy node summary"}"#;
+        let historical_edge_metadata = r#"{"summary":"Legacy edge summary"}"#;
+        conn.execute(
+            "INSERT INTO nodes (id, type, name, metadata) VALUES ('node-a', 'file', 'a', ?1)",
+            [historical_node_metadata],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, type, name) VALUES ('node-b', 'function', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, relationship, metadata)
+             VALUES ('edge-a-b', 'node-a', 'node-b', 'contains', ?1)",
+            [historical_edge_metadata],
+        )
+        .unwrap();
+        conn.execute_batch("CREATE INDEX idx_nodes_summarizable_repo_id_id ON nodes(repo_id, id);")
+            .unwrap();
         initialize_schema(&conn).unwrap();
 
         let index_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
              WHERE type = 'index'
-               AND name IN (
-                   'idx_nodes_summarizable_repo_id_id',
-                   'idx_nodes_repo_type_updated_at_id'
-               )",
+               AND name = 'idx_nodes_summarizable_repo_id_id'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(index_count, 2);
+        assert_eq!(index_count, 0);
+
+        let active_index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index'
+                   AND name = 'idx_nodes_repo_type_updated_at_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_index_count, 1);
+
+        let preserved_node_metadata: String = conn
+            .query_row(
+                "SELECT metadata FROM nodes WHERE id = 'node-a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let preserved_edge_metadata: String = conn
+            .query_row(
+                "SELECT metadata FROM edges WHERE id = 'edge-a-b'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(preserved_node_metadata, historical_node_metadata);
+        assert_eq!(preserved_edge_metadata, historical_edge_metadata);
     }
 }

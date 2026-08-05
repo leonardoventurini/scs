@@ -3,6 +3,7 @@
 ## 2026-08-05
 
 - ci: enforce strict Python types before commit
+- remove: retire file summarization
 
 ## 2026-07-15
 

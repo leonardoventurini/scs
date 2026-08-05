@@ -290,10 +290,8 @@ impl KnowledgeGraph {
             None => "{}".to_string(),
         };
 
-        // Merge metadata via json_patch (RFC 7396) so that existing keys
-        // absent from this update are preserved.  This prevents re-ingestion
-        // from wiping summary tracking fields (summary_content_hash, etc.)
-        // that the summarizer wrote to the node after the original ingestion.
+        // Merge metadata via json_patch (RFC 7396) so independently owned
+        // fields absent from this update survive re-ingestion.
         conn.execute(
             "INSERT INTO nodes (id, type, name, content, metadata, repo_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -430,48 +428,6 @@ impl KnowledgeGraph {
         Ok(deleted)
     }
 
-    /// Strip specific metadata keys from all nodes and edges in a single transaction.
-    ///
-    /// Uses SQLite's `json_remove()` to atomically strip the specified keys
-    /// from the JSON metadata column. Only rows that actually contain at
-    /// least one of the keys are updated, keeping the write set minimal.
-    ///
-    /// Returns `(nodes_updated, edges_updated)`.
-    pub fn strip_metadata_keys(&self, keys: &[&str]) -> SCSResult<(usize, usize)> {
-        let conn = self.pool.get().pool_err()?;
-
-        if keys.is_empty() {
-            return Ok((0, 0));
-        }
-
-        // Build json_remove(metadata, '$.key1', '$.key2', ...) expression
-        // and a WHERE clause that only touches rows containing at least one key.
-        let json_paths: Vec<String> = keys.iter().map(|k| format!("'$.{k}'")).collect();
-        let json_remove_expr = format!("json_remove(metadata, {})", json_paths.join(", "));
-        let where_clauses: Vec<String> = keys
-            .iter()
-            .map(|k| format!("json_extract(metadata, '$.{k}') IS NOT NULL"))
-            .collect();
-        let where_expr = where_clauses.join(" OR ");
-
-        let nodes_sql =
-            format!("UPDATE nodes SET metadata = {json_remove_expr} WHERE {where_expr}");
-        let edges_sql =
-            format!("UPDATE edges SET metadata = {json_remove_expr} WHERE {where_expr}");
-
-        let nodes_updated = conn.execute(&nodes_sql, [])?;
-        let edges_updated = conn.execute(&edges_sql, [])?;
-
-        log::info!(
-            "Stripped metadata keys {:?}: {} nodes, {} edges updated",
-            keys,
-            nodes_updated,
-            edges_updated,
-        );
-
-        Ok((nodes_updated, edges_updated))
-    }
-
     /// List nodes, optionally filtered by type.
     pub fn list_nodes(
         &self,
@@ -574,69 +530,6 @@ impl KnowledgeGraph {
                 Ok(count)
             },
         )
-    }
-
-    /// List nodes eligible for summarization via keyset pagination.
-    ///
-    /// Restricts the scan to summarizable node types with a `file_path`
-    /// metadata field and orders by primary-key `id` so repeated pages stay
-    /// index-friendly on large graphs.
-    pub fn list_summarizable_nodes(
-        &self,
-        limit: i64,
-        after_id: Option<&str>,
-        repo_id: Option<i64>,
-    ) -> SCSResult<Vec<Node>> {
-        let conn = self.pool.get().pool_err()?;
-
-        let summarizable_types = [
-            NodeType::File,
-            NodeType::Module,
-            NodeType::Class,
-            NodeType::Function,
-            NodeType::Method,
-            NodeType::TypeAlias,
-            NodeType::Constant,
-        ];
-
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-        let mut clauses: Vec<String> = Vec::new();
-
-        let type_placeholders: Vec<String> = summarizable_types
-            .iter()
-            .map(|nt| {
-                param_values.push(Box::new(nt.to_string()));
-                format!("?{}", param_values.len())
-            })
-            .collect();
-        clauses.push(format!("type IN ({})", type_placeholders.join(", ")));
-        clauses.push("json_extract(metadata, '$.file_path') IS NOT NULL".to_string());
-
-        if let Some(rid) = repo_id {
-            param_values.push(Box::new(rid));
-            clauses.push(format!("repo_id = ?{}", param_values.len()));
-        }
-        if let Some(after) = after_id {
-            param_values.push(Box::new(after.to_string()));
-            clauses.push(format!("id > ?{}", param_values.len()));
-        }
-
-        param_values.push(Box::new(limit));
-        let limit_idx = param_values.len();
-
-        let sql = format!(
-            "SELECT * FROM nodes WHERE {} ORDER BY id ASC LIMIT ?{limit_idx}",
-            clauses.join(" AND "),
-        );
-
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
-            param_values.iter().map(|b| b.as_ref()).collect();
-        let mut stmt = conn.prepare(&sql)?;
-        let nodes = stmt
-            .query_map(params_ref.as_slice(), row_to_node)?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(nodes)
     }
 
     /// List nodes that have no embedding vector in the USearch index.
@@ -1462,8 +1355,7 @@ impl KnowledgeGraph {
     ///
     /// Used when the embedding model dimension changes — existing embeddings
     /// are incompatible, so every file must be re-embedded. Only clears the
-    /// tracking records (content hashes); nodes and edges survive so
-    /// summarization metadata is preserved.
+    /// tracking records (content hashes); nodes and edges survive.
     ///
     /// Returns the number of records cleared.
     pub fn clear_ingestion_hashes(&self) -> SCSResult<usize> {
@@ -1543,8 +1435,7 @@ impl KnowledgeGraph {
     ///
     /// Returns a map of `node_id → Vec<Edge>` for the requested direction.
     /// This replaces N individual `get_edges` calls with a single query using
-    /// an IN clause, dramatically reducing connection pool pressure during
-    /// summarization where thousands of nodes need their edges fetched.
+    /// an IN clause, reducing connection pool pressure for large traversals.
     ///
     /// When `node_ids` is empty, returns an empty map without touching the DB.
     pub fn batch_get_edges(
@@ -2378,10 +2269,7 @@ mod tests {
             .is_err());
     }
 
-    /// Upserting a node must merge metadata (json_patch) rather than replace it.
-    /// Simulates the real workflow: ingestion writes parser fields, then the
-    /// summarizer adds summary_content_hash, then re-ingestion runs again —
-    /// summary fields must survive.
+    /// Upserting a node merges independently owned metadata rather than replacing it.
     #[test]
     fn upsert_node_merges_metadata_preserving_existing_keys() {
         let (_dir, graph) = test_graph();
@@ -2403,12 +2291,12 @@ mod tests {
             )
             .unwrap();
 
-        // Step 2: Summarizer enriches metadata.
-        let mut meta_summary = HashMap::new();
-        meta_summary.insert("file_path".to_string(), json!("lib.rs"));
-        meta_summary.insert("start_line".to_string(), json!(1));
-        meta_summary.insert("summary_content_hash".to_string(), json!("sha256_abc"));
-        meta_summary.insert("summary_model".to_string(), json!("haiku"));
+        // Step 2: An independent analyzer enriches metadata.
+        let mut analyzer_metadata = HashMap::new();
+        analyzer_metadata.insert("file_path".to_string(), json!("lib.rs"));
+        analyzer_metadata.insert("start_line".to_string(), json!(1));
+        analyzer_metadata.insert("semantic_label".to_string(), json!("entrypoint"));
+        analyzer_metadata.insert("analysis_version".to_string(), json!(2));
 
         graph
             .upsert_node(
@@ -2416,13 +2304,13 @@ mod tests {
                 NodeType::Function,
                 "run",
                 "fn run() {}",
-                Some(&meta_summary),
+                Some(&analyzer_metadata),
                 None,
                 None,
             )
             .unwrap();
 
-        // Step 3: Re-ingestion — fresh parser metadata, no summary fields.
+        // Step 3: Re-ingestion updates parser metadata only.
         let mut meta_reingestion = HashMap::new();
         meta_reingestion.insert("file_path".to_string(), json!("lib.rs"));
         meta_reingestion.insert("start_line".to_string(), json!(5)); // line changed
@@ -2441,12 +2329,12 @@ mod tests {
 
         // Parser field was updated.
         assert_eq!(node.metadata["start_line"], json!(5));
-        // Summary fields survived the re-ingestion.
-        assert_eq!(node.metadata["summary_content_hash"], json!("sha256_abc"));
-        assert_eq!(node.metadata["summary_model"], json!("haiku"));
+        // Independently owned fields survived the re-ingestion.
+        assert_eq!(node.metadata["semantic_label"], json!("entrypoint"));
+        assert_eq!(node.metadata["analysis_version"], json!(2));
     }
 
-    /// Same merge guarantee for edges — summary metadata must survive re-upsert.
+    /// The same merge guarantee protects independently owned edge metadata.
     #[test]
     fn upsert_edge_merges_metadata_preserving_existing_keys() {
         let (_dir, graph) = test_graph();
@@ -2461,21 +2349,21 @@ mod tests {
         // Step 1: Initial edge (no metadata).
         graph.upsert_edge("a", "b", "contains", 1.0, None).unwrap();
 
-        // Step 2: Summarizer adds summary metadata.
-        let mut summary_meta = HashMap::new();
-        summary_meta.insert("summary".to_string(), json!("A contains B"));
-        summary_meta.insert("summary_content_hash".to_string(), json!("hash_xyz"));
+        // Step 2: An independent analyzer adds metadata.
+        let mut analyzer_metadata = HashMap::new();
+        analyzer_metadata.insert("confidence_source".to_string(), json!("static"));
+        analyzer_metadata.insert("analysis_version".to_string(), json!(2));
 
         graph
-            .upsert_edge("a", "b", "contains", 1.0, Some(&summary_meta))
+            .upsert_edge("a", "b", "contains", 1.0, Some(&analyzer_metadata))
             .unwrap();
 
         // Step 3: Re-ingestion with empty metadata but updated weight.
         let edge = graph.upsert_edge("a", "b", "contains", 2.0, None).unwrap();
 
         assert_eq!(edge.weight, 2.0);
-        assert_eq!(edge.metadata["summary"], json!("A contains B"));
-        assert_eq!(edge.metadata["summary_content_hash"], json!("hash_xyz"));
+        assert_eq!(edge.metadata["confidence_source"], json!("static"));
+        assert_eq!(edge.metadata["analysis_version"], json!(2));
     }
 
     // ── Embedding count tests ──
@@ -2624,96 +2512,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(deleted, 0);
-    }
-
-    // ── strip_metadata_keys tests ──
-
-    /// Stripping metadata keys should remove them from nodes and edges.
-    #[test]
-    fn strip_metadata_keys_removes_summary_fields() {
-        let (_dir, graph) = test_graph();
-        let emb = make_embedding(1, 768);
-
-        // Create a node with summary metadata.
-        let meta: HashMap<String, serde_json::Value> = [
-            ("summary".to_string(), json!("A class that does things")),
-            ("summary_content_hash".to_string(), json!("abc123")),
-            ("file_path".to_string(), json!("foo.py")),
-        ]
-        .into();
-        graph
-            .upsert_node(
-                "n1",
-                NodeType::Class,
-                "Foo",
-                "class Foo",
-                Some(&meta),
-                Some(&emb),
-                None,
-            )
-            .unwrap();
-
-        // Create an edge with summary metadata.
-        let edge_meta: HashMap<String, serde_json::Value> = [
-            ("summary".to_string(), json!("Foo calls bar")),
-            ("summary_content_hash".to_string(), json!("def456")),
-        ]
-        .into();
-        graph
-            .upsert_node(
-                "n2",
-                NodeType::Function,
-                "bar",
-                "def bar()",
-                None,
-                Some(&emb),
-                None,
-            )
-            .unwrap();
-        graph
-            .upsert_edge("n1", "n2", "calls", 1.0, Some(&edge_meta))
-            .unwrap();
-
-        let (nodes_updated, edges_updated) = graph
-            .strip_metadata_keys(&["summary", "summary_content_hash"])
-            .unwrap();
-
-        assert_eq!(nodes_updated, 1);
-        assert_eq!(edges_updated, 1);
-
-        // Verify node metadata no longer has summary keys but retains others.
-        let node = graph.get_node("n1").unwrap().unwrap();
-        assert!(!node.metadata.contains_key("summary"));
-        assert!(!node.metadata.contains_key("summary_content_hash"));
-        assert_eq!(node.metadata.get("file_path").unwrap(), "foo.py");
-    }
-
-    /// Stripping with no matching keys should return zero updates.
-    #[test]
-    fn strip_metadata_keys_no_op_when_keys_absent() {
-        let (_dir, graph) = test_graph();
-        let emb = make_embedding(1, 768);
-
-        let meta: HashMap<String, serde_json::Value> =
-            [("file_path".to_string(), json!("bar.py"))].into();
-        graph
-            .upsert_node(
-                "n1",
-                NodeType::Function,
-                "bar",
-                "def bar()",
-                Some(&meta),
-                Some(&emb),
-                None,
-            )
-            .unwrap();
-
-        let (nodes_updated, edges_updated) = graph
-            .strip_metadata_keys(&["summary", "summary_content_hash"])
-            .unwrap();
-
-        assert_eq!(nodes_updated, 0);
-        assert_eq!(edges_updated, 0);
     }
 
     // ── Vacuum tests ──
@@ -3445,97 +3243,5 @@ mod tests {
             .count_nodes_without_embeddings(Some(NodeType::Class), Some(repo_b.id))
             .unwrap();
         assert_eq!(count_b_class, 2);
-    }
-
-    #[test]
-    fn list_summarizable_nodes_uses_repo_scope_and_keyset_pagination() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let graph = KnowledgeGraph::open(SCSConfig {
-            db_path: db_path.clone(),
-            index_path: db_path.with_extension("usearch"),
-            embedding_dim: 768,
-            pool_size: 2,
-        })
-        .unwrap();
-
-        let repo_a = graph.get_or_create_repo("/tmp/repo-a").unwrap();
-        let repo_b = graph.get_or_create_repo("/tmp/repo-b").unwrap();
-
-        let meta_a = HashMap::from([(
-            "file_path".to_string(),
-            serde_json::Value::String("a.py".to_string()),
-        )]);
-        let meta_b = HashMap::from([(
-            "file_path".to_string(),
-            serde_json::Value::String("b.py".to_string()),
-        )]);
-        let meta_c = HashMap::from([(
-            "file_path".to_string(),
-            serde_json::Value::String("c.py".to_string()),
-        )]);
-
-        graph
-            .upsert_node(
-                "a-1",
-                NodeType::Class,
-                "Alpha",
-                "class Alpha: pass",
-                Some(&meta_a),
-                None,
-                Some(repo_a.id),
-            )
-            .unwrap();
-        graph
-            .upsert_node(
-                "a-2",
-                NodeType::Function,
-                "beta",
-                "def beta(): pass",
-                Some(&meta_b),
-                None,
-                Some(repo_a.id),
-            )
-            .unwrap();
-        graph
-            .upsert_node(
-                "b-1",
-                NodeType::Class,
-                "Gamma",
-                "class Gamma: pass",
-                Some(&meta_c),
-                None,
-                Some(repo_b.id),
-            )
-            .unwrap();
-        graph
-            .upsert_node(
-                "skip-1",
-                NodeType::Function,
-                "NoFilePath",
-                "concept",
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-
-        let first_page = graph
-            .list_summarizable_nodes(1, None, Some(repo_a.id))
-            .unwrap();
-        assert_eq!(first_page.len(), 1);
-        assert_eq!(first_page[0].id, "a-1");
-
-        let second_page = graph
-            .list_summarizable_nodes(10, Some(&first_page[0].id), Some(repo_a.id))
-            .unwrap();
-        assert_eq!(second_page.len(), 1);
-        assert_eq!(second_page[0].id, "a-2");
-
-        let repo_b_nodes = graph
-            .list_summarizable_nodes(10, None, Some(repo_b.id))
-            .unwrap();
-        assert_eq!(repo_b_nodes.len(), 1);
-        assert_eq!(repo_b_nodes[0].id, "b-1");
     }
 }

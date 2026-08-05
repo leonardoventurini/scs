@@ -104,6 +104,10 @@ async def test_streamable_http_lists_exact_inventory_on_ephemeral_port() -> None
         await server.stop()
 
     assert {tool.name for tool in tools.tools} == MOVED_TO_SCS_TOOLS
+    sample_nodes = next(tool for tool in tools.tools if tool.name == "sample_nodes")
+    properties = sample_nodes.inputSchema.get("properties", {})
+    assert isinstance(properties, dict)
+    assert "summary_status" not in properties
 
 
 async def test_http_server_fails_closed_when_port_is_occupied() -> None:

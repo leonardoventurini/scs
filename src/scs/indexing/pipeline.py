@@ -9,20 +9,15 @@ from collections.abc import Callable, Coroutine, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, TypeVar, cast
+from typing import Protocol, TypeVar
 
-from scs.graph.models import NodeType
 from scs.indexing.discovery import FileEntry, build_file_entry, discover
 from scs.indexing.parser.base import LanguageParser, ParsedEdge, ParsedEntity
 from scs.indexing.repository_paths import (
     assert_ingestable_repo_path,
     canonicalize_repo_path,
 )
-from scs.providers.base import (
-    EmbeddingProvider,
-    FileSummarizer,
-    ProviderUnavailableError,
-)
+from scs.providers.base import EmbeddingProvider, ProviderUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +73,6 @@ class IngestionResult:
     edges_created: int = 0
     edges_dropped: int = 0
     embeddings_created: int = 0
-    summaries_generated: int = 0
     semantic_degraded_reason: str | None = None
 
 
@@ -117,13 +111,11 @@ class IngestionPipeline:
         graph: GraphStore,
         parser: LanguageParser,
         embeddings: EmbeddingProvider | None = None,
-        summarizer: FileSummarizer | None = None,
         progress: Callable[[IngestionProgress], None] | None = None,
     ) -> None:
         self._graph: GraphStore = graph
         self._parser: LanguageParser = parser
         self._embeddings: EmbeddingProvider | None = embeddings
-        self._summarizer: FileSummarizer | None = summarizer
         self._progress: Callable[[IngestionProgress], None] = (
             progress or self._ignore_progress
         )
@@ -237,13 +229,7 @@ class IngestionPipeline:
         )
         result.edges_dropped = sum(len(item.edges) for item in parsed) - len(edges)
 
-        summaries = self._summarize(parsed, result)
-        if summaries:
-            summary_updates = self._summary_updates(nodes, summaries)
-            if summary_updates:
-                self._graph.batch_upsert_nodes_sync(summary_updates)
-
-        embeddings_durable = self._embed(parsed, node_ids, result, summaries)
+        embeddings_durable = self._embed(parsed, node_ids, result)
         if embeddings_durable:
             self._graph.flush_vector_index_sync()
 
@@ -351,61 +337,18 @@ class IngestionPipeline:
                     )
         return edges
 
-    def _summarize(
-        self, parsed: list[_ParsedFile], result: IngestionResult
-    ) -> dict[str, str]:
-        if self._summarizer is None:
-            return {}
-        files = {
-            item.entry.rel_path: "\n".join(
-                entity.embed_text() for entity in item.entities
-            )
-            for item in parsed
-        }
-        try:
-            summaries = _run(self._summarizer.summarize_files(files))
-        except (ProviderUnavailableError, OSError, RuntimeError) as exc:
-            result.semantic_degraded_reason = str(exc)
-            return {}
-        result.summaries_generated = len(summaries)
-        return summaries
-
-    @staticmethod
-    def _summary_updates(
-        nodes: list[dict[str, object]], summaries: dict[str, str]
-    ) -> list[dict[str, object]]:
-        updates: list[dict[str, object]] = []
-        for node in nodes:
-            metadata = dict(cast(dict[str, object], node["metadata"]))
-            path = metadata.get("file_path")
-            if (
-                node["type"] == NodeType.FILE.value
-                and isinstance(path, str)
-                and path in summaries
-            ):
-                metadata["summary"] = summaries[path]
-                updates.append({**node, "metadata": metadata})
-        return updates
-
     def _embed(
         self,
         parsed: list[_ParsedFile],
         node_ids: dict[str, str],
         result: IngestionResult,
-        summaries: dict[str, str],
     ) -> bool:
         if self._embeddings is None or not self._embeddings.metadata.available:
             if self._embeddings is not None:
                 result.semantic_degraded_reason = self._embeddings.metadata.reason
             return False
         entities = [entity for item in parsed for entity in item.entities]
-        texts = [
-            f"{summaries.get(item.entry.rel_path, '')}. {entity.embed_text()}".lstrip(
-                ". "
-            )
-            for item in parsed
-            for entity in item.entities
-        ]
+        texts = [entity.embed_text() for item in parsed for entity in item.entities]
         try:
             vectors: list[list[float]] = []
             for offset in range(0, len(texts), EMBED_BATCH_SIZE):

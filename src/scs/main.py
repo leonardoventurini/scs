@@ -22,9 +22,8 @@ from scs.identity import IdentityPublisher
 from scs.mcp.gateway import SCSWireGateway
 from scs.mcp.http import MCPHTTPServer
 from scs.mcp.server import build_mcp
-from scs.providers.mlx import MLXEmbeddingProvider
 from scs.providers.base import EmbeddingProvider
-from scs.providers.openai import OpenAIFileSummarizer
+from scs.providers.mlx import MLXEmbeddingProvider
 from scs.service import ProcessLock
 from scs.services import SCSServiceRoutes
 from scs.wire.events import EventBroker
@@ -116,11 +115,6 @@ class SCSDaemon:
             )
             jobs = await asyncio.to_thread(IngestionJobStore, paths.jobs_database)
             parser = NativeParser()
-            summarizer = OpenAIFileSummarizer(
-                api_key=self.settings.openai_api_key,
-                model=self.settings.summarizer_model,
-                timeout_seconds=self.settings.summarizer_timeout_seconds,
-            )
             loop = asyncio.get_running_loop()
 
             def pipeline_factory(_job: IngestionJob) -> IngestionPipeline:
@@ -141,7 +135,6 @@ class SCSDaemon:
                     graph=graph,
                     parser=parser,
                     embeddings=embeddings,
-                    summarizer=summarizer,
                     progress=report,
                 )
 

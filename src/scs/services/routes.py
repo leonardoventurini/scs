@@ -341,22 +341,12 @@ class SCSServiceRoutes:
     async def sample(self, params: dict[str, object]) -> dict[str, object]:
         listing = await self.nodes_list({**params, "offset": 0})
         file_path = _string(params, "file_path")
-        summary_status = _string(params, "summary_status")
         nodes = _dict_list(listing.get("nodes"), key="nodes")
         if file_path:
             nodes = [
                 node
                 for node in nodes
                 if _nested_value(node, "metadata", "file_path") == file_path
-            ]
-        if summary_status:
-            nodes = [
-                node
-                for node in nodes
-                if (
-                    "fresh" if _nested_value(node, "metadata", "summary") else "missing"
-                )
-                == summary_status
             ]
         return {"nodes": nodes, "total": len(nodes)}
 

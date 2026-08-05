@@ -200,9 +200,8 @@ pub fn get_file_paths_for_repo(pool: &ConnectionPool, repo_path: &str) -> SCSRes
 /// Remove only the ingested_files tracking record for a file.
 ///
 /// Unlike `delete_ingested_file`, this does NOT delete the associated
-/// nodes or embeddings.  Used when the pipeline will upsert (merge)
-/// nodes for changed files rather than delete-and-recreate, preserving
-/// metadata like summary_content_hash written by the summarizer.
+/// nodes or embeddings. Used when the pipeline will replace the affected
+/// subgraph after invalidating its prior ingestion hash.
 pub fn delete_ingestion_record(
     pool: &ConnectionPool,
     repo_path: &str,

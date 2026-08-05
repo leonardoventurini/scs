@@ -113,15 +113,19 @@ class FakeGraph:
 
 
 class FakeEmbeddings:
+    def __init__(self) -> None:
+        self.document_inputs: list[str] = []
+
     @property
     def metadata(self):
         from scs.providers.base import ProviderMetadata
         return ProviderMetadata("fake", "deterministic", 2)
 
-    async def embed_documents(self, texts):
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.document_inputs.extend(texts)
         return [[float(len(text)), 1.0] for text in texts]
 
-    async def embed_query(self, text):
+    async def embed_query(self, text: str) -> list[float]:
         return [float(len(text)), 1.0]
 
 

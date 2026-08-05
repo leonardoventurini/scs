@@ -49,22 +49,6 @@ class EmbeddingProvider(Protocol):
 
 
 @runtime_checkable
-class FileSummarizer(Protocol):
-    """Optional provider that summarizes code files without owning storage."""
-
-    @property
-    def provider_name(self) -> str:
-        """Return a stable provider/model identity for provenance."""
-
-        ...
-
-    async def summarize_files(self, files: Mapping[str, str]) -> dict[str, str]:
-        """Return summaries keyed by the supplied repository-relative paths."""
-
-        ...
-
-
-@runtime_checkable
 class EventSink(Protocol):
     """Non-blocking output port for durable job and indexing progress events."""
 

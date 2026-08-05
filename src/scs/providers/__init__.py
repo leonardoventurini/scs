@@ -3,7 +3,6 @@
 from scs.providers.base import (
     EmbeddingProvider,
     EventSink,
-    FileSummarizer,
     NullEventSink,
     ProviderMetadata,
     ProviderUnavailableError,
@@ -12,7 +11,6 @@ from scs.providers.base import (
 __all__ = [
     "EmbeddingProvider",
     "EventSink",
-    "FileSummarizer",
     "NullEventSink",
     "ProviderMetadata",
     "ProviderUnavailableError",

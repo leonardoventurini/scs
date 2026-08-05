@@ -180,7 +180,7 @@ impl PyKnowledgeGraph {
             db_path: db_path_buf,
             embedding_dim,
             // 8 connections: leaves headroom for wire server health/status
-            // polls while summarization runs batch queries in background.
+            // polls while indexing and embedding queries run in background.
             pool_size: 8,
         };
 
@@ -309,16 +309,6 @@ impl PyKnowledgeGraph {
         .map_err(scs_err)
     }
 
-    /// Strip metadata keys from all nodes and edges.
-    ///
-    /// Releases the GIL — safe for asyncio.to_thread callers.
-    /// Returns (nodes_updated, edges_updated).
-    fn strip_metadata_keys(&self, py: Python<'_>, keys: Vec<String>) -> PyResult<(usize, usize)> {
-        let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-        py.allow_threads(|| self.inner.strip_metadata_keys(&key_refs))
-            .map_err(scs_err)
-    }
-
     /// List nodes, optionally filtered by type and/or repo. Returns JSON array string.
     ///
     /// GIL released during the query so concurrent `asyncio.to_thread` callers
@@ -433,25 +423,6 @@ impl PyKnowledgeGraph {
         to_json_pyobject(py, &nodes)
     }
 
-    /// List nodes eligible for summarization using keyset pagination.
-    ///
-    /// Scans only summarizable node types with a `file_path` metadata field
-    /// and orders by node ID so large-graph summarization can walk the table
-    /// without repeated OFFSET costs.
-    #[pyo3(signature = (limit=1000, after_id=None, repo_id=None))]
-    fn list_summarizable_nodes(
-        &self,
-        py: Python<'_>,
-        limit: i64,
-        after_id: Option<&str>,
-        repo_id: Option<i64>,
-    ) -> PyResult<PyObject> {
-        let nodes = py
-            .allow_threads(|| self.inner.list_summarizable_nodes(limit, after_id, repo_id))
-            .map_err(scs_err)?;
-        to_json_pyobject(py, &nodes)
-    }
-
     /// Count nodes that have no embedding vector.
     ///
     /// Optionally scoped by type and/or repo. GIL released during the query.
@@ -539,7 +510,7 @@ impl PyKnowledgeGraph {
     /// mapping `node_id → [Edge]`.
     ///
     /// Replaces N individual `get_edges` calls with one SQL IN-clause query,
-    /// reducing connection pool pressure during summarization of large repos.
+    /// reducing connection pool pressure for large repository traversals.
     #[pyo3(signature = (node_ids, direction="both"))]
     fn batch_get_edges(
         &self,
@@ -788,7 +759,7 @@ impl PyKnowledgeGraph {
     /// Get per-repo ingestion stats. Returns JSON object string.
     ///
     /// GIL released during the query so stats polling doesn't block during
-    /// heavy background work (summarization, embedding generation).
+    /// heavy background embedding generation.
     fn get_ingestion_stats(&self, py: Python<'_>) -> PyResult<PyObject> {
         let pool = self.inner.pool();
         let stats = py
@@ -840,9 +811,8 @@ impl PyKnowledgeGraph {
 
     /// Remove only the ingested_files tracking record, not the nodes.
     ///
-    /// Paired with the json_patch metadata merge in batch_upsert_nodes,
-    /// this allows re-ingestion to update nodes without losing summary
-    /// metadata written by the summarizer.
+    /// This lets the indexing pipeline invalidate a hash before it replaces
+    /// the affected file subgraph.
     fn delete_ingestion_record(
         &self,
         py: Python<'_>,
