@@ -2,6 +2,7 @@
 
 ## 2026-08-05
 
+- fix: preserve graph state when rejecting invalid embedding dimensions
 - ci: enforce strict Python types before commit
 - remove: retire file summarization
 

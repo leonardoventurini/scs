@@ -61,8 +61,10 @@ index and never enrolls repositories merely because External product knows about
 
 ## Verification
 
-`just verify` runs strict Basedpyright checks, Ruff, all Python tests, and the
-Rust workspace. The pre-commit hook runs the same whole-source type gate.
+`just verify` runs strict Basedpyright checks, Ruff, all Python tests with
+branch coverage, and the Rust workspace. `just coverage` reports uncovered
+Python lines and enforces the committed risk-based floor. The pre-commit hook
+runs the same whole-source type gate.
 `cd proxy && uv run --all-groups pytest -v` verifies the separately packaged
 public proxy. Isolation gates cover exact MCP inventory, bounded frames,
 generation-safe cleanup, stale/live socket ownership, legacy sentinel

@@ -147,10 +147,22 @@ impl VectorIndex {
         self.path.display().to_string()
     }
 
+    /// Reject vectors that cannot be represented by this index before mutation.
+    pub(crate) fn validate_dimension(&self, embedding: &[f32]) -> SCSResult<()> {
+        if embedding.len() != self.dimensions {
+            return Err(SCSError::DimensionMismatch {
+                expected: self.dimensions,
+                actual: embedding.len(),
+            });
+        }
+        Ok(())
+    }
+
     /// Add or update a vector for the given node ID.
     ///
     /// If the key already exists, the old vector is replaced.
     pub fn add(&self, node_id: &str, embedding: &[f32]) -> SCSResult<()> {
+        self.validate_dimension(embedding)?;
         observe_result(
             QueryBackend::Vector,
             "VectorIndex::add",
@@ -190,6 +202,11 @@ impl VectorIndex {
     /// capacity once. Caller should call `save_if_dirty()` after the owning
     /// ingestion job completes.
     pub fn add_batch(&self, pairs: &[(String, Vec<f32>)]) -> SCSResult<usize> {
+        // Validate the complete batch before removing or adding any vector. A
+        // late dimension failure must not leave an earlier prefix committed.
+        for (_, embedding) in pairs {
+            self.validate_dimension(embedding)?;
+        }
         observe_result(
             QueryBackend::Vector,
             "VectorIndex::add_batch",
@@ -799,6 +816,55 @@ mod tests {
         // Search should find the updated vector.
         let results = idx.search(&[0.0, 1.0, 0.0, 0.0], 1).unwrap();
         assert_eq!(results[0].0, node_id_to_key("id-1"));
+    }
+
+    #[test]
+    fn rejected_replacement_preserves_existing_vector() {
+        let dir = tempfile::tempdir().unwrap();
+        let idx = VectorIndex::open(dir.path().join("test.usearch"), 4).unwrap();
+        let original = [1.0, 0.0, 0.0, 0.0];
+
+        idx.add("id-1", &original).unwrap();
+        let error = idx.add("id-1", &[0.0, 1.0, 0.0]).unwrap_err();
+
+        assert!(matches!(
+            error,
+            SCSError::DimensionMismatch {
+                expected: 4,
+                actual: 3
+            }
+        ));
+        assert_eq!(idx.size(), 1);
+        let results = idx.search(&original, 1).unwrap();
+        assert_eq!(results[0].0, node_id_to_key("id-1"));
+        assert!(results[0].1 < 1e-6);
+    }
+
+    #[test]
+    fn rejected_batch_has_no_partial_effects() {
+        let dir = tempfile::tempdir().unwrap();
+        let idx = VectorIndex::open(dir.path().join("test.usearch"), 4).unwrap();
+        let original = [1.0, 0.0, 0.0, 0.0];
+        idx.add("existing", &original).unwrap();
+        let pairs = vec![
+            ("existing".to_string(), vec![0.0, 1.0, 0.0, 0.0]),
+            ("new".to_string(), vec![0.0, 1.0, 0.0]),
+        ];
+
+        let error = idx.add_batch(&pairs).unwrap_err();
+
+        assert!(matches!(
+            error,
+            SCSError::DimensionMismatch {
+                expected: 4,
+                actual: 3
+            }
+        ));
+        assert_eq!(idx.size(), 1);
+        let results = idx.search(&original, 2).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, node_id_to_key("existing"));
+        assert!(results[0].1 < 1e-6);
     }
 
     #[test]

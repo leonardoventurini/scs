@@ -8,6 +8,11 @@ setup:
 test:
     uv run --all-groups pytest -v
 
+coverage: native-build
+    uv run --all-groups coverage erase
+    uv run --all-groups coverage run -m pytest -q
+    uv run --all-groups coverage report
+
 typecheck:
     uv run --all-groups basedpyright
 
@@ -20,4 +25,4 @@ native-test:
 native-build:
     ./scripts/build-native.sh
 
-verify: typecheck lint test native-test
+verify: typecheck lint coverage native-test

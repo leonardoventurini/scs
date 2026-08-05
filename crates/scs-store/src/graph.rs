@@ -284,6 +284,11 @@ impl KnowledgeGraph {
         embedding: Option<&[f32]>,
         repo_id: Option<i64>,
     ) -> SCSResult<Node> {
+        // SQLite and USearch do not share a transaction. Reject deterministic
+        // vector-shape errors before either backend can mutate durable state.
+        if let Some(embedding) = embedding {
+            self.vector_index.validate_dimension(embedding)?;
+        }
         let conn = self.pool.get().pool_err()?;
         let meta_json = match metadata {
             Some(m) => serde_json::to_string(m)?,
@@ -1549,6 +1554,7 @@ pub enum TraversalDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scs_core::error::SCSError;
     use serde_json::json;
 
     fn test_graph() -> (tempfile::TempDir, KnowledgeGraph) {
@@ -1640,6 +1646,83 @@ mod tests {
         let node = graph.get_node("n1").unwrap().unwrap();
         assert_eq!(node.name, "new name");
         assert_eq!(node.content, "new");
+    }
+
+    #[test]
+    fn failed_embedding_upsert_preserves_existing_node_and_vector() {
+        let (dir, graph) = test_graph();
+        let config = graph.config().clone();
+        let original_embedding = make_embedding(1, 768);
+        let original_repo = graph.get_or_create_repo("/repo/original").unwrap();
+        let replacement_repo = graph.get_or_create_repo("/repo/replacement").unwrap();
+        let original_metadata = HashMap::from([
+            ("file_path".to_string(), json!("src/original.rs")),
+            ("start_line".to_string(), json!(7)),
+        ]);
+        let original = graph
+            .upsert_node(
+                "n1",
+                NodeType::Function,
+                "original",
+                "fn original() {}",
+                Some(&original_metadata),
+                Some(&original_embedding),
+                Some(original_repo.id),
+            )
+            .unwrap();
+        graph.flush_vector_index().unwrap();
+
+        let error = graph
+            .upsert_node(
+                "n1",
+                NodeType::Class,
+                "replacement",
+                "struct Replacement;",
+                Some(&HashMap::from([(
+                    "file_path".to_string(),
+                    json!("src/replacement.rs"),
+                )])),
+                Some(&make_embedding(2, 767)),
+                Some(replacement_repo.id),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SCSError::DimensionMismatch {
+                expected: 768,
+                actual: 767
+            }
+        ));
+        let preserved = graph.get_node("n1").unwrap().unwrap();
+        assert_eq!(preserved.id, original.id);
+        assert_eq!(preserved.node_type, original.node_type);
+        assert_eq!(preserved.name, original.name);
+        assert_eq!(preserved.content, original.content);
+        assert_eq!(preserved.metadata, original.metadata);
+        assert_eq!(preserved.repo_id, original.repo_id);
+        assert_eq!(preserved.created_at, original.created_at);
+        assert_eq!(preserved.updated_at, original.updated_at);
+        assert_eq!(graph.count_embeddings().unwrap(), 1);
+        drop(graph);
+
+        let reopened = KnowledgeGraph::open(config).unwrap();
+        let reopened_node = reopened.get_node("n1").unwrap().unwrap();
+        assert_eq!(reopened_node.id, original.id);
+        assert_eq!(reopened_node.node_type, original.node_type);
+        assert_eq!(reopened_node.name, original.name);
+        assert_eq!(reopened_node.content, original.content);
+        assert_eq!(reopened_node.metadata, original.metadata);
+        assert_eq!(reopened_node.repo_id, original.repo_id);
+        assert_eq!(reopened_node.created_at, original.created_at);
+        assert_eq!(reopened_node.updated_at, original.updated_at);
+        assert_eq!(reopened.count_embeddings().unwrap(), 1);
+        let results = reopened
+            .search_by_vector(&original_embedding, None, 1, None)
+            .unwrap();
+        assert_eq!(results[0].node.id, "n1");
+        assert!(results[0].distance < 1e-6);
+        drop(dir);
     }
 
     #[test]

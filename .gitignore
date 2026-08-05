@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.coverage*
 *.pyc
 target/
 dist/
@@ -9,4 +10,3 @@ dist/
 *.db-wal
 *.db-shm
 *.usearch
-

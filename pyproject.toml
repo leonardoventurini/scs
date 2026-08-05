@@ -19,6 +19,7 @@ scs = "scs.cli:main"
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.9",
+    "coverage>=7.15.3",
     "hypothesis>=6.156.6",
     "pre-commit>=4.6.1",
     "pytest>=8.4",
@@ -36,6 +37,16 @@ packages = ["src/scs", "proxy/src/scs_mcp_proxy"]
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/scs"]
+
+[tool.coverage.report]
+fail_under = 83
+precision = 2
+show_missing = true
+skip_covered = true
 
 [tool.basedpyright]
 include = ["src/scs"]

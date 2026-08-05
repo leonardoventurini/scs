@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import re
 from pathlib import Path
+
+import pytest
 
 from scs.graph.models import NodeType, RelationshipType
 
@@ -102,6 +105,51 @@ def test_native_rejects_non_code_graph_discriminators(tmp_path: Path) -> None:
         assert "invalid relationship type" in str(error)
     else:
         raise AssertionError("non-code relationship type was accepted")
+
+
+def test_native_dimension_error_preserves_prior_node_and_vector(tmp_path: Path) -> None:
+    """Cross-language errors cannot partially overwrite durable graph state."""
+
+    native = importlib.import_module("_scs_native")
+    database = tmp_path / "index.db"
+    graph = native.KnowledgeGraph(str(database), 4)
+    graph.upsert_node(
+        "stable",
+        "function",
+        "original",
+        "def original(): pass",
+        embedding=[1.0, 0.0, 0.0, 0.0],
+    )
+    graph.flush_vector_index()
+
+    with pytest.raises(
+        RuntimeError, match="embedding dimension mismatch: expected 4, got 3"
+    ):
+        graph.upsert_node(
+            "stable",
+            "function",
+            "replacement",
+            "def replacement(): pass",
+            embedding=[0.0, 1.0, 0.0],
+        )
+
+    node = json.loads(graph.get_node("stable"))
+    assert node["name"] == "original"
+    assert node["content"] == "def original(): pass"
+    assert graph.count_embeddings() == 1
+    results = json.loads(graph.search_by_vector([1.0, 0.0, 0.0, 0.0]))
+    assert results[0]["node"]["id"] == "stable"
+    assert results[0]["distance"] < 1e-6
+    del graph
+
+    reopened = native.KnowledgeGraph(str(database), 4)
+    assert json.loads(reopened.get_node("stable"))["name"] == "original"
+    assert reopened.count_embeddings() == 1
+    reopened_results = json.loads(
+        reopened.search_by_vector([1.0, 0.0, 0.0, 0.0])
+    )
+    assert reopened_results[0]["node"]["id"] == "stable"
+    assert reopened_results[0]["distance"] < 1e-6
 
 
 def test_rust_ffi_storage_and_parser_calls_release_the_gil() -> None:
