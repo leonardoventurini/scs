@@ -74,7 +74,6 @@ class SCSDaemon:
             graph=self._require_graph,
             jobs=self._require_jobs,
             embeddings=self._require_embeddings,
-            settings=self.settings,
         )
         self._register_methods()
 
@@ -342,26 +341,11 @@ class SCSDaemon:
             "knowledge.related": self._services.related,
             "knowledge.graph_context": self._services.graph_context,
             "knowledge.nodes.list": self._services.nodes_list,
-            "knowledge.nodes.get": self._services.node_get,
             "knowledge.stats": self._services.stats,
-            "knowledge.inspect": self._services.inspect,
-            "knowledge.sample": self._services.sample,
             "knowledge.inspect_file": self._services.inspect_file,
-            "knowledge.composite.test_coverage": self._services.composite_test_coverage,
             "knowledge.composite.regression_risk": self._services.composite_regression_risk,
-            "knowledge.composite.consistency_check": self._services.composite_consistency,
-            "knowledge.composite.contract_check": self._services.composite_contract_check,
             "repository.ingest_files": self._services.ingest_files,
-            "repository.ingest_git_history": self._services.ingest_git_history,
-            "diagnostics.snapshot": self._services.diagnostics_snapshot,
-            "diagnostics.recent_failures": self._services.diagnostics_recent_failures,
-            "diagnostics.index_health": self._services.diagnostics_index_health,
-            "diagnostics.dev_doctor": self._services.diagnostics_dev_doctor,
-            "diagnostics.test_recommendations": self._services.diagnostics_test_recommendations,
-            "lsp.symbols": self._services.lsp_symbols,
-            "lsp.find_symbol": self._services.lsp_find_symbol,
             "lsp.references": self._services.lsp_references,
-            "lsp.hover": self._services.lsp_hover,
         }
         for method_name, handler in service_methods.items():
             self._router.method(method_name)(handler)

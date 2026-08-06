@@ -59,6 +59,9 @@ class _NativeGraphHandle(Protocol):
     def count_nodes(self, node_type: str | None, repo_id: int | None) -> int: ...
     def count_nodes_by_type(self, repo_id: int | None) -> object: ...
     def count_embeddings(self) -> int: ...
+    def count_nodes_without_embeddings(
+        self, node_type: str | None, repo_id: int | None
+    ) -> int: ...
     def get_edges(
         self, node_id: str, relationship: str | None, direction: str
     ) -> object: ...
@@ -309,6 +312,15 @@ class NativeGraph:
 
     def count_embeddings_sync(self) -> int:
         return self._inner.count_embeddings()
+
+    def count_nodes_without_embeddings_sync(
+        self, *, node_type: NodeType | None = None, repo_id: int | None = None
+    ) -> int:
+        """Count unembedded nodes within the requested graph scope."""
+
+        return self._inner.count_nodes_without_embeddings(
+            node_type.value if node_type else None, repo_id
+        )
 
     def get_edges_sync(
         self,

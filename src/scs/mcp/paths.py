@@ -9,7 +9,7 @@ def canonical_repo_path(repo_path: str | None) -> str | None:
     """Resolve a repository scope without creating or changing it."""
 
     if repo_path == "":
-        return None
+        raise ValueError("repo_path must be a non-empty string")
     candidate = Path.cwd() if repo_path is None else Path(repo_path)
     resolved = candidate.expanduser().resolve(strict=True)
     if not resolved.is_dir():

@@ -13,7 +13,19 @@ does not call a remote file-summarization service and requires no API key for
 indexing or search.
 
 The service has no graphical interface. Use `scs status`, `scs doctor`, logs,
-SCSWire, or MCP diagnostics for operational visibility.
+SCSWire, or MCP index statistics for operational visibility.
+
+## MCP tools
+
+SCS exposes ten model-facing operations with distinct code-intelligence jobs:
+`search_code`, `graph_context`, `get_related`, `list_symbols`, `inspect_file`,
+`find_references`, `regression_risk_report`, `ingest_project`, `ingest_files`,
+and `get_graph_stats`. Repository-query tools are annotated read-only and
+closed-world. Ingestion tools are marked destructive because reconciliation can
+remove stale SCS-owned index state; SCS never mutates repository source.
+
+Operational diagnostics remain available through the CLI and SCSWire instead
+of occupying the model's tool catalog.
 
 ## Runtime ownership
 

@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
+from mcp.types import ToolAnnotations
+
+from scs.mcp.contracts import (
+    GraphContextOutput,
+    GraphStatsOutput,
+    IngestionOutput,
+    InspectFileOutput,
+    ListSymbolsOutput,
+    ReferencesOutput,
+    RegressionRiskOutput,
+    RelatedOutput,
+    SearchCodeOutput,
+)
 from scs.mcp.gateway import ServiceGateway
-from scs.mcp.inventory import MOVED_TO_SCS_TOOLS
 from scs.mcp.observability import ObservedFastMCP, ToolRecorder
 from scs.mcp.paths import (
     canonical_repo_path,
@@ -15,6 +28,21 @@ from scs.mcp.paths import (
 
 MAX_RESULTS = 200
 MAX_TRAVERSAL_DEPTH = 3
+
+# Query tools inspect only SCS-owned state derived from local repositories.
+# Ingestion tools are separately annotated because they mutate the index even
+# though the repository source itself remains immutable.
+READ_ONLY_LOCAL = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+INDEX_MUTATING_LOCAL = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    openWorldHint=False,
+)
 
 
 def _limit(value: int) -> int:
@@ -30,86 +58,102 @@ def build_mcp(
 
     mcp = ObservedFastMCP("scs", recorder=recorder or ToolRecorder())
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def search_code(
         query: str,
         node_type: str | None = None,
         limit: int = 10,
         repo_path: str | None = None,
-    ) -> dict[str, object]:
+    ) -> SearchCodeOutput:
         """Search indexed code using semantic and lexical retrieval."""
-        return await gateway.call(
-            "knowledge.search",
-            {
-                "query": query,
-                "node_type": node_type,
-                "limit": _limit(limit),
-                "repo_path": canonical_repo_path(repo_path),
-            },
+        return cast(
+            SearchCodeOutput,
+            await gateway.call(
+                "knowledge.search",
+                {
+                    "query": query,
+                    "node_type": node_type,
+                    "limit": _limit(limit),
+                    "repo_path": canonical_repo_path(repo_path),
+                },
+            ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def get_related(
-        symbol_name: str,
+        symbol_name: str | None = None,
+        node_id: str | None = None,
         depth: int = 2,
         relationship: str | None = None,
         direction: str = "outgoing",
-    ) -> dict[str, object]:
-        """Traverse relationships around an indexed code symbol."""
-        return await gateway.call(
-            "knowledge.related",
-            {
-                "symbol_name": symbol_name,
-                "depth": max(1, min(depth, MAX_TRAVERSAL_DEPTH)),
-                "relationship": relationship,
-                "direction": direction,
-            },
+        repo_path: str | None = None,
+    ) -> RelatedOutput:
+        """Traverse relationships from exactly one symbol name or node ID."""
+        return cast(
+            RelatedOutput,
+            await gateway.call(
+                "knowledge.related",
+                {
+                    "symbol_name": symbol_name,
+                    "node_id": node_id,
+                    "depth": max(1, min(depth, MAX_TRAVERSAL_DEPTH)),
+                    "relationship": relationship,
+                    "direction": direction,
+                    "repo_path": canonical_repo_path(repo_path),
+                },
+            ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def graph_context(
         query: str,
         node_type: str | None = None,
         vector_limit: int = 5,
         hop_limit: int = 2,
         repo_path: str | None = None,
-    ) -> dict[str, object]:
+    ) -> GraphContextOutput:
         """Combine code search seeds with bounded graph traversal."""
-        return await gateway.call(
-            "knowledge.graph_context",
-            {
-                "query": query,
-                "node_type": node_type,
-                "vector_limit": _limit(vector_limit),
-                "hop_limit": max(1, min(hop_limit, MAX_TRAVERSAL_DEPTH)),
-                "repo_path": canonical_repo_path(repo_path),
-            },
+        return cast(
+            GraphContextOutput,
+            await gateway.call(
+                "knowledge.graph_context",
+                {
+                    "query": query,
+                    "node_type": node_type,
+                    "vector_limit": _limit(vector_limit),
+                    "hop_limit": max(1, min(hop_limit, MAX_TRAVERSAL_DEPTH)),
+                    "repo_path": canonical_repo_path(repo_path),
+                },
+            ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def list_symbols(
-        node_type: str | None = None,
+        node_type: str = "function",
         limit: int = 50,
         offset: int = 0,
         repo_path: str | None = None,
-    ) -> dict[str, object]:
+    ) -> ListSymbolsOutput:
         """List indexed code symbols with stable pagination."""
-        return await gateway.call(
-            "knowledge.nodes.list",
-            {
-                "node_type": node_type,
-                "limit": _limit(limit),
-                "offset": max(0, offset),
-                "repo_path": canonical_repo_path(repo_path),
-            },
+        return cast(
+            ListSymbolsOutput,
+            await gateway.call(
+                "knowledge.nodes.list",
+                {
+                    "node_type": node_type,
+                    "limit": _limit(limit),
+                    "offset": max(0, offset),
+                    "repo_path": canonical_repo_path(repo_path),
+                },
+            ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=INDEX_MUTATING_LOCAL)
     async def ingest_files(
         repo_path: str,
         file_paths: list[str] | None = None,
         deleted_paths: list[str] | None = None,
-    ) -> dict[str, object]:
+    ) -> IngestionOutput:
         """Queue explicit changed and deleted source files for indexing."""
         repo = canonical_repo_path(repo_path)
         assert repo is not None
@@ -117,246 +161,76 @@ def build_mcp(
         deleted = [contained_deleted_path(path) for path in (deleted_paths or [])]
         if not files and not deleted:
             raise ValueError("at least one changed or deleted file is required")
-        return await gateway.call(
-            "repository.ingest_files",
-            {"repo_path": repo, "file_paths": files, "deleted_paths": deleted},
+        return cast(
+            IngestionOutput,
+            await gateway.call(
+                "repository.ingest_files",
+                {"repo_path": repo, "file_paths": files, "deleted_paths": deleted},
+            ),
         )
 
-    @mcp.tool()
-    async def ingest_git_history(repo_path: str) -> dict[str, object]:
-        """Queue read-only ingestion of repository commit provenance."""
-        return await gateway.call(
-            "repository.ingest_git_history",
-            {"repo_path": canonical_repo_path(repo_path)},
-        )
-
-    @mcp.tool()
-    async def ingest_project(repo_path: str) -> dict[str, object]:
+    @mcp.tool(annotations=INDEX_MUTATING_LOCAL)
+    async def ingest_project(repo_path: str) -> IngestionOutput:
         """Queue an explicit full indexing pass for one repository."""
-        return await gateway.call(
-            "repository.index", {"repo_path": canonical_repo_path(repo_path)}
+        return cast(
+            IngestionOutput,
+            await gateway.call(
+                "repository.index", {"repo_path": canonical_repo_path(repo_path)}
+            ),
         )
 
-    @mcp.tool()
-    async def get_graph_stats() -> dict[str, object]:
-        """Return code graph and repository ingestion statistics."""
-        return await gateway.call("knowledge.stats")
-
-    @mcp.tool()
-    async def inspect_graph_quality(repo_path: str | None = None) -> dict[str, object]:
-        """Report code graph coverage and freshness."""
-        return await gateway.call(
-            "knowledge.inspect", {"repo_path": canonical_repo_path(repo_path)}
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
+    async def get_graph_stats(repo_path: str | None = None) -> GraphStatsOutput:
+        """Return index readiness and graph statistics, optionally for one repository."""
+        return cast(
+            GraphStatsOutput,
+            await gateway.call(
+                "knowledge.stats", {"repo_path": canonical_repo_path(repo_path)}
+            ),
         )
 
-    @mcp.tool()
-    async def sample_nodes(
-        node_type: str = "",
-        file_path: str = "",
-        limit: int = 10,
-        repo_path: str | None = None,
-    ) -> dict[str, object]:
-        """Sample indexed code nodes for parser and index inspection."""
-        return await gateway.call(
-            "knowledge.sample",
-            {
-                "node_type": node_type or None,
-                "file_path": file_path or None,
-                "limit": _limit(limit),
-                "repo_path": canonical_repo_path(repo_path),
-            },
-        )
-
-    @mcp.tool()
-    async def inspect_file(repo_path: str, file_path: str) -> dict[str, object]:
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
+    async def inspect_file(repo_path: str, file_path: str) -> InspectFileOutput:
         """Inspect indexed entities and edges for one repository file."""
         repo = canonical_repo_path(repo_path)
         assert repo is not None
         source = contained_file_path(file_path, repo)
-        return await gateway.call(
-            "knowledge.inspect_file",
-            {"repo_path": repo, "file_path": str(Path(source).relative_to(repo))},
+        return cast(
+            InspectFileOutput,
+            await gateway.call(
+                "knowledge.inspect_file",
+                {"repo_path": repo, "file_path": str(Path(source).relative_to(repo))},
+            ),
         )
 
-    @mcp.tool()
-    async def test_coverage_map(
-        node_type: str = "function", limit: int = 50, repo_path: str | None = None
-    ) -> dict[str, object]:
-        """Estimate structural test coverage from code graph references."""
-        return await gateway.call(
-            "knowledge.composite.test_coverage",
-            {
-                "node_type": node_type,
-                "limit": _limit(limit),
-                "repo_path": canonical_repo_path(repo_path),
-            },
-        )
-
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def regression_risk_report(
-        file_paths: list[str], repo_path: str | None = None
-    ) -> dict[str, object]:
+        repo_path: str, file_paths: list[str]
+    ) -> RegressionRiskOutput:
         """Estimate dependent and test blast radius for changed source files."""
         repo = canonical_repo_path(repo_path)
-        paths = (
-            [contained_file_path(path, repo) for path in file_paths]
-            if repo
-            else file_paths
-        )
-        return await gateway.call(
-            "knowledge.composite.regression_risk",
-            {"file_paths": paths, "repo_path": repo},
-        )
-
-    @mcp.tool()
-    async def consistency_check(
-        file_path: str, repo_path: str | None = None
-    ) -> dict[str, object]:
-        """Compare one source file's symbols with neighboring conventions."""
-        repo = canonical_repo_path(repo_path)
-        path = contained_file_path(file_path, repo) if repo else file_path
-        return await gateway.call(
-            "knowledge.composite.consistency_check",
-            {"file_path": path, "repo_path": repo},
+        assert repo is not None
+        paths = [contained_file_path(path, repo) for path in file_paths]
+        return cast(
+            RegressionRiskOutput,
+            await gateway.call(
+                "knowledge.composite.regression_risk",
+                {"file_paths": paths, "repo_path": repo},
+            ),
         )
 
-    @mcp.tool()
-    async def contract_check(
-        symbol_name: str, repo_path: str | None = None
-    ) -> dict[str, object]:
-        """Show incoming code relationships that form a symbol contract."""
-        return await gateway.call(
-            "knowledge.composite.contract_check",
-            {"symbol_name": symbol_name, "repo_path": canonical_repo_path(repo_path)},
-        )
-
-    @mcp.tool()
-    async def get_symbols_overview(file_path: str) -> dict[str, object]:
-        """Return read-only LSP symbols for a source file."""
-        return await gateway.call(
-            "lsp.symbols", {"file_path": contained_file_path(file_path)}
-        )
-
-    @mcp.tool()
-    async def find_symbol(name: str, file_path: str | None = None) -> dict[str, object]:
-        """Find indexed or live read-only definitions for a symbol."""
-        return await gateway.call(
-            "lsp.find_symbol",
-            {
-                "name": name,
-                "file_path": contained_file_path(file_path) if file_path else None,
-            },
-        )
-
-    @mcp.tool()
-    async def find_references(
-        file_path: str, line: int, column: int
-    ) -> dict[str, object]:
-        """Find read-only LSP references at a source position."""
-        return await gateway.call(
-            "lsp.references",
-            {
-                "file_path": contained_file_path(file_path),
-                "line": max(0, line),
-                "column": max(0, column),
-            },
-        )
-
-    @mcp.tool()
-    async def get_symbol_info(
-        file_path: str, line: int, column: int
-    ) -> dict[str, object]:
-        """Return read-only LSP hover information for a source position."""
-        return await gateway.call(
-            "lsp.hover",
-            {
-                "file_path": contained_file_path(file_path),
-                "line": max(0, line),
-                "column": max(0, column),
-            },
-        )
-
-    @mcp.tool()
-    async def search_knowledge(
-        query: str,
-        node_type: str | None = None,
-        limit: int = 10,
-        include_neighbors: bool = False,
-        repo_path: str | None = None,
-    ) -> dict[str, object]:
-        """Search only code and repository-provenance nodes."""
-        return await gateway.call(
-            "knowledge.search",
-            {
-                "query": query,
-                "node_type": node_type,
-                "limit": _limit(limit),
-                "include_neighbors": include_neighbors,
-                "repo_path": canonical_repo_path(repo_path),
-                "data_scope": "code_and_provenance",
-            },
-        )
-
-    @mcp.tool()
-    async def get_node_detail(node_id: str) -> dict[str, object]:
-        """Return one indexed code or repository-provenance node."""
-        return await gateway.call(
-            "knowledge.nodes.get",
-            {
-                "node_id": node_id,
-                "include_edges": True,
-                "data_scope": "code_and_provenance",
-            },
-        )
-
-    @mcp.tool()
-    async def scs_diagnostics_snapshot(include_logs: bool = False) -> dict[str, object]:
-        """Return a broad read-only SCS runtime snapshot."""
-        snapshot = await gateway.call(
-            "diagnostics.snapshot", {"include_logs": include_logs}
-        )
-        return {**snapshot, "mcp": mcp.recorder.snapshot()}
-
-    @mcp.tool()
-    async def scs_mcp_health() -> dict[str, object]:
-        """Check the SCS daemon plus MCP ownership and inventory."""
-        health = await gateway.call("system.health")
-        return {**health, "mcp_tools": sorted(MOVED_TO_SCS_TOOLS)}
-
-    @mcp.tool()
-    async def scs_recent_failures(limit: int = 50) -> dict[str, object]:
-        """Return recent classified SCS runtime failures."""
-        return await gateway.call(
-            "diagnostics.recent_failures", {"limit": _limit(limit)}
-        )
-
-    @mcp.tool()
-    async def scs_index_health(
-        repo_path: str | None = None, include_quality: bool = False
-    ) -> dict[str, object]:
-        """Report code-index and optional repository readiness."""
-        return await gateway.call(
-            "diagnostics.index_health",
-            {
-                "repo_path": canonical_repo_path(repo_path),
-                "include_quality": include_quality,
-            },
-        )
-
-    @mcp.tool()
-    async def scs_dev_doctor(repo_path: str | None = None) -> dict[str, object]:
-        """Check SCS development prerequisites and owned paths."""
-        return await gateway.call(
-            "diagnostics.dev_doctor", {"repo_path": canonical_repo_path(repo_path)}
-        )
-
-    @mcp.tool()
-    async def scs_test_recommendations(
-        changed_files: list[str] | None = None,
-    ) -> dict[str, object]:
-        """Recommend targeted SCS validation for changed files."""
-        return await gateway.call(
-            "diagnostics.test_recommendations", {"changed_files": changed_files or []}
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
+    async def find_references(file_path: str, line: int) -> ReferencesOutput:
+        """Find indexed references to the narrowest symbol containing a source line."""
+        return cast(
+            ReferencesOutput,
+            await gateway.call(
+                "lsp.references",
+                {
+                    "file_path": contained_file_path(file_path),
+                    "line": max(0, line),
+                },
+            ),
         )
 
     return mcp

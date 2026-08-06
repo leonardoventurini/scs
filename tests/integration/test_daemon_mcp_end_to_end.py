@@ -16,7 +16,7 @@ from scs.mcp.inventory import MOVED_TO_SCS_TOOLS
 
 
 @pytest.mark.asyncio
-async def test_live_mcp_health_crosses_the_public_service_boundary(tmp_path: Path) -> None:
+async def test_live_mcp_stats_cross_the_public_service_boundary(tmp_path: Path) -> None:
     runtime = Path(tempfile.mkdtemp(prefix="scs-mcp-e2e-", dir="/tmp"))
     settings = SCSSettings(
         home=tmp_path / "home",
@@ -34,13 +34,13 @@ async def test_live_mcp_health_crosses_the_public_service_boundary(tmp_path: Pat
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 tools = await session.list_tools()
-                result = await session.call_tool("scs_mcp_health", {})
+                result = await session.call_tool("get_graph_stats", {})
     finally:
         await daemon.stop()
         shutil.rmtree(runtime, ignore_errors=True)
 
     assert result.isError is False
     assert result.structuredContent is not None
-    assert result.structuredContent["service"] == "scs"
-    assert result.structuredContent["ready"] is True
+    assert result.structuredContent["status"] == "empty"
+    assert result.structuredContent["total_nodes"] == 0
     assert {tool.name for tool in tools.tools} == MOVED_TO_SCS_TOOLS

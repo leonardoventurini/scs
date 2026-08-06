@@ -35,7 +35,9 @@ async def _wait_for_completion(client: SCSClient, repo_path: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_index_search_inspection_and_lsp_preserve_source_bytes(tmp_path: Path) -> None:
+async def test_index_search_inspection_and_lsp_preserve_source_bytes(
+    tmp_path: Path,
+) -> None:
     repository = tmp_path / "repository"
     repository.mkdir()
     source = repository / "module.py"
@@ -57,9 +59,13 @@ async def test_index_search_inspection_and_lsp_preserve_source_bytes(tmp_path: P
         repo_path = str(repository.resolve())
         await client.call("repository.index", {"repo_path": repo_path})
         await _wait_for_completion(client, repo_path)
-        await client.call("knowledge.search", {"query": "stable_source", "repo_path": repo_path})
-        await client.call("knowledge.inspect_file", {"repo_path": repo_path, "file_path": "module.py"})
-        await client.call("lsp.symbols", {"file_path": str(source)})
+        await client.call(
+            "knowledge.search", {"query": "stable_source", "repo_path": repo_path}
+        )
+        await client.call(
+            "knowledge.inspect_file", {"repo_path": repo_path, "file_path": "module.py"}
+        )
+        await client.call("lsp.references", {"file_path": str(source), "line": 0})
     finally:
         await daemon.stop()
 

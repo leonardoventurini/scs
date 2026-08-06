@@ -4,6 +4,7 @@
 
 - fix: preserve graph state when rejecting invalid embedding dimensions
 - ci: enforce strict Python types before commit
+- remove: reduce MCP surface to essential code intelligence tools
 - remove: retire file summarization
 
 ## 2026-07-15

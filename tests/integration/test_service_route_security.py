@@ -5,7 +5,6 @@ from typing import cast
 
 import pytest
 
-from scs.config import SCSSettings
 from scs.graph.native import NativeGraph
 from scs.indexing.jobs import IngestionJobStore
 from scs.providers.base import EmbeddingProvider
@@ -25,12 +24,6 @@ def build_routes(tmp_path: Path, jobs: IngestionJobStore) -> SCSServiceRoutes:
         graph=unused_graph,
         jobs=lambda: jobs,
         embeddings=unused_embeddings,
-        settings=SCSSettings(
-            home=tmp_path / "home",
-            model_cache=tmp_path / "models",
-            runtime_dir=tmp_path / "runtime",
-            log_dir=tmp_path / "logs",
-        ),
     )
 
 
@@ -120,3 +113,83 @@ async def test_regression_risk_rejects_repository_escape_before_graph_reads(
         await routes.composite_regression_risk(
             {"repo_path": str(repo), "file_paths": [str(outside)]}
         )
+
+
+@pytest.mark.asyncio
+async def test_regression_risk_requires_repository_scope_before_graph_reads(
+    tmp_path: Path,
+) -> None:
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = build_routes(tmp_path, jobs)
+
+    with pytest.raises(ValueError, match="repo_path must be a non-empty string"):
+        await routes.composite_regression_risk({"file_paths": ["src/main.py"]})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selectors",
+    [
+        {},
+        {"symbol_name": ""},
+        {"node_id": ""},
+        {"symbol_name": "target", "node_id": "node-1"},
+    ],
+)
+async def test_related_requires_exactly_one_selector_before_graph_reads(
+    tmp_path: Path, selectors: dict[str, object]
+) -> None:
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = build_routes(tmp_path, jobs)
+
+    with pytest.raises(ValueError, match="exactly one|non-empty"):
+        await routes.related(selectors)
+
+
+@pytest.mark.asyncio
+async def test_related_validates_direction_before_a_missing_seed(
+    tmp_path: Path,
+) -> None:
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = build_routes(tmp_path, jobs)
+
+    with pytest.raises(ValueError, match="direction must be"):
+        await routes.related({"node_id": "missing", "direction": "sideways"})
+
+
+@pytest.mark.asyncio
+async def test_related_does_not_read_nodes_for_an_unindexed_repository(
+    tmp_path: Path,
+) -> None:
+    class UnindexedGraph:
+        def resolve_repo_id_sync(self, repo_path: str) -> None:
+            del repo_path
+            return None
+
+        def get_node_sync(self, node_id: str) -> None:
+            raise AssertionError(f"unexpected unscoped node read: {node_id}")
+
+    repo = tmp_path / "unindexed"
+    repo.mkdir()
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = SCSServiceRoutes(
+        graph=lambda: cast(NativeGraph, UnindexedGraph()),
+        jobs=lambda: jobs,
+        embeddings=lambda: cast(EmbeddingProvider, object()),
+    )
+
+    result = await routes.related({"node_id": "unscoped-node", "repo_path": str(repo)})
+
+    assert result["matches"] == []
+    assert result["related"] == []
+
+
+@pytest.mark.asyncio
+async def test_symbol_listing_rejects_non_symbol_types_before_graph_reads(
+    tmp_path: Path,
+) -> None:
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = build_routes(tmp_path, jobs)
+
+    with pytest.raises(ValueError, match="code symbol"):
+        await routes.nodes_list({"node_type": "file"})
