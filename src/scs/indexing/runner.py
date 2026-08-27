@@ -25,6 +25,9 @@ class DeletableGraph(Protocol):
     def delete_repo_sync(self, repo_path: str) -> object: ...
 
 
+GraphResolver = Callable[[IngestionJob], DeletableGraph]
+
+
 class IngestionJobRunner:
     """Drain durable jobs in the background and publish transport-neutral events."""
 
@@ -32,14 +35,21 @@ class IngestionJobRunner:
         self,
         *,
         store: IngestionJobStore,
-        graph: DeletableGraph,
+        graph_for_job: GraphResolver | None = None,
+        graph: DeletableGraph | None = None,
         pipeline_factory: PipelineFactory,
         event_sink: EventSink | None = None,
         poll_interval_seconds: float = 1.0,
         lease_seconds: float = 300.0,
     ) -> None:
         self._store: IngestionJobStore = store
-        self._graph: DeletableGraph = graph
+        if (graph_for_job is None) == (graph is None):
+            raise ValueError("provide exactly one graph resolver or graph")
+        self._graph_for_job: GraphResolver = (
+            graph_for_job
+            if graph_for_job is not None
+            else lambda _job: cast(DeletableGraph, graph)
+        )
         self._pipeline_factory: PipelineFactory = pipeline_factory
         self._events: EventSink = event_sink or NullEventSink()
         self._poll_interval_seconds: float = poll_interval_seconds
@@ -150,7 +160,8 @@ class IngestionJobRunner:
                 force=job.mode == "force_full",
             )
         elif job.mode == "drop_index":
-            await asyncio.to_thread(self._graph.delete_repo_sync, job.repo_path)
+            graph = self._graph_for_job(job)
+            await asyncio.to_thread(graph.delete_repo_sync, job.repo_path)
             return {"repo_deleted": True}
         else:
             raise ValueError(f"Unsupported indexing job mode: {job.mode}")

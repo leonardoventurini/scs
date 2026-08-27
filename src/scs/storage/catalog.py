@@ -142,6 +142,70 @@ class ProjectStoreCatalog:
             )
         return record
 
+    def activate(
+        self,
+        root: str | Path,
+        *,
+        generation: StoreGeneration,
+        state: StoreState,
+    ) -> CatalogRecord:
+        """Publish one verified generation after explicit store creation."""
+
+        canonical_root = canonical_repository_root(root)
+        safe_generation = validate_store_generation(generation)
+        if state is StoreState.UNINITIALIZED:
+            raise ValueError("an activated store cannot be uninitialized")
+        connection = sqlite3.connect(self._database, isolation_level=None)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE project_stores
+                SET active_generation = ?, state = ?
+                WHERE canonical_root = ?
+                """,
+                (safe_generation, state.value, canonical_root),
+            )
+            if cursor.rowcount != 1:
+                raise CatalogError(f"Project store is not registered: {canonical_root}")
+            row = cast(
+                tuple[str, str, str | None, str],
+                connection.execute(
+                    """
+                    SELECT canonical_root, store_id, active_generation, state
+                    FROM project_stores WHERE canonical_root = ?
+                    """,
+                    (canonical_root,),
+                ).fetchone(),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error as exc:
+            connection.execute("ROLLBACK")
+            raise CatalogError(f"Could not activate project store for {canonical_root}") from exc
+        finally:
+            connection.close()
+        return _record_from_row(row)
+
+    def list_records(self) -> list[CatalogRecord]:
+        """List registered stores without creating a catalog or project data."""
+
+        if not self._database.exists():
+            return []
+        connection = self._connect_read_only()
+        try:
+            rows = cast(
+                list[tuple[str, str, str | None, str]],
+                connection.execute(
+                    """
+                    SELECT canonical_root, store_id, active_generation, state
+                    FROM project_stores ORDER BY canonical_root
+                    """
+                ).fetchall(),
+            )
+        finally:
+            connection.close()
+        return [_record_from_row(row) for row in rows]
+
     def _connect_read_only(self) -> sqlite3.Connection:
         """Open the existing catalog without SQLite creating sidecar files."""
 

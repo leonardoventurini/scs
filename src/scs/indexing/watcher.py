@@ -52,6 +52,8 @@ class RepositoryWatcher:
         jobs: IngestionJobStore,
         base_dir: Path,
         supported_extensions: frozenset[str],
+        store_id: str | None = None,
+        store_generation: str | None = None,
         debounce_seconds: float = 0.75,
         mass_change_threshold: int = MASS_CHANGE_THRESHOLD,
     ) -> None:
@@ -59,6 +61,8 @@ class RepositoryWatcher:
         self._jobs: IngestionJobStore = jobs
         self._base_dir: Path = base_dir.expanduser().resolve()
         self._extensions: frozenset[str] = supported_extensions
+        self._store_id: str | None = store_id
+        self._store_generation: str | None = store_generation
         self._debounce: float = debounce_seconds
         self._mass_threshold: int = mass_change_threshold
         self._pending: dict[str, PendingChanges] = {}
@@ -154,6 +158,8 @@ class RepositoryWatcher:
                 await asyncio.to_thread(
                     self._jobs.enqueue,
                     repo_path=repo_path,
+                    store_id=self._store_id,
+                    store_generation=self._store_generation,
                     mode="full",
                     reason="watcher-full",
                 )
@@ -161,6 +167,8 @@ class RepositoryWatcher:
                 await asyncio.to_thread(
                     self._jobs.enqueue,
                     repo_path=repo_path,
+                    store_id=self._store_id,
+                    store_generation=self._store_generation,
                     mode="files",
                     reason="watcher-files",
                     payload={

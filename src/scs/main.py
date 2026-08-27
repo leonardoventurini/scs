@@ -27,6 +27,7 @@ from scs.providers.mlx import MLXEmbeddingProvider
 from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 from scs.service import ProcessLock
 from scs.services import SCSServiceRoutes
+from scs.storage import ProjectStoreRegistry, StoreBinding
 from scs.wire.events import EventBroker
 from scs.wire.router import Router
 from scs.wire.server import WireServer
@@ -66,6 +67,7 @@ class SCSDaemon:
         self._lock: ProcessLock | None = None
         self._jobs: IngestionJobStore | None = None
         self._graph: NativeGraph | None = None
+        self._stores: ProjectStoreRegistry | None = None
         self._runner: IngestionJobRunner | None = None
         self._embeddings: EmbeddingProvider | None = None
         self._watchers: dict[str, RepositoryWatcher] = {}
@@ -75,6 +77,8 @@ class SCSDaemon:
             graph=self._require_graph,
             jobs=self._require_jobs,
             embeddings=self._require_embeddings,
+            graph_for_repository=self._lookup_graph,
+            binding_for_repository=self._binding_for_repository,
         )
         self._register_methods()
 
@@ -115,18 +119,20 @@ class SCSDaemon:
                     dimension=self.settings.embedding_dimension,
                     batch_size=self.settings.embedding_batch_size,
                 )
-            graph = await asyncio.to_thread(
-                NativeGraph,
-                database_path=paths.database,
-                vector_path=paths.vector_index,
-                provider_metadata_path=paths.provider_metadata,
-                provider=embeddings.metadata,
-            )
+            stores = ProjectStoreRegistry(home=paths.home, provider=embeddings.metadata)
             jobs = await asyncio.to_thread(IngestionJobStore, paths.jobs_database)
             parser = NativeParser()
             loop = asyncio.get_running_loop()
 
-            def pipeline_factory(_job: IngestionJob) -> IngestionPipeline:
+            def graph_for_job(job: IngestionJob) -> NativeGraph:
+                if job.store_id is None or job.store_generation is None:
+                    raise RuntimeError("legacy unbound ingestion job is not executable")
+                return stores.graph_for_binding(
+                    job.repo_path,
+                    StoreBinding(job.store_id, job.store_generation),
+                )
+
+            def pipeline_factory(job: IngestionJob) -> IngestionPipeline:
                 def report(progress: IngestionProgress) -> None:
                     payload: dict[str, object] = {
                         "phase": progress.phase,
@@ -141,7 +147,7 @@ class SCSDaemon:
                     )
 
                 return IngestionPipeline(
-                    graph=graph,
+                    graph=graph_for_job(job),
                     parser=parser,
                     embeddings=embeddings,
                     progress=report,
@@ -149,17 +155,20 @@ class SCSDaemon:
 
             runner = IngestionJobRunner(
                 store=jobs,
-                graph=graph,
+                graph_for_job=graph_for_job,
                 pipeline_factory=pipeline_factory,
                 event_sink=BrokerEventSink(self._events),
             )
             await runner.start()
-            existing_repositories = await asyncio.to_thread(
-                graph.get_ingestion_stats_sync
-            )
-            for repo_path in existing_repositories:
+            self._stores = stores
+            for record in await asyncio.to_thread(stores.records):
+                if record.active_generation is None:
+                    continue
+                graph = stores.lookup_graph(record.canonical_root)
+                if graph is None:
+                    continue
                 await self._ensure_watcher(
-                    repo_path,
+                    record.canonical_root,
                     graph=graph,
                     jobs=jobs,
                     parser=parser,
@@ -171,7 +180,7 @@ class SCSDaemon:
                 host=self.settings.mcp_internal_host,
                 port=self.settings.mcp_internal_port,
             )
-            self._graph = graph
+            self._graph = None
             self._jobs = jobs
             self._runner = runner
             self._embeddings = embeddings
@@ -199,6 +208,7 @@ class SCSDaemon:
             process_lock.release()
             self._server = None
             self._graph = None
+            self._stores = None
             self._jobs = None
             self._runner = None
             self._embeddings = None
@@ -234,6 +244,10 @@ class SCSDaemon:
         self._graph = None
         if graph is not None:
             await asyncio.to_thread(graph.flush_vector_index_sync)
+        stores = self._stores
+        self._stores = None
+        if stores is not None:
+            await asyncio.to_thread(stores.flush)
         process_lock = self._lock
         self._lock = None
         if process_lock is not None:
@@ -263,12 +277,8 @@ class SCSDaemon:
             if not all(isinstance(path, str) for path in path_values):
                 raise ValueError("repo_paths must be a list of strings")
             repo_paths = [path for path in path_values if isinstance(path, str)]
-            graph = self._require_graph()
             jobs = self._require_jobs()
-            stats, recent = await asyncio.gather(
-                asyncio.to_thread(graph.get_ingestion_stats_sync),
-                asyncio.to_thread(jobs.list_recent, limit=200),
-            )
+            recent = await asyncio.to_thread(jobs.list_recent, limit=200)
             active_by_repo = {
                 job.repo_path: job
                 for job in recent
@@ -281,7 +291,12 @@ class SCSDaemon:
             for raw_path in repo_paths:
                 path = canonicalize_repo_path(raw_path)
                 active = active_by_repo.get(path)
-                repo_stats = stats.get(path, {})
+                graph = self._lookup_graph(path)
+                repo_stats = (
+                    await asyncio.to_thread(graph.get_ingestion_stats_sync)
+                    if graph is not None
+                    else {}
+                )
                 if active is not None:
                     state = (
                         "indexing"
@@ -319,13 +334,20 @@ class SCSDaemon:
             if not isinstance(raw_repo_path, str) or not raw_repo_path:
                 raise ValueError("repo_path must be a non-empty string")
             jobs = self._require_jobs()
+            stores = self._require_stores()
+            canonical = canonicalize_repo_path(raw_repo_path)
+            record = stores.catalog.lookup(canonical)
+            if record is None or record.active_generation is None:
+                raise ValueError("repository does not have an indexed project store")
             job = await asyncio.to_thread(
                 jobs.enqueue,
-                repo_path=canonicalize_repo_path(raw_repo_path),
+                repo_path=canonical,
+                store_id=record.store_id,
+                store_generation=record.active_generation,
                 mode="drop_index",
                 reason="explicit_drop_index",
             )
-            watcher = self._watchers.pop(canonicalize_repo_path(raw_repo_path), None)
+            watcher = self._watchers.pop(canonical, None)
             if watcher is not None:
                 await watcher.stop()
             return {"accepted": True, "job": job_to_dict(job)}
@@ -373,9 +395,17 @@ class SCSDaemon:
         if not repo_path.is_dir():
             raise ValueError(f"repository directory does not exist: {repo_path}")
         jobs = self._require_jobs()
+        stores = self._require_stores()
+        record, graph = await asyncio.to_thread(stores.ensure_graph, str(repo_path))
+        generation = record.active_generation
+        if generation is None:
+            raise RuntimeError("explicit project store creation did not activate a generation")
+        self._graph = graph
         job = await asyncio.to_thread(
             jobs.enqueue,
             repo_path=str(repo_path),
+            store_id=record.store_id,
+            store_generation=generation,
             mode="force_full" if force else "full",
             reason="explicit_reindex" if force else "explicit_index",
         )
@@ -393,6 +423,31 @@ class SCSDaemon:
         if graph is None:
             raise RuntimeError("SCS graph is not ready")
         return graph
+
+    def _require_stores(self) -> ProjectStoreRegistry:
+        """Return the catalog-routed store registry after daemon startup."""
+
+        stores = self._stores
+        if stores is None:
+            raise RuntimeError("SCS project-store registry is not ready")
+        return stores
+
+    def _lookup_graph(self, repo_path: str) -> NativeGraph | None:
+        """Resolve an indexed project without creating a catalog or store."""
+
+        stores = self._stores
+        return stores.lookup_graph(repo_path) if stores is not None else None
+
+    def _binding_for_repository(self, repo_path: str) -> tuple[str, str] | None:
+        """Resolve the immutable job binding for an existing project store."""
+
+        stores = self._stores
+        if stores is None:
+            return None
+        record = stores.catalog.lookup(repo_path)
+        if record is None or record.active_generation is None:
+            return None
+        return str(record.store_id), str(record.active_generation)
 
     def _require_embeddings(self) -> EmbeddingProvider:
         embeddings = self._embeddings
@@ -414,11 +469,16 @@ class SCSDaemon:
         active_graph = graph or self._require_graph()
         active_jobs = jobs or self._require_jobs()
         active_parser = parser or NativeParser()
+        record = self._require_stores().catalog.lookup(canonical)
+        if record is None or record.active_generation is None:
+            return
         watcher = RepositoryWatcher(
             graph=active_graph,
             jobs=active_jobs,
             base_dir=Path(canonical),
             supported_extensions=active_parser.supported_extensions(),
+            store_id=record.store_id,
+            store_generation=record.active_generation,
         )
         await watcher.start()
         self._watchers[canonical] = watcher

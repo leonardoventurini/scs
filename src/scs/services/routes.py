@@ -13,6 +13,9 @@ from scs.indexing.jobs import IngestionJobStore, job_to_dict
 from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.providers.base import EmbeddingProvider, ProviderUnavailableError
 
+GraphForRepository = Callable[[str], NativeGraph | None]
+BindingForRepository = Callable[[str], tuple[str, str] | None]
+
 SYMBOL_NODE_TYPES = frozenset(
     {
         NodeType.CLASS,
@@ -122,17 +125,35 @@ class SCSServiceRoutes:
         graph: Callable[[], NativeGraph],
         jobs: Callable[[], IngestionJobStore],
         embeddings: Callable[[], EmbeddingProvider],
+        graph_for_repository: GraphForRepository | None = None,
+        binding_for_repository: BindingForRepository | None = None,
     ) -> None:
         self._graph: Callable[[], NativeGraph] = graph
         self._jobs: Callable[[], IngestionJobStore] = jobs
         self._embeddings: Callable[[], EmbeddingProvider] = embeddings
+        self._graph_for_repository: GraphForRepository | None = graph_for_repository
+        self._binding_for_repository: BindingForRepository | None = (
+            binding_for_repository
+        )
+
+    def _read_graph(self, repo_path: object) -> NativeGraph | None:
+        """Resolve an existing project graph without registering a repository."""
+
+        if repo_path is None or self._graph_for_repository is None:
+            return self._graph()
+        if not isinstance(repo_path, str):
+            raise ValueError("repo_path must be a string")
+        return self._graph_for_repository(canonicalize_repo_path(repo_path))
 
     def _repo_id(self, repo_path: object) -> int | None:
         if repo_path is None:
             return None
         if not isinstance(repo_path, str):
             raise ValueError("repo_path must be a string")
-        return self._graph().resolve_repo_id_sync(canonicalize_repo_path(repo_path))
+        graph = self._read_graph(repo_path)
+        if graph is None:
+            return None
+        return graph.resolve_repo_id_sync(canonicalize_repo_path(repo_path))
 
     async def search(self, params: dict[str, object]) -> dict[str, object]:
         query = _string(params, "query", required=True)
@@ -149,7 +170,15 @@ class SCSServiceRoutes:
                 "total": 0,
                 "retrieval_mode": "none",
             }
-        graph = self._graph()
+        graph = self._read_graph(repo_path)
+        if graph is None:
+            return {
+                "query": query,
+                "results": [],
+                "neighbors": [],
+                "total": 0,
+                "retrieval_mode": "none",
+            }
         results: list[dict[str, object]] = []
         mode = "lexical"
         try:
@@ -198,13 +227,15 @@ class SCSServiceRoutes:
         }
 
     async def nodes_list(self, params: dict[str, object]) -> dict[str, object]:
-        graph = self._graph()
         node_type = _node_type(params.get("node_type", NodeType.FUNCTION.value))
         if node_type not in SYMBOL_NODE_TYPES:
             raise ValueError("node_type must identify a code symbol")
         limit = min(200, _integer(params, "limit", 50, minimum=1))
         offset = _integer(params, "offset", 0)
         repo_path = params.get("repo_path")
+        graph = self._read_graph(repo_path)
+        if graph is None:
+            return {"nodes": [], "total": 0, "limit": limit, "offset": offset}
         repo_id = self._repo_id(repo_path)
         if repo_path is not None and repo_id is None:
             return {"nodes": [], "total": 0, "limit": limit, "offset": offset}
@@ -228,8 +259,24 @@ class SCSServiceRoutes:
         }
 
     async def stats(self, params: dict[str, object]) -> dict[str, object]:
-        graph = self._graph()
         repo_path = _string(params, "repo_path")
+        graph = self._read_graph(repo_path)
+        if graph is None:
+            return {
+                "repo_path": canonicalize_repo_path(repo_path) if repo_path else None,
+                "status": "empty",
+                "total_nodes": 0,
+                "nodes_by_type": {},
+                "embedding_count": 0,
+                "vector_index_count": 0,
+                "vector_index_scope": "project",
+                "ingestion_stats": {},
+                "database_size_bytes": 0,
+                "vector_available": False,
+                "vector_unavailable_reason": "repository is not indexed",
+                "semantic_search_ready": False,
+                "semantic_search_unavailable_reason": "repository is not indexed",
+            }
         repo_id = self._repo_id(repo_path)
         if repo_path is not None and repo_id is None:
             counts: dict[str, int] = {}
@@ -299,8 +346,10 @@ class SCSServiceRoutes:
         node_id = _string(params, "node_id")
         if (symbol is None) == (node_id is None):
             raise ValueError("exactly one of symbol_name or node_id is required")
-        graph = self._graph()
         repo_path = params.get("repo_path")
+        graph = self._read_graph(repo_path)
+        if graph is None:
+            return {"symbol_name": symbol, "node_id": node_id, "matches": [], "related": []}
         repo_id = self._repo_id(repo_path)
         direction = _string(params, "direction") or "outgoing"
         if direction not in {"outgoing", "incoming", "both"}:
@@ -377,8 +426,10 @@ class SCSServiceRoutes:
             "include_neighbors": False,
         }
         seeds = await self.search(search_params)
-        graph = self._graph()
         direction = _string(params, "direction") or "both"
+        graph = self._read_graph(params.get("repo_path"))
+        if graph is None:
+            return {"query": seeds["query"], "direction": direction, "seeds": [], "context": []}
         if direction not in {"outgoing", "incoming", "both"}:
             raise ValueError("direction must be outgoing, incoming, or both")
         directions = ("outgoing", "incoming") if direction == "both" else (direction,)
@@ -415,7 +466,16 @@ class SCSServiceRoutes:
         repo_path = _string(params, "repo_path", required=True)
         file_path = _string(params, "file_path", required=True)
         assert repo_path is not None and file_path is not None
-        graph = self._graph()
+        graph = self._read_graph(repo_path)
+        if graph is None:
+            return {
+                "repo_path": canonicalize_repo_path(repo_path),
+                "file_path": Path(file_path).as_posix(),
+                "nodes": [],
+                "edges": {},
+                "nodes_truncated": False,
+                "edges_truncated": False,
+            }
         node_ids = sorted(await asyncio.to_thread(
             graph.get_node_ids_for_file_sync,
             canonicalize_repo_path(repo_path),
@@ -498,9 +558,18 @@ class SCSServiceRoutes:
             deleted.append(candidate.as_posix())
         if not files and not deleted:
             raise ValueError("at least one changed or deleted file is required")
+        binding = (
+            self._binding_for_repository(canonical)
+            if self._binding_for_repository is not None
+            else None
+        )
+        if self._binding_for_repository is not None and binding is None:
+            raise ValueError("repository does not have an indexed project store")
         job = await asyncio.to_thread(
             self._jobs().enqueue,
             repo_path=canonical,
+            store_id=binding[0] if binding is not None else None,
+            store_generation=binding[1] if binding is not None else None,
             mode="files",
             reason="explicit_files",
             payload={"file_paths": files, "deleted_paths": deleted},
@@ -514,7 +583,9 @@ class SCSServiceRoutes:
         repo_path = _string(params, "repo_path", required=True)
         assert repo_path is not None
         root = Path(canonicalize_repo_path(repo_path))
-        graph = self._graph()
+        graph = self._read_graph(repo_path)
+        if graph is None:
+            return {"file_paths": raw_paths, "affected_node_ids": [], "dependents": [], "test_dependents": []}
         affected_ids: list[str] = []
         for raw_path in raw_paths:
             path = Path(raw_path)

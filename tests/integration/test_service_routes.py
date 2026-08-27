@@ -69,8 +69,8 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
     await daemon.start()
     try:
         daemon._embeddings = UnavailableEmbeddings()
-        graph = daemon._require_graph()
         repo_path = str(repository.resolve())
+        _record, graph = daemon._require_stores().ensure_graph(repo_path)
         repo_id = graph.get_or_create_repo_sync(repo_path)
         nodes = [
             {
