@@ -343,9 +343,7 @@ class IngestionPipeline:
         node_ids: dict[str, str],
         result: IngestionResult,
     ) -> bool:
-        if self._embeddings is None or not self._embeddings.metadata.available:
-            if self._embeddings is not None:
-                result.semantic_degraded_reason = self._embeddings.metadata.reason
+        if self._embeddings is None:
             return False
         entities = [entity for item in parsed for entity in item.entities]
         texts = [entity.embed_text() for item in parsed for entity in item.entities]

@@ -34,6 +34,20 @@ def test_internal_mcp_endpoint_is_typed_from_environment(
     assert settings.mcp_internal_port == 0
 
 
+def test_omlx_defaults_target_the_verified_local_embedding_service() -> None:
+    settings = SCSSettings()
+
+    assert settings.embedding_provider == "omlx"
+    assert settings.embedding_model == "Qwen3-Embedding-8B-4bit-DWQ"
+    assert settings.embedding_dimension == 4096
+    assert settings.omlx_base_url == "http://127.0.0.1:10000/v1"
+
+
+def test_omlx_rejects_remote_embedding_endpoint() -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        SCSSettings(omlx_base_url="http://embeddings.example.com/v1")
+
+
 def test_rejects_legacy_root_alias(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     legacy = tmp_path / "legacy"
     legacy.mkdir()

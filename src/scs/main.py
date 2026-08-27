@@ -24,6 +24,7 @@ from scs.mcp.http import MCPHTTPServer
 from scs.mcp.server import build_mcp
 from scs.providers.base import EmbeddingProvider
 from scs.providers.mlx import MLXEmbeddingProvider
+from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 from scs.service import ProcessLock
 from scs.services import SCSServiceRoutes
 from scs.wire.events import EventBroker
@@ -100,11 +101,20 @@ class SCSDaemon:
         mcp_server: MCPHTTPServer | None = None
         identity: IdentityPublisher | None = None
         try:
-            embeddings = MLXEmbeddingProvider(
-                model_name=self.settings.embedding_model,
-                dimension=self.settings.embedding_dimension,
-                batch_size=self.settings.embedding_batch_size,
-            )
+            embeddings: EmbeddingProvider
+            if self.settings.embedding_provider == "omlx":
+                embeddings = OpenAICompatibleEmbeddingProvider(
+                    base_url=self.settings.omlx_base_url,
+                    model_name=self.settings.embedding_model,
+                    dimension=self.settings.embedding_dimension,
+                    batch_size=self.settings.embedding_batch_size,
+                )
+            else:
+                embeddings = MLXEmbeddingProvider(
+                    model_name=self.settings.embedding_model,
+                    dimension=self.settings.embedding_dimension,
+                    batch_size=self.settings.embedding_batch_size,
+                )
             graph = await asyncio.to_thread(
                 NativeGraph,
                 database_path=paths.database,

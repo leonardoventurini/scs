@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-27
+
+- feat: use local OMLX for semantic code embeddings
+
 ## 2026-08-26
 
 - fix: harden MCP graph and reference contracts

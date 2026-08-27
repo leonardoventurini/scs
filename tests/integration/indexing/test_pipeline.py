@@ -4,8 +4,25 @@ import inspect
 from pathlib import Path
 
 from scs.indexing.pipeline import IngestionPipeline
+from scs.providers.base import ProviderMetadata, ProviderUnavailableError
 
 from conftest import FakeEmbeddings, FakeGraph, FakeParser
+
+
+class UnavailableEmbeddings:
+    """Simulate an optional provider outage after structural persistence begins."""
+
+    @property
+    def metadata(self) -> ProviderMetadata:
+        return ProviderMetadata("test", "unavailable", 2, False, "offline")
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        del texts
+        raise ProviderUnavailableError("synthetic OMLX outage")
+
+    async def embed_query(self, text: str) -> list[float]:
+        del text
+        raise ProviderUnavailableError("synthetic OMLX outage")
 
 
 def test_failed_parse_does_not_record_hash(repository: Path) -> None:
@@ -59,6 +76,24 @@ def test_vectors_flush_before_hash_commit(repository: Path) -> None:
     IngestionPipeline(graph=graph, parser=FakeParser(), embeddings=FakeEmbeddings()).ingest(repository)
 
     assert graph.flushes == 1
+    assert graph.hashes[str(repository.resolve())]["main.py"]
+
+
+def test_embedding_outage_preserves_structural_index_and_hash(repository: Path) -> None:
+    source = repository / "main.py"
+    source.write_text("def run():\n    pass\n")
+    graph = FakeGraph()
+
+    result = IngestionPipeline(
+        graph=graph,
+        parser=FakeParser(),
+        embeddings=UnavailableEmbeddings(),
+    ).ingest(repository)
+
+    assert result.semantic_degraded_reason == "synthetic OMLX outage"
+    assert graph.nodes
+    assert graph.edges
+    assert graph.embeddings == {}
     assert graph.hashes[str(repository.resolve())]["main.py"]
 
 

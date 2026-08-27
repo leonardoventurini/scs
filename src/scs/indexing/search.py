@@ -62,13 +62,8 @@ class CodeSearchService:
             repo_id=repo_id,
         )
         provider = self._embeddings
-        if provider is None or not provider.metadata.available:
-            reason = (
-                provider.metadata.reason
-                if provider
-                else "embedding provider is not configured"
-            )
-            return CodeSearchResponse(lexical, False, reason)
+        if provider is None:
+            return CodeSearchResponse(lexical, False, "embedding provider is not configured")
         try:
             vector = await provider.embed_query(query)
             semantic = await asyncio.to_thread(
