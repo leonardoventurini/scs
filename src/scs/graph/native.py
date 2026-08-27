@@ -29,19 +29,29 @@ class _NativeGraphHandle(Protocol):
 
     def get_or_create_repo(self, path: str) -> int: ...
     def resolve_repo_id(self, path: str) -> int | None: ...
+    def resolve_node_id_by_qualified_name(
+        self, repo_path: str, qualified_name: str
+    ) -> str | None: ...
     def resolve_repo_path(self, repo_id: int) -> str | None: ...
     def get_file_node_map(self, repo_id: int) -> object: ...
     def batch_upsert_nodes(self, nodes_json: str) -> int: ...
     def batch_upsert_edges(self, edges_json: str) -> int: ...
     def batch_upsert_embeddings(self, embeddings_json: str) -> int: ...
     def flush_vector_index(self) -> bool: ...
+    def reopened_vectors_contain(self, node_ids: list[str]) -> bool: ...
+    def reopened_vectors_absent(self, node_ids: list[str]) -> bool: ...
     def get_all_ingested_files(self, repo_path: str) -> str: ...
     def get_file_paths_for_repo(self, repo_path: str) -> list[str]: ...
     def get_node_ids_for_file(self, repo_path: str, rel_path: str) -> list[str]: ...
     def delete_node(self, node_id: str) -> bool: ...
     def delete_ingested_file(self, repo_path: str, rel_path: str) -> None: ...
     def delete_ingestion_record(self, repo_path: str, rel_path: str) -> None: ...
+    def delete_ingestion_records_batch(
+        self, repo_path: str, rel_paths: list[str]
+    ) -> int: ...
+    def remove_file_graph_and_vector(self, repo_path: str, rel_path: str) -> int: ...
     def upsert_ingested_file(self, **kwargs: object) -> None: ...
+    def acknowledge_ingested_files_batch(self, records_json: str) -> int: ...
     def search_by_name(
         self, query: str, node_type: str | None, limit: int, repo_id: int | None
     ) -> object: ...
@@ -211,6 +221,13 @@ class NativeGraph:
     def resolve_repo_id_sync(self, path: str) -> int | None:
         return self._inner.resolve_repo_id(path)
 
+    def resolve_node_id_by_qualified_name_sync(
+        self, repo_path: str, qualified_name: str
+    ) -> str | None:
+        """Resolve a retained repository entity for cross-batch edge planning."""
+
+        return self._inner.resolve_node_id_by_qualified_name(repo_path, qualified_name)
+
     def resolve_repo_path_sync(self, repo_id: int) -> str | None:
         return self._inner.resolve_repo_path(repo_id)
 
@@ -232,6 +249,16 @@ class NativeGraph:
 
     def flush_vector_index_sync(self) -> bool:
         return self._inner.flush_vector_index()
+
+    def reopened_vectors_contain_sync(self, node_ids: list[str]) -> bool:
+        """Confirm a fresh USearch handle contains durable batch vectors."""
+
+        return self._inner.reopened_vectors_contain(node_ids)
+
+    def reopened_vectors_absent_sync(self, node_ids: list[str]) -> bool:
+        """Confirm a fresh USearch handle no longer contains removed vectors."""
+
+        return self._inner.reopened_vectors_absent(node_ids)
 
     def get_all_ingested_files_sync(self, repo_path: str) -> dict[str, str]:
         return cast(
@@ -255,8 +282,27 @@ class NativeGraph:
         self._inner.delete_ingestion_record(repo_path, rel_path)
         return True
 
+    def remove_file_graph_and_vector_sync(self, repo_path: str, rel_path: str) -> int:
+        """Remove file graph/vector state while retaining its retry checkpoint."""
+
+        return self._inner.remove_file_graph_and_vector(repo_path, rel_path)
+
+    def delete_ingestion_records_batch_sync(
+        self, repo_path: str, rel_paths: list[str]
+    ) -> int:
+        """Atomically finalize a deletion batch after sidecar durability succeeds."""
+
+        return self._inner.delete_ingestion_records_batch(repo_path, rel_paths)
+
     def upsert_ingested_file_sync(self, **kwargs: object) -> None:
         self._inner.upsert_ingested_file(**kwargs)
+
+    def acknowledge_ingested_files_batch_sync(
+        self, records: list[dict[str, object]]
+    ) -> None:
+        """Atomically acknowledge hashes only after the vector sidecar is durable."""
+
+        self._inner.acknowledge_ingested_files_batch(json.dumps(records, default=str))
 
     def search_by_name_sync(
         self,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -38,6 +38,7 @@ class IngestionJobRunner:
         store: IngestionJobStore,
         graph_for_job: GraphResolver | None = None,
         graph: DeletableGraph | None = None,
+        on_started: CompletionHandler | None = None,
         on_completed: CompletionHandler | None = None,
         pipeline_factory: PipelineFactory,
         event_sink: EventSink | None = None,
@@ -53,6 +54,7 @@ class IngestionJobRunner:
             else lambda _job: cast(DeletableGraph, graph)
         )
         self._pipeline_factory: PipelineFactory = pipeline_factory
+        self._on_started: CompletionHandler | None = on_started
         self._on_completed: CompletionHandler | None = on_completed
         self._events: EventSink = event_sink or NullEventSink()
         self._poll_interval_seconds: float = poll_interval_seconds
@@ -96,6 +98,8 @@ class IngestionJobRunner:
             return False
         heartbeat = asyncio.create_task(self._heartbeat(job.id))
         try:
+            if self._on_started is not None:
+                await asyncio.to_thread(self._on_started, job)
             await self._publish(job)
             result = await self._execute(job)
             current = await asyncio.to_thread(self._store.get, job.id)
@@ -158,11 +162,27 @@ class IngestionJobRunner:
             )
         elif job.mode == "cleanup":
             result = await asyncio.to_thread(pipeline.cleanup_stale_files, repo)
-        elif job.mode in {"full", "force_full"}:
+        elif job.mode == "full":
             result = await asyncio.to_thread(
                 pipeline.ingest,
                 repo,
-                force=job.mode == "force_full",
+                force=False,
+            )
+        elif job.mode == "force_full":
+            snapshot, first_execution = await self._force_snapshot_for_job(
+                job, pipeline, repo
+            )
+            def acknowledge_snapshot_batch(rel_paths: list[str]) -> None:
+                self._store.acknowledge_force_full_snapshot_files(
+                    job.id, rel_paths=rel_paths
+                )
+
+            result = await asyncio.to_thread(
+                pipeline.ingest,
+                repo,
+                force=first_execution,
+                force_snapshot=snapshot,
+                on_force_batch_acknowledged=acknowledge_snapshot_batch,
             )
         elif job.mode == "drop_index":
             graph = self._graph_for_job(job)
@@ -170,7 +190,78 @@ class IngestionJobRunner:
             return {"repo_deleted": True}
         else:
             raise ValueError(f"Unsupported indexing job mode: {job.mode}")
-        return asdict(result)
+        serialized = asdict(result)
+        degraded = serialized.get("semantic_degraded_reason")
+        # A pipeline may retain structural work without acknowledging hashes
+        # after an embedding outage. Treat that as a retryable job failure so
+        # the daemon never publishes semantic-ready for partial vectors.
+        if isinstance(degraded, str) and degraded:
+            raise RuntimeError(degraded)
+        return serialized
+
+    async def _force_snapshot_for_job(
+        self,
+        job: IngestionJob,
+        pipeline: IngestionPipeline,
+        repo: Path,
+    ) -> tuple[list[Mapping[str, object]], bool]:
+        """Return only this durable force job's still-pending frozen files."""
+
+        raw_snapshot = job.payload.get("force_full_snapshot")
+        first_execution = raw_snapshot is None
+        if raw_snapshot is None:
+            records = await asyncio.to_thread(
+                pipeline.create_force_full_snapshot, repo
+            )
+            job = await asyncio.to_thread(
+                self._store.install_force_full_snapshot,
+                job.id,
+                files=records,
+            )
+            raw_snapshot = job.payload.get("force_full_snapshot")
+        if not isinstance(raw_snapshot, dict):
+            raise RuntimeError("Force-full job snapshot is invalid")
+        snapshot_object = cast(dict[str, object], raw_snapshot)
+        raw_files = snapshot_object.get("files")
+        if not isinstance(raw_files, list):
+            raise RuntimeError("Force-full job snapshot files are invalid")
+        files = cast(list[object], raw_files)
+        if not all(
+            isinstance(record, dict) for record in files
+        ):
+            raise RuntimeError("Force-full job snapshot files are invalid")
+        if not first_execution:
+            acknowledged = await asyncio.to_thread(
+                pipeline.acknowledged_force_snapshot_paths,
+                repo,
+                [cast(Mapping[str, object], record) for record in files],
+            )
+            if acknowledged:
+                job = await asyncio.to_thread(
+                    self._store.acknowledge_force_full_snapshot_files,
+                    job.id,
+                    rel_paths=acknowledged,
+                )
+                raw_snapshot = job.payload.get("force_full_snapshot")
+                if not isinstance(raw_snapshot, dict):
+                    raise RuntimeError("Force-full job snapshot is invalid")
+                refreshed_snapshot = cast(dict[str, object], raw_snapshot)
+                files = cast(list[object], refreshed_snapshot.get("files", []))
+        pending = [
+            cast(Mapping[str, object], typed_record)
+            for typed_record in (
+                cast(dict[str, object], record) for record in files
+            )
+            if not bool(typed_record.get("acknowledged", False))
+        ]
+        # A process can die after persisting its manifest but before the
+        # pipeline invalidates matching hashes.  Reapply force only while no
+        # snapshot target has been acknowledged; once even one batch is
+        # durable, native hashes and snapshot state become the retry boundary.
+        first_execution = first_execution or (
+            job.attempts == 0 and len(pending) == len(files)
+        )
+        return pending, first_execution
 
     async def _publish(self, job: IngestionJob) -> None:
         await self._events.publish("indexing_job", job_to_dict(job))

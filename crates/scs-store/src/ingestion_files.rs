@@ -23,6 +23,23 @@ pub struct IngestionStats {
     pub last_indexed: String,
 }
 
+/// One durable acknowledgement of source content successfully indexed.
+///
+/// A batch acknowledgement is intentionally independent from graph/vector
+/// mutation. Callers write and verify the derived vector sidecar first, then
+/// atomically persist every record in a completed batch through
+/// [`acknowledge_ingested_files_batch`]. A stored hash is therefore the
+/// durable checkpoint that makes the file eligible to skip on retry.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct IngestedFileRecord {
+    pub file_id: String,
+    pub repo_path: String,
+    pub rel_path: String,
+    pub language: String,
+    pub content_hash: String,
+    pub byte_size: i64,
+}
+
 /// Result of dropping an entire repo's index from the knowledge graph.
 ///
 /// Returned by `delete_repo` to report how many artifacts were cleaned up.
@@ -84,6 +101,59 @@ pub fn upsert_ingested_file(
         ],
     )?;
     Ok(())
+}
+
+/// Atomically acknowledge a complete, already-persisted ingestion batch.
+///
+/// This is the only hash checkpoint used by normal incremental ingestion. If
+/// any record conflicts or SQLite rejects a write, the transaction rolls back
+/// every record in the batch so retry selects the whole batch again. It does
+/// not mutate graph rows or vectors; callers must flush and validate those
+/// derived artifacts before invoking this operation.
+pub fn acknowledge_ingested_files_batch(
+    pool: &ConnectionPool,
+    records: &[IngestedFileRecord],
+) -> SCSResult<usize> {
+    if records.is_empty() {
+        return Ok(0);
+    }
+
+    observe_result(
+        QueryBackend::Sqlite,
+        "acknowledge_ingested_files_batch",
+        "ingested_files",
+        format!("count={}", records.len()),
+        |obs| {
+            let wait_started = std::time::Instant::now();
+            let conn = pool.get().pool_err()?;
+            obs.set_wait(wait_started.elapsed());
+            let tx = conn.unchecked_transaction()?;
+            let mut statement = tx.prepare_cached(
+                "INSERT INTO ingested_files (id, repo_path, rel_path, language, content_hash, byte_size)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(repo_path, rel_path) DO UPDATE SET
+                     content_hash = excluded.content_hash,
+                     byte_size = excluded.byte_size,
+                     indexed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+            )?;
+
+            for record in records {
+                statement.execute(params![
+                    record.file_id,
+                    record.repo_path,
+                    record.rel_path,
+                    record.language,
+                    record.content_hash,
+                    record.byte_size,
+                ])?;
+            }
+
+            drop(statement);
+            tx.commit()?;
+            obs.set_rows(records.len());
+            Ok(records.len())
+        },
+    )
 }
 
 /// Get all ingested file paths and their hashes for a repo.
@@ -215,6 +285,100 @@ pub fn delete_ingestion_record(
     Ok(())
 }
 
+/// Transactionally remove ingestion checkpoints for one repository batch.
+///
+/// Graph/vector removal deliberately happens in a preceding operation. A
+/// failed sidecar flush therefore leaves these records present, allowing a
+/// retry to locate and complete the deletion safely.
+pub fn delete_ingestion_records_batch(
+    pool: &ConnectionPool,
+    repo_path: &str,
+    rel_paths: &[String],
+) -> SCSResult<usize> {
+    if rel_paths.is_empty() {
+        return Ok(0);
+    }
+
+    observe_result(
+        QueryBackend::Sqlite,
+        "delete_ingestion_records_batch",
+        "ingested_files",
+        format!("count={}", rel_paths.len()),
+        |obs| {
+            let wait_started = std::time::Instant::now();
+            let conn = pool.get().pool_err()?;
+            obs.set_wait(wait_started.elapsed());
+            let tx = conn.unchecked_transaction()?;
+            let mut statement = tx.prepare_cached(
+                "DELETE FROM ingested_files WHERE repo_path = ?1 AND rel_path = ?2",
+            )?;
+            let mut count = 0;
+            for rel_path in rel_paths {
+                count += statement.execute(params![repo_path, rel_path])?;
+            }
+            drop(statement);
+            tx.commit()?;
+            obs.set_rows(count);
+            Ok(count)
+        },
+    )
+}
+
+/// Remove a file's graph rows and vectors while retaining its hash checkpoint.
+///
+/// This is the destructive half of resumable deletion. The caller must flush
+/// and reopen the vector sidecar before calling
+/// [`delete_ingestion_records_batch`]. Retaining the record until then makes a
+/// sidecar flush failure retryable instead of silently losing the deletion
+/// checkpoint.
+pub fn remove_file_graph_and_vector(
+    pool: &ConnectionPool,
+    vector_index: &VectorIndex,
+    repo_path: &str,
+    rel_path: &str,
+) -> SCSResult<usize> {
+    observe_result(
+        QueryBackend::Maintenance,
+        "remove_file_graph_and_vector",
+        "nodes",
+        "rel_path=<redacted>".to_string(),
+        |obs| {
+            let wait_started = std::time::Instant::now();
+            let conn = pool.get().pool_err()?;
+            obs.set_wait(wait_started.elapsed());
+
+            let ids: Vec<String> = {
+                let mut statement = conn.prepare(
+                    "SELECT n.id
+                     FROM nodes n
+                     LEFT JOIN repos r ON r.id = n.repo_id
+                     WHERE json_extract(n.metadata, '$.file_path') = ?2
+                       AND (r.path = ?1 OR json_extract(n.metadata, '$.repo_path') = ?1)",
+                )?;
+                let node_ids = statement
+                    .query_map(params![repo_path, rel_path], |row| row.get(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                node_ids
+            };
+
+            vector_index.remove_batch(&ids)?;
+            let nodes_removed = conn.execute(
+                "DELETE FROM nodes
+                 WHERE json_extract(metadata, '$.file_path') = ?2
+                   AND (
+                     repo_id = (SELECT id FROM repos WHERE path = ?1)
+                     OR json_extract(metadata, '$.repo_path') = ?1
+                   )",
+                params![repo_path, rel_path],
+            )?;
+
+            obs.set_rows(nodes_removed);
+            obs.set_vectors(ids.len());
+            Ok(nodes_removed)
+        },
+    )
+}
+
 /// Remove an ingested file record and its associated nodes.
 ///
 /// Looks up all nodes that were created from this file (stored in
@@ -232,47 +396,10 @@ pub fn delete_ingested_file(
         "ingested_files",
         "rel_path=<redacted>".to_string(),
         |obs| {
-            let wait_started = std::time::Instant::now();
-            let conn = pool.get().pool_err()?;
-            obs.set_wait(wait_started.elapsed());
-
-            // Collect node IDs to remove from USearch.
-            let ids: Vec<String> = {
-                let mut stmt = conn.prepare(
-                    "SELECT n.id
-                     FROM nodes n
-                     LEFT JOIN repos r ON r.id = n.repo_id
-                     WHERE json_extract(n.metadata, '$.file_path') = ?2
-                       AND (r.path = ?1 OR json_extract(n.metadata, '$.repo_path') = ?1)",
-                )?;
-                let result = stmt
-                    .query_map(params![repo_path, rel_path], |row| row.get(0))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                result
-            };
-
-            // Remove vectors from USearch.
-            vector_index.remove_batch(&ids)?;
-
-            // Delete nodes associated with this file (edges CASCADE).
-            let nodes_removed = conn.execute(
-                "DELETE FROM nodes
-                 WHERE json_extract(metadata, '$.file_path') = ?2
-                   AND (
-                     repo_id = (SELECT id FROM repos WHERE path = ?1)
-                     OR json_extract(metadata, '$.repo_path') = ?1
-                   )",
-                params![repo_path, rel_path],
-            )?;
-
-            // Delete the ingestion record.
-            conn.execute(
-                "DELETE FROM ingested_files WHERE repo_path = ?1 AND rel_path = ?2",
-                params![repo_path, rel_path],
-            )?;
-
+            let nodes_removed =
+                remove_file_graph_and_vector(pool, vector_index, repo_path, rel_path)?;
+            delete_ingestion_record(pool, repo_path, rel_path)?;
             obs.set_rows(nodes_removed);
-            obs.set_vectors(ids.len());
             Ok(())
         },
     )
@@ -525,6 +652,77 @@ mod tests {
         assert_eq!(hash, Some("abc123".to_string()));
     }
 
+    #[test]
+    fn batch_acknowledgement_is_atomic_when_a_later_record_conflicts() {
+        let (_dir, pool, _vi) = setup();
+        upsert_ingested_file(
+            &pool,
+            "existing-id",
+            "/repo",
+            "existing.py",
+            "python",
+            "old",
+            1,
+        )
+        .unwrap();
+
+        // The second insert reuses an existing primary key for a distinct path.
+        // Its conflict target is (repo_path, rel_path), so SQLite rejects it.
+        // The first acknowledgement must roll back with the same transaction.
+        let records = vec![
+            IngestedFileRecord {
+                file_id: "fresh-id".to_string(),
+                repo_path: "/repo".to_string(),
+                rel_path: "fresh.py".to_string(),
+                language: "python".to_string(),
+                content_hash: "fresh".to_string(),
+                byte_size: 2,
+            },
+            IngestedFileRecord {
+                file_id: "existing-id".to_string(),
+                repo_path: "/repo".to_string(),
+                rel_path: "conflict.py".to_string(),
+                language: "python".to_string(),
+                content_hash: "conflict".to_string(),
+                byte_size: 3,
+            },
+        ];
+
+        assert!(acknowledge_ingested_files_batch(&pool, &records).is_err());
+        assert_eq!(
+            get_ingested_file_hash(&pool, "/repo", "existing.py").unwrap(),
+            Some("old".to_string())
+        );
+        assert_eq!(
+            get_ingested_file_hash(&pool, "/repo", "fresh.py").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn batch_record_deletion_is_repo_scoped_and_transactional() {
+        let (_dir, pool, _vi) = setup();
+        upsert_ingested_file(&pool, "a", "/repo/a", "shared.py", "python", "a", 1).unwrap();
+        upsert_ingested_file(&pool, "b", "/repo/b", "shared.py", "python", "b", 1).unwrap();
+        upsert_ingested_file(&pool, "c", "/repo/a", "keep.py", "python", "c", 1).unwrap();
+
+        assert_eq!(
+            delete_ingestion_records_batch(&pool, "/repo/a", &["shared.py".to_string()]).unwrap(),
+            1
+        );
+        assert!(get_ingested_file_hash(&pool, "/repo/a", "shared.py")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            get_ingested_file_hash(&pool, "/repo/b", "shared.py").unwrap(),
+            Some("b".to_string())
+        );
+        assert_eq!(
+            get_ingested_file_hash(&pool, "/repo/a", "keep.py").unwrap(),
+            Some("c".to_string())
+        );
+    }
+
     /// get_node_ids_for_file returns node IDs whose metadata.file_path
     /// matches the given relative path.
     #[test]
@@ -616,6 +814,33 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(remaining, vec!["a2".to_string(), "b1".to_string()]);
+    }
+
+    #[test]
+    fn graph_vector_removal_preserves_record_until_batch_acknowledgement() {
+        let (_dir, pool, vi) = setup();
+        let repo = "/repo/alpha";
+        ensure_repo(&pool, repo);
+        upsert_ingested_file(&pool, "f1", repo, "src/lib.py", "python", "hash", 1).unwrap();
+        insert_node_with_embedding(&pool, &vi, "n1", "function", "entry", "src/lib.py", repo);
+
+        assert_eq!(
+            remove_file_graph_and_vector(&pool, &vi, repo, "src/lib.py").unwrap(),
+            1
+        );
+        assert!(!vi.contains("n1"));
+        assert_eq!(
+            get_ingested_file_hash(&pool, repo, "src/lib.py").unwrap(),
+            Some("hash".to_string())
+        );
+
+        assert_eq!(
+            delete_ingestion_records_batch(&pool, repo, &["src/lib.py".to_string()]).unwrap(),
+            1
+        );
+        assert!(get_ingested_file_hash(&pool, repo, "src/lib.py")
+            .unwrap()
+            .is_none());
     }
 
     /// delete_ingestion_record removes only the tracking record, leaving

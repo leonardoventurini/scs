@@ -181,6 +181,22 @@ impl KnowledgeGraph {
         self.vector_index.save_if_dirty()
     }
 
+    /// Reopen the durable sidecar and verify every acknowledged vector exists.
+    ///
+    /// The live index may still contain process-local mutations.  Ingestion
+    /// therefore uses a fresh handle as the acknowledgement oracle after the
+    /// atomic sidecar activation boundary.
+    pub fn reopened_vectors_contain(&self, node_ids: &[String]) -> SCSResult<bool> {
+        let reopened = VectorIndex::open(&self.config.index_path, self.config.embedding_dim)?;
+        Ok(node_ids.iter().all(|node_id| reopened.contains(node_id)))
+    }
+
+    /// Reopen the durable sidecar and verify removed vectors stay absent.
+    pub fn reopened_vectors_absent(&self, node_ids: &[String]) -> SCSResult<bool> {
+        let reopened = VectorIndex::open(&self.config.index_path, self.config.embedding_dim)?;
+        Ok(node_ids.iter().all(|node_id| !reopened.contains(node_id)))
+    }
+
     // ── Repo Management ────────────────────────────────────────────
 
     /// Get or create a repo record, returning its integer ID.
@@ -223,6 +239,37 @@ impl KnowledgeGraph {
             Ok(id) => Ok(Some(id)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Resolve an indexed entity's deterministic ID by repository and qualified name.
+    ///
+    /// Cross-batch edge planning needs to retain edges to entities from an
+    /// unchanged file. The qualified name is stored as parser metadata and is
+    /// unique within a repository by the ingestion identity contract. The
+    /// ordering is a defensive tie-breaker for legacy stores that may contain
+    /// duplicate metadata.
+    pub fn resolve_node_id_by_qualified_name(
+        &self,
+        repo_path: &str,
+        qualified_name: &str,
+    ) -> SCSResult<Option<String>> {
+        let conn = self.pool.get().pool_err()?;
+        let result = conn.query_row(
+            "SELECT n.id
+             FROM nodes n
+             LEFT JOIN repos r ON r.id = n.repo_id
+             WHERE json_extract(n.metadata, '$.qualified_name') = ?2
+               AND (r.path = ?1 OR json_extract(n.metadata, '$.repo_path') = ?1)
+             ORDER BY n.id ASC
+             LIMIT 1",
+            params![repo_path, qualified_name],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -1726,6 +1773,37 @@ mod tests {
     }
 
     #[test]
+    fn reopened_vectors_contain_checks_the_persisted_sidecar() {
+        let (_dir, graph) = test_graph();
+        let embedding = make_embedding(1, 768);
+        graph
+            .upsert_node(
+                "durable-node",
+                NodeType::Function,
+                "durable",
+                "fn durable() {}",
+                None,
+                Some(&embedding),
+                None,
+            )
+            .unwrap();
+        graph.flush_vector_index().unwrap();
+
+        assert!(graph
+            .reopened_vectors_contain(&["durable-node".to_string()])
+            .unwrap());
+        assert!(!graph
+            .reopened_vectors_contain(&["missing-node".to_string()])
+            .unwrap());
+        assert!(graph
+            .reopened_vectors_absent(&["missing-node".to_string()])
+            .unwrap());
+        assert!(!graph
+            .reopened_vectors_absent(&["durable-node".to_string()])
+            .unwrap());
+    }
+
+    #[test]
     fn get_nonexistent_returns_none() {
         let (_dir, graph) = test_graph();
         assert!(graph.get_node("nonexistent").unwrap().is_none());
@@ -2937,6 +3015,59 @@ mod tests {
         let resolved = graph.resolve_repo_id("/my-repo").unwrap();
 
         assert_eq!(resolved, Some(repo.id));
+    }
+
+    #[test]
+    fn resolve_node_id_by_qualified_name_is_repo_scoped() {
+        let (_dir, graph) = test_graph();
+        let repo_a = graph.get_or_create_repo("/repo-a").unwrap();
+        let repo_b = graph.get_or_create_repo("/repo-b").unwrap();
+        let metadata = |repo_path: &str| {
+            HashMap::from([
+                ("qualified_name".to_string(), json!("shared.module.target")),
+                ("repo_path".to_string(), json!(repo_path)),
+            ])
+        };
+
+        graph
+            .upsert_node(
+                "node-a",
+                NodeType::Function,
+                "target",
+                "",
+                Some(&metadata("/repo-a")),
+                None,
+                Some(repo_a.id),
+            )
+            .unwrap();
+        graph
+            .upsert_node(
+                "node-b",
+                NodeType::Function,
+                "target",
+                "",
+                Some(&metadata("/repo-b")),
+                None,
+                Some(repo_b.id),
+            )
+            .unwrap();
+
+        assert_eq!(
+            graph
+                .resolve_node_id_by_qualified_name("/repo-a", "shared.module.target")
+                .unwrap(),
+            Some("node-a".to_string())
+        );
+        assert_eq!(
+            graph
+                .resolve_node_id_by_qualified_name("/repo-b", "shared.module.target")
+                .unwrap(),
+            Some("node-b".to_string())
+        );
+        assert!(graph
+            .resolve_node_id_by_qualified_name("/repo-a", "missing")
+            .unwrap()
+            .is_none());
     }
 
     // ── Batch Get Nodes tests ──

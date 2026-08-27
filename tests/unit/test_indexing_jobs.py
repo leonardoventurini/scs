@@ -39,6 +39,31 @@ def test_queue_merges_incremental_paths(tmp_path: Path) -> None:
     assert second.payload["file_paths"] == ["a.py", "b.py"]
 
 
+def test_new_explicit_force_request_replaces_a_queued_force_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A new force request must rediscover rather than inherit stale targets."""
+
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    first = store.enqueue(repo_path="/repo", mode="force_full", reason="explicit")
+    store.install_force_full_snapshot(
+        first.id,
+        files=[
+            {
+                "rel_path": "old.py",
+                "content_hash": "a" * 64,
+                "language": "python",
+                "byte_size": 1,
+            }
+        ],
+    )
+
+    second = store.enqueue(repo_path="/repo", mode="force_full", reason="explicit")
+
+    assert second.id == first.id
+    assert second.payload == {}
+
+
 def test_explicit_job_persists_immutable_project_store_binding(tmp_path: Path) -> None:
     """A worker must receive the store identity selected at enqueue time."""
 
@@ -54,6 +79,30 @@ def test_explicit_job_persists_immutable_project_store_binding(tmp_path: Path) -
 
     assert job.store_id == "a" * 64
     assert job.store_generation == "g00000001"
+    snapshot = store.install_force_full_snapshot(
+        job.id,
+        files=[
+            {
+                "rel_path": "source.py",
+                "content_hash": "f" * 64,
+                "language": "python",
+                "byte_size": 1,
+            }
+        ],
+    )
+    assert snapshot.payload["force_full_snapshot"] == {
+        "store_id": "a" * 64,
+        "store_generation": "g00000001",
+        "files": [
+            {
+                "rel_path": "source.py",
+                "content_hash": "f" * 64,
+                "language": "python",
+                "byte_size": 1,
+                "acknowledged": False,
+            }
+        ],
+    }
     claimed = store.claim_next(lease_owner="worker")
     assert claimed is not None
     assert claimed.store_id == job.store_id

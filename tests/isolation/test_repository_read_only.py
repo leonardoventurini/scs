@@ -11,7 +11,23 @@ import pytest
 
 from scs.config import SCSSettings
 from scs.main import SCSDaemon
+from scs.providers.base import ProviderMetadata
 from scs.wire.client import SCSClient
+
+
+class _ImmediateEmbeddings:
+    """Keep source-read-only verification independent from a shared OMLX queue."""
+
+    @property
+    def metadata(self) -> ProviderMetadata:
+        return ProviderMetadata("test", "immediate", 2)
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0, 1.0] for _ in texts]
+
+    async def embed_query(self, text: str) -> list[float]:
+        del text
+        return [0.0, 1.0]
 
 
 def _fingerprint(path: Path) -> tuple[int, int, int, int, str]:
@@ -37,7 +53,12 @@ async def _wait_for_completion(client: SCSClient, repo_path: str) -> None:
 @pytest.mark.asyncio
 async def test_index_search_inspection_and_lsp_preserve_source_bytes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "scs.main.OpenAICompatibleEmbeddingProvider",
+        lambda **_kwargs: _ImmediateEmbeddings(),
+    )
     repository = tmp_path / "repository"
     repository.mkdir()
     source = repository / "module.py"

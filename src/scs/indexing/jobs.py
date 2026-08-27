@@ -6,7 +6,7 @@ import json
 import logging
 import sqlite3
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -103,6 +103,69 @@ def _normalize_payload(
     return normalized
 
 
+def _normalize_force_snapshot_files(
+    files: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Validate and sort the hash-only manifest stored for one force job."""
+
+    normalized: list[dict[str, object]] = []
+    seen_paths: set[str] = set()
+    for file in files:
+        rel_path = file.get("rel_path")
+        content_hash = file.get("content_hash")
+        language = file.get("language")
+        byte_size = file.get("byte_size")
+        if (
+            not isinstance(rel_path, str)
+            or not rel_path
+            or Path(rel_path).is_absolute()
+            or ".." in Path(rel_path).parts
+            or not isinstance(content_hash, str)
+            or not content_hash
+            or not isinstance(language, str)
+            or not isinstance(byte_size, int)
+            or byte_size < 0
+        ):
+            raise ValueError("Invalid force-full snapshot file")
+        if rel_path in seen_paths:
+            raise ValueError(f"Duplicate force-full snapshot path: {rel_path}")
+        seen_paths.add(rel_path)
+        normalized.append(
+            {
+                "rel_path": rel_path,
+                "content_hash": content_hash,
+                "language": language,
+                "byte_size": byte_size,
+                "acknowledged": bool(file.get("acknowledged", False)),
+            }
+        )
+    return sorted(normalized, key=lambda file: cast(str, file["rel_path"]))
+
+
+def _force_snapshot(payload: dict[str, object]) -> dict[str, object]:
+    """Read a validated force snapshot from a job payload."""
+
+    raw_snapshot = payload.get("force_full_snapshot")
+    if not isinstance(raw_snapshot, dict):
+        raise ValueError("Force-full job has no durable snapshot")
+    snapshot = cast(dict[str, object], raw_snapshot)
+    raw_files = snapshot.get("files")
+    if not isinstance(raw_files, list):
+        raise ValueError("Force-full snapshot files are invalid")
+    files = cast(list[object], raw_files)
+    if not all(
+        isinstance(file, dict) for file in files
+    ):
+        raise ValueError("Force-full snapshot files are invalid")
+    return {
+        "store_id": snapshot.get("store_id"),
+        "store_generation": snapshot.get("store_generation"),
+        "files": _normalize_force_snapshot_files(
+            [cast(dict[str, object], file) for file in files]
+        ),
+    }
+
+
 def _mode_rank(mode: str) -> int:
     return {
         "cleanup": 0,
@@ -126,7 +189,26 @@ def _merge_payload(
     winner = (
         new_mode if _mode_rank(new_mode) > _mode_rank(existing_mode) else existing_mode
     )
-    if winner in {"full", "force_full", "cleanup"}:
+    if winner in {"full", "cleanup"}:
+        return winner, {}
+
+    if winner == "force_full":
+        # A queued explicit force request deliberately supersedes any previous
+        # attempt snapshot: it is a new request and must rediscover its own
+        # immutable file/hash set.  A watcher/full follow-up, in contrast,
+        # must retain the running force job's checkpoint when it is requeued.
+        if new_mode == "force_full":
+            return winner, {
+                key: value
+                for key, value in new_payload.items()
+                if key == "force_full_snapshot"
+            }
+        if existing_mode == "force_full":
+            return winner, {
+                key: value
+                for key, value in existing_payload.items()
+                if key == "force_full_snapshot"
+            }
         return winner, {}
 
     file_paths = set(cast(Iterable[str], existing_payload.get("file_paths", [])))
@@ -393,6 +475,104 @@ class IngestionJobStore:
                 """,
                 (phase, max(0, current), max(0, total), message, now, job_id),
             )
+
+    def install_force_full_snapshot(
+        self,
+        job_id: str,
+        *,
+        files: list[dict[str, object]],
+    ) -> IngestionJob:
+        """Durably freeze the first force attempt's path/hash-only manifest.
+
+        The queue owns this manifest rather than source text or vectors.  The
+        operation is idempotent for a reclaimed job: once installed, its
+        target set cannot be widened by files created during a retry.
+        """
+
+        normalized_files = _normalize_force_snapshot_files(files)
+        now = utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    "SELECT * FROM ingestion_jobs WHERE id = ?", (job_id,)
+                ).fetchone(),
+            )
+            if row is None:
+                raise KeyError(job_id)
+            if _row_mode(row) != "force_full":
+                raise ValueError(f"Job {job_id} is not force_full")
+            payload = _loads(_row_str(row, "payload_json"))
+            if "force_full_snapshot" not in payload:
+                payload["force_full_snapshot"] = {
+                    # The job ID scopes this manifest; the immutable store
+                    # binding makes it invalid to replay against a retargeted
+                    # project store after a catalog generation change.
+                    "store_id": _row_optional_str(row, "store_id"),
+                    "store_generation": _row_optional_str(row, "store_generation"),
+                    "files": normalized_files,
+                }
+                conn.execute(
+                    """
+                    UPDATE ingestion_jobs
+                    SET payload_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (json.dumps(payload, sort_keys=True), now, job_id),
+                )
+            conn.commit()
+            return self._get_locked(conn, job_id)
+
+    def acknowledge_force_full_snapshot_files(
+        self, job_id: str, *, rel_paths: Sequence[str]
+    ) -> IngestionJob:
+        """Mark a native-acknowledged force batch complete in the job manifest.
+
+        Native ingestion hashes remain the authoritative semantic checkpoint.
+        This mirror makes a reclaimed force job's target set explicit and
+        bounded; it persists only file identity and hash state.
+        """
+
+        expected_paths = sorted(set(rel_paths))
+        if not expected_paths:
+            return self.get(job_id) or (_ for _ in ()).throw(KeyError(job_id))
+        now = utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    "SELECT * FROM ingestion_jobs WHERE id = ?", (job_id,)
+                ).fetchone(),
+            )
+            if row is None:
+                raise KeyError(job_id)
+            payload = _loads(_row_str(row, "payload_json"))
+            snapshot = _force_snapshot(payload)
+            files = cast(list[dict[str, object]], snapshot["files"])
+            known_paths = {cast(str, file["rel_path"]) for file in files}
+            unknown_paths = set(expected_paths) - known_paths
+            if unknown_paths:
+                raise ValueError(
+                    f"Force snapshot does not contain paths: {sorted(unknown_paths)}"
+                )
+            for file in files:
+                if cast(str, file["rel_path"]) in expected_paths:
+                    file["acknowledged"] = True
+            payload["force_full_snapshot"] = snapshot
+            conn.execute(
+                """
+                UPDATE ingestion_jobs
+                SET payload_json = ?, updated_at = ?
+                WHERE id = ? AND status IN ('running', 'cancelling')
+                """,
+                (json.dumps(payload, sort_keys=True), now, job_id),
+            )
+            if conn.total_changes != 1:
+                raise RuntimeError(f"Force snapshot job {job_id} is no longer active")
+            conn.commit()
+            return self._get_locked(conn, job_id)
 
     def complete(
         self, job_id: str, *, result: dict[str, object] | None = None

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scs.graph.models import NodeType, RelationshipType
+from scs.graph.models import Edge, NodeType, RelationshipType
 from scs.indexing.parser.base import ParsedEdge, ParsedEntity
 
 
@@ -59,6 +59,20 @@ class FakeGraph:
         repo_id = self.repos.get(repo_path)
         return [node_id for node_id, node in self.nodes.items() if node.get("repo_id") == repo_id and node["metadata"].get("file_path") == rel_path]
 
+    def resolve_node_id_by_qualified_name_sync(
+        self, repo_path: str, qualified_name: str
+    ) -> str | None:
+        repo_id = self.repos.get(repo_path)
+        return next(
+            (
+                node_id
+                for node_id, node in self.nodes.items()
+                if node.get("repo_id") == repo_id
+                and node["metadata"].get("qualified_name") == qualified_name
+            ),
+            None,
+        )
+
     def batch_upsert_nodes_sync(self, nodes: list[dict[str, object]]) -> int:
         self._fail("nodes")
         for node in nodes:
@@ -67,8 +81,25 @@ class FakeGraph:
 
     def batch_upsert_edges_sync(self, edges: list[dict[str, object]]) -> int:
         self._fail("edges")
-        self.edges = edges
+        by_identity = {
+            (str(edge["source_id"]), str(edge["target_id"]), str(edge["relationship"])): edge
+            for edge in self.edges
+        }
+        for edge in edges:
+            by_identity[
+                (str(edge["source_id"]), str(edge["target_id"]), str(edge["relationship"]))
+            ] = edge
+        self.edges = list(by_identity.values())
         return len(edges)
+
+    def get_edges_sync(self, node_id: str, *, direction: str = "both") -> list[Edge]:
+        return [
+            Edge.model_validate({"id": "fake", **edge})
+            for edge in self.edges
+            if (direction == "both" and node_id in {edge["source_id"], edge["target_id"]})
+            or (direction == "incoming" and edge["target_id"] == node_id)
+            or (direction == "outgoing" and edge["source_id"] == node_id)
+        ]
 
     def batch_upsert_embeddings_sync(self, embeddings: list[tuple[str, list[float]]]) -> int:
         self._fail("embeddings")
@@ -79,6 +110,18 @@ class FakeGraph:
         self._fail("flush")
         self.flushes += 1
         return True
+
+    def reopened_vectors_contain_sync(self, node_ids: list[str]) -> bool:
+        self._fail("reopen")
+        if self.fail_at == "reopen_missing":
+            return False
+        return all(node_id in self.embeddings for node_id in node_ids)
+
+    def reopened_vectors_absent_sync(self, node_ids: list[str]) -> bool:
+        self._fail("reopen")
+        if self.fail_at == "reopen_present":
+            return False
+        return all(node_id not in self.embeddings for node_id in node_ids)
 
     def delete_node_sync(self, node_id: str) -> bool:
         deleted = self.nodes.pop(node_id, None) is not None
@@ -92,6 +135,9 @@ class FakeGraph:
 
     def delete_ingested_file_sync(self, repo_path: str, rel_path: str) -> int:
         self.hashes.setdefault(repo_path, {}).pop(rel_path, None)
+        return self.remove_file_graph_and_vector_sync(repo_path, rel_path)
+
+    def remove_file_graph_and_vector_sync(self, repo_path: str, rel_path: str) -> int:
         node_ids = self.get_node_ids_for_file_sync(repo_path, rel_path)
         for node_id in node_ids:
             self.nodes.pop(node_id, None)
@@ -99,12 +145,22 @@ class FakeGraph:
         self.edges = [edge for edge in self.edges if edge["source_id"] not in node_ids and edge["target_id"] not in node_ids]
         return len(node_ids)
 
-    def delete_ingestion_record_sync(self, repo_path: str, rel_path: str) -> bool:
-        return self.hashes.setdefault(repo_path, {}).pop(rel_path, None) is not None
+    def delete_ingestion_records_batch_sync(
+        self, repo_path: str, rel_paths: list[str]
+    ) -> int:
+        records = self.hashes.setdefault(repo_path, {})
+        for rel_path in rel_paths:
+            records.pop(rel_path, None)
+        return len(rel_paths)
 
-    def upsert_ingested_file_sync(self, **kwargs: object) -> None:
+    def acknowledge_ingested_files_batch_sync(self, files: list[dict[str, object]]) -> None:
         self._fail("hash")
-        self.hashes.setdefault(str(kwargs["repo_path"]), {})[str(kwargs["rel_path"])] = str(kwargs["content_hash"])
+        committed = [
+            (str(file["repo_path"]), str(file["rel_path"]), str(file["content_hash"]))
+            for file in files
+        ]
+        for repo_path, rel_path, content_hash in committed:
+            self.hashes.setdefault(repo_path, {})[rel_path] = content_hash
 
     def delete_repo_sync(self, repo_path: str) -> object:
         for rel_path in list(self.hashes.get(repo_path, {})):

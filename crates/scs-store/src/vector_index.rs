@@ -587,6 +587,14 @@ impl VectorIndex {
             ))
         })?;
 
+        // A rename only makes the new directory entry visible. Sync the complete
+        // temporary file first so an acknowledged ingestion batch cannot point
+        // at a zero-length or partially written sidecar after power loss.
+        if let Err(error) = Self::sync_file(&temp_path) {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(error);
+        }
+
         if let Err(error) = std::fs::rename(&temp_path, &self.path) {
             let _ = std::fs::remove_file(&temp_path);
             return Err(SCSError::Storage(format!(
@@ -595,12 +603,47 @@ impl VectorIndex {
             )));
         }
 
+        // Persist the rename itself. Without syncing the containing directory,
+        // a process crash can lose the replacement entry even when the sidecar
+        // contents were flushed successfully.
+        Self::sync_parent_directory(&self.path)?;
+
         log::debug!(
             "Atomically replaced USearch index at {} from {}",
             self.path.display(),
             temp_path.display(),
         );
         Ok(())
+    }
+
+    /// Flush a completed temporary sidecar before it is atomically promoted.
+    fn sync_file(path: &Path) -> SCSResult<()> {
+        std::fs::File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| {
+                SCSError::Storage(format!(
+                    "failed to sync temporary USearch index {}: {error}",
+                    path.display()
+                ))
+            })
+    }
+
+    /// Flush the directory entry created by the replacement rename.
+    fn sync_parent_directory(path: &Path) -> SCSResult<()> {
+        let parent = path.parent().ok_or_else(|| {
+            SCSError::Storage(format!(
+                "USearch index path has no parent directory: {}",
+                path.display()
+            ))
+        })?;
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                SCSError::Storage(format!(
+                    "failed to sync USearch index directory {}: {error}",
+                    parent.display()
+                ))
+            })
     }
 }
 
@@ -776,6 +819,20 @@ mod tests {
         assert_eq!(idx.size(), 2);
         assert!(idx.contains("id-1"));
         assert!(idx.contains("id-2"));
+    }
+
+    #[test]
+    fn save_syncs_a_new_parent_directory_before_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new-parent").join("test.usearch");
+
+        let idx = VectorIndex::open(&path, 4).unwrap();
+        idx.add("id-1", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        idx.save().unwrap();
+
+        assert!(path.exists());
+        let reloaded = VectorIndex::open(&path, 4).unwrap();
+        assert!(reloaded.contains("id-1"));
     }
 
     #[test]

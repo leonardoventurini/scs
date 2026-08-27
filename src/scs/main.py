@@ -27,7 +27,7 @@ from scs.providers.mlx import MLXEmbeddingProvider
 from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 from scs.service import ProcessLock
 from scs.services import SCSServiceRoutes
-from scs.storage import ProjectStoreRegistry, StoreBinding
+from scs.storage import ProjectStoreRegistry, StoreBinding, StoreGeneration, StoreState
 from scs.wire.events import EventBroker
 from scs.wire.router import Router
 from scs.wire.server import WireServer
@@ -134,6 +134,13 @@ class SCSDaemon:
 
             def pipeline_factory(job: IngestionJob) -> IngestionPipeline:
                 def report(progress: IngestionProgress) -> None:
+                    jobs.update_progress(
+                        job.id,
+                        phase=progress.phase,
+                        current=progress.current,
+                        total=progress.total,
+                        message=progress.message,
+                    )
                     payload: dict[str, object] = {
                         "phase": progress.phase,
                         "current": progress.current,
@@ -165,10 +172,24 @@ class SCSDaemon:
                     StoreBinding(job.store_id, job.store_generation),
                 )
 
+            def mark_job_store_stale(job: IngestionJob) -> None:
+                """Withdraw semantic readiness before a job mutates its graph."""
+
+                if job.mode == "drop_index":
+                    return
+                if job.store_id is None or job.store_generation is None:
+                    raise RuntimeError("legacy unbound ingestion job cannot publish staleness")
+                stores.catalog.update_state(
+                    job.repo_path,
+                    expected_generation=StoreGeneration(job.store_generation),
+                    state=StoreState.SEMANTIC_STALE,
+                )
+
             runner = IngestionJobRunner(
                 store=jobs,
                 graph_for_job=graph_for_job,
                 pipeline_factory=pipeline_factory,
+                on_started=mark_job_store_stale,
                 on_completed=mark_job_store_ready,
                 event_sink=BrokerEventSink(self._events),
             )

@@ -14,7 +14,23 @@ import pytest
 
 from scs.config import SCSSettings
 from scs.main import SCSDaemon
+from scs.providers.base import ProviderMetadata
 from scs.wire.client import SCSClient
+
+
+class _ImmediateEmbeddings:
+    """Keep the storage-isolation test independent from a shared OMLX queue."""
+
+    @property
+    def metadata(self) -> ProviderMetadata:
+        return ProviderMetadata("test", "immediate", 2)
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0, 1.0] for _ in texts]
+
+    async def embed_query(self, text: str) -> list[float]:
+        del text
+        return [0.0, 1.0]
 
 
 def _fingerprint(path: Path) -> tuple[int, int, int, str]:
@@ -32,6 +48,10 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "scs.main.OpenAICompatibleEmbeddingProvider",
+        lambda **_kwargs: _ImmediateEmbeddings(),
+    )
     legacy = tmp_path / "legacy-external-product"
     legacy.mkdir()
     sentinels = tuple(

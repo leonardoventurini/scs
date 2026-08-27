@@ -6,7 +6,7 @@ from pathlib import Path
 
 from hypothesis import given, settings, strategies as st
 
-from scs.graph.models import NodeType, RelationshipType
+from scs.graph.models import Edge, NodeType, RelationshipType
 from scs.indexing.parser.base import ParsedEdge, ParsedEntity
 from scs.indexing.pipeline import IngestionPipeline
 
@@ -56,13 +56,36 @@ class Graph:
         return len(nodes)
 
     def batch_upsert_edges_sync(self, edges):
-        self.edges = edges
+        identities = {
+            (edge["source_id"], edge["target_id"], edge["relationship"]): edge
+            for edge in self.edges
+        }
+        identities.update(
+            {
+                (edge["source_id"], edge["target_id"], edge["relationship"]): edge
+                for edge in edges
+            }
+        )
+        self.edges = list(identities.values())
         return len(edges)
+
+    def get_edges_sync(self, node_id, *, direction="both"):
+        return [
+            Edge.model_validate({"id": "fake", **edge})
+            for edge in self.edges
+            if direction == "incoming" and edge["target_id"] == node_id
+        ]
 
     def batch_upsert_embeddings_sync(self, values):
         return len(values)
 
     def flush_vector_index_sync(self):
+        return True
+
+    def reopened_vectors_contain_sync(self, node_ids):
+        return True
+
+    def reopened_vectors_absent_sync(self, node_ids):
         return True
 
     def delete_node_sync(self, key):
@@ -74,12 +97,30 @@ class Graph:
         ]
         return deleted
 
-    def delete_ingested_file_sync(self, path, rel):
-        self.hashes.setdefault(path, {}).pop(rel, None)
+    def resolve_node_id_by_qualified_name_sync(self, path, qualified_name):
+        for key, node in self.nodes.items():
+            if node["metadata"].get("qualified_name") == qualified_name:
+                return key
+        return None
+
+    def remove_file_graph_and_vector_sync(self, path, rel):
         for key in self.get_node_ids_for_file_sync(path, rel):
             self.nodes.pop(key)
         self.edges = [edge for edge in self.edges if edge["source_id"] in self.nodes and edge["target_id"] in self.nodes]
         return 1
+
+    def delete_ingestion_records_batch_sync(self, path, rel_paths):
+        for rel in rel_paths:
+            self.hashes.setdefault(path, {}).pop(rel, None)
+        return len(rel_paths)
+
+    def acknowledge_ingested_files_batch_sync(self, records):
+        for record in records:
+            self.hashes.setdefault(record["repo_path"], {})[record["rel_path"]] = record["content_hash"]
+
+    def delete_ingested_file_sync(self, path, rel):
+        self.hashes.setdefault(path, {}).pop(rel, None)
+        return self.remove_file_graph_and_vector_sync(path, rel)
 
     def delete_ingestion_record_sync(self, path, rel):
         return self.hashes.setdefault(path, {}).pop(rel, None) is not None

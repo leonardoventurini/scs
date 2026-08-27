@@ -212,6 +212,23 @@ impl PyKnowledgeGraph {
             .map_err(scs_err)
     }
 
+    /// Resolve a retained entity for cross-batch edge planning.
+    ///
+    /// This is read-only and repository-scoped so an edge plan cannot attach
+    /// to a same-named symbol in a different project store or repository.
+    fn resolve_node_id_by_qualified_name(
+        &self,
+        py: Python<'_>,
+        repo_path: &str,
+        qualified_name: &str,
+    ) -> PyResult<Option<String>> {
+        py.allow_threads(|| {
+            self.inner
+                .resolve_node_id_by_qualified_name(repo_path, qualified_name)
+        })
+        .map_err(scs_err)
+    }
+
     /// Look up a repo by integer ID, returning its path or None if unknown.
     ///
     /// Reverse of `resolve_repo_id` — used to surface repo paths in the
@@ -690,6 +707,18 @@ impl PyKnowledgeGraph {
             .map_err(scs_err)
     }
 
+    /// Reopen the durable sidecar and confirm all requested vectors survived.
+    fn reopened_vectors_contain(&self, py: Python<'_>, node_ids: Vec<String>) -> PyResult<bool> {
+        py.allow_threads(|| self.inner.reopened_vectors_contain(&node_ids))
+            .map_err(scs_err)
+    }
+
+    /// Reopen the durable sidecar and confirm all requested vectors are absent.
+    fn reopened_vectors_absent(&self, py: Python<'_>, node_ids: Vec<String>) -> PyResult<bool> {
+        py.allow_threads(|| self.inner.reopened_vectors_absent(&node_ids))
+            .map_err(scs_err)
+    }
+
     /// Bulk upsert edges from a JSON array string. Returns count of rows affected.
     ///
     /// The GIL is released via `py.allow_threads` so concurrent library
@@ -742,6 +771,25 @@ impl PyKnowledgeGraph {
                 content_hash,
                 byte_size,
             )
+        })
+        .map_err(scs_err)
+    }
+
+    /// Atomically persist the successful hash acknowledgements for one batch.
+    ///
+    /// Callers must flush and validate the derived vector sidecar before this
+    /// method. A database failure rolls back the entire batch, preserving a
+    /// retryable checkpoint boundary instead of acknowledging a prefix.
+    fn acknowledge_ingested_files_batch(
+        &self,
+        py: Python<'_>,
+        records_json: &str,
+    ) -> PyResult<usize> {
+        let records: Vec<scs_store::ingestion_files::IngestedFileRecord> =
+            serde_json::from_str(records_json).map_err(json_err)?;
+        let pool = self.inner.pool();
+        py.allow_threads(|| {
+            scs_store::ingestion_files::acknowledge_ingested_files_batch(pool, &records)
         })
         .map_err(scs_err)
     }
@@ -822,6 +870,47 @@ impl PyKnowledgeGraph {
         let pool = self.inner.pool();
         py.allow_threads(|| {
             scs_store::ingestion_files::delete_ingestion_record(pool, repo_path, rel_path)
+        })
+        .map_err(scs_err)
+    }
+
+    /// Transactionally remove the ingestion records for a completed deletion batch.
+    ///
+    /// The graph/vector half must be removed and its sidecar flushed before
+    /// this acknowledgement. A flush failure therefore leaves these records
+    /// intact for the next retry.
+    fn delete_ingestion_records_batch(
+        &self,
+        py: Python<'_>,
+        repo_path: &str,
+        rel_paths: Vec<String>,
+    ) -> PyResult<usize> {
+        let pool = self.inner.pool();
+        py.allow_threads(|| {
+            scs_store::ingestion_files::delete_ingestion_records_batch(pool, repo_path, &rel_paths)
+        })
+        .map_err(scs_err)
+    }
+
+    /// Remove one file's graph rows and vector membership without its hash record.
+    ///
+    /// This split operation lets the Python pipeline retain the durable retry
+    /// checkpoint until it has successfully flushed the sidecar.
+    fn remove_file_graph_and_vector(
+        &self,
+        py: Python<'_>,
+        repo_path: &str,
+        rel_path: &str,
+    ) -> PyResult<usize> {
+        let pool = self.inner.pool();
+        let vector_index = self.inner.vector_index();
+        py.allow_threads(|| {
+            scs_store::ingestion_files::remove_file_graph_and_vector(
+                pool,
+                vector_index,
+                repo_path,
+                rel_path,
+            )
         })
         .map_err(scs_err)
     }
