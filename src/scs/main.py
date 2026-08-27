@@ -292,11 +292,12 @@ class SCSDaemon:
                 path = canonicalize_repo_path(raw_path)
                 active = active_by_repo.get(path)
                 graph = self._lookup_graph(path)
-                repo_stats = (
+                all_store_stats = (
                     await asyncio.to_thread(graph.get_ingestion_stats_sync)
                     if graph is not None
                     else {}
                 )
+                repo_stats = all_store_stats.get(path, {})
                 if active is not None:
                     state = (
                         "indexing"

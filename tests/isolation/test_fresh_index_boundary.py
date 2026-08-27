@@ -118,4 +118,5 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
         audit_active = False
 
     assert {sentinel: _fingerprint(sentinel) for sentinel in sentinels} == before
-    assert (scs_home / "index.db").exists()
+    assert (scs_home / "catalog.db").exists()
+    assert len(list((scs_home / "projects").glob("*/generations/*/index.db"))) == 1

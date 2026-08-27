@@ -140,7 +140,10 @@ class SCSServiceRoutes:
         """Resolve an existing project graph without registering a repository."""
 
         if repo_path is None or self._graph_for_repository is None:
-            return self._graph()
+            try:
+                return self._graph()
+            except RuntimeError:
+                return None
         if not isinstance(repo_path, str):
             raise ValueError("repo_path must be a string")
         return self._graph_for_repository(canonicalize_repo_path(repo_path))
