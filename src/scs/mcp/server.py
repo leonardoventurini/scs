@@ -28,6 +28,7 @@ from scs.mcp.paths import (
 
 MAX_RESULTS = 200
 MAX_TRAVERSAL_DEPTH = 3
+MINIMUM_INSPECT_LIMIT = 1
 
 # Query tools inspect only SCS-owned state derived from local repositories.
 # Ingestion tools are separately annotated because they mutate the index even
@@ -110,6 +111,7 @@ def build_mcp(
         node_type: str | None = None,
         vector_limit: int = 5,
         hop_limit: int = 2,
+        direction: str = "both",
         repo_path: str | None = None,
     ) -> GraphContextOutput:
         """Combine code search seeds with bounded graph traversal."""
@@ -122,6 +124,7 @@ def build_mcp(
                     "node_type": node_type,
                     "vector_limit": _limit(vector_limit),
                     "hop_limit": max(1, min(hop_limit, MAX_TRAVERSAL_DEPTH)),
+                    "direction": direction,
                     "repo_path": canonical_repo_path(repo_path),
                 },
             ),
@@ -190,8 +193,13 @@ def build_mcp(
         )
 
     @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def inspect_file(repo_path: str, file_path: str) -> InspectFileOutput:
-        """Inspect indexed entities and edges for one repository file."""
+    async def inspect_file(
+        repo_path: str,
+        file_path: str,
+        node_limit: int = 50,
+        edge_limit: int = 100,
+    ) -> InspectFileOutput:
+        """Inspect a bounded set of indexed entities and edges for one source file."""
         repo = canonical_repo_path(repo_path)
         assert repo is not None
         source = contained_file_path(file_path, repo)
@@ -199,7 +207,12 @@ def build_mcp(
             InspectFileOutput,
             await gateway.call(
                 "knowledge.inspect_file",
-                {"repo_path": repo, "file_path": str(Path(source).relative_to(repo))},
+                {
+                    "repo_path": repo,
+                    "file_path": str(Path(source).relative_to(repo)),
+                    "node_limit": max(MINIMUM_INSPECT_LIMIT, node_limit),
+                    "edge_limit": max(MINIMUM_INSPECT_LIMIT, edge_limit),
+                },
             ),
         )
 

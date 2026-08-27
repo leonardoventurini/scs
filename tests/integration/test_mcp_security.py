@@ -55,6 +55,21 @@ async def test_incremental_ingestion_rejects_deleted_path_escape(
     assert gateway.calls == []
 
 
+@pytest.mark.asyncio
+async def test_inspection_normalizes_missing_source_path(tmp_path: Path) -> None:
+    """Missing sources fail at the MCP boundary with a durable public error."""
+    gateway = RecordingGateway()
+    missing = tmp_path / "missing.py"
+
+    with pytest.raises(Exception, match="source path does not exist"):
+        await build_mcp(gateway).call_tool(
+            "inspect_file",
+            {"repo_path": str(tmp_path), "file_path": str(missing)},
+        )
+
+    assert gateway.calls == []
+
+
 def test_mcp_runtime_contains_no_source_mutation_lsp_operations() -> None:
     source = Path(__file__).parents[2] / "src" / "scs" / "mcp"
     runtime = "\n".join(

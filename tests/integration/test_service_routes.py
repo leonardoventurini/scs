@@ -95,6 +95,18 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
                 "repo_id": repo_id,
             },
             {
+                "id": "import-production",
+                "type": "import",
+                "name": "production_symbol",
+                "content": "",
+                "metadata": {
+                    "file_path": "sample.py",
+                    "start_line": 0,
+                    "end_line": 0,
+                },
+                "repo_id": repo_id,
+            },
+            {
                 "id": "file-test",
                 "type": "file",
                 "name": "tests/test_sample.py",
@@ -125,6 +137,11 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
                 {
                     "source_id": "file-production",
                     "target_id": "symbol-production",
+                    "relationship": "contains",
+                },
+                {
+                    "source_id": "file-production",
+                    "target_id": "import-production",
                     "relationship": "contains",
                 },
                 {
@@ -179,7 +196,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
                 "file_paths": [str(source)],
                 "repo_path": repo_path,
             },
-            "lsp.references": {"file_path": str(source), "line": 0},
+            "lsp.references": {"file_path": str(source), "line": 1},
         }
         assert params_by_method.keys() == MCP_GATEWAY_METHODS
 
@@ -194,11 +211,49 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         }
         assert results["knowledge.related"]["matches"][0]["id"] == "symbol-production"
         assert results["knowledge.stats"]["repo_path"] == repo_path
-        assert results["knowledge.stats"]["total_nodes"] == 4
+        assert results["knowledge.stats"]["total_nodes"] == 5
+        assert results["knowledge.stats"]["semantic_search_ready"] is False
+        assert (
+            results["knowledge.stats"]["semantic_search_unavailable_reason"]
+            == "disabled in test"
+        )
         assert results["knowledge.inspect_file"]["nodes"]
+        assert results["knowledge.inspect_file"]["nodes_truncated"] is False
+        assert results["knowledge.inspect_file"]["edges_truncated"] is False
         assert results["lsp.references"]["available"] is True
         assert results["lsp.references"]["symbol"]["id"] == "symbol-production"
-        assert results["knowledge.composite.regression_risk"]["test_dependents"]
+        risk = results["knowledge.composite.regression_risk"]
+        assert {node["id"] for node in risk["dependents"]} == {"symbol-test"}
+        assert {node["id"] for node in risk["test_dependents"]} == {"symbol-test"}
+        related_by_name = await client.call(
+            "knowledge.related",
+            {"symbol_name": "production_symbol", "repo_path": repo_path},
+        )
+        assert [node["id"] for node in related_by_name["matches"]] == [
+            "symbol-production"
+        ]
+        both_context = await client.call(
+            "knowledge.graph_context",
+            {"query": "production_symbol", "repo_path": repo_path, "direction": "both"},
+        )
+        assert both_context["direction"] == "both"
+        assert any(
+            item["node"]["id"] == "file-production"
+            for item in both_context["context"]
+        )
+        bounded_file = await client.call(
+            "knowledge.inspect_file",
+            {
+                "repo_path": repo_path,
+                "file_path": "sample.py",
+                "node_limit": 1,
+                "edge_limit": 1,
+            },
+        )
+        assert len(bounded_file["nodes"]) == 1
+        assert sum(len(values) for values in bounded_file["edges"].values()) == 1
+        assert bounded_file["nodes_truncated"] is True
+        assert bounded_file["edges_truncated"] is True
 
         unindexed = tmp_path / "unindexed"
         unindexed.mkdir()

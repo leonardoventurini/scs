@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+from typing import Annotated, ClassVar, Literal, TypeAlias, TypedDict
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SearchCodeOutput(TypedDict):
@@ -28,6 +30,7 @@ class GraphContextOutput(TypedDict):
     """Stable top-level shape returned by search-seeded graph context."""
 
     query: str
+    direction: str
     seeds: list[dict[str, object]]
     context: list[dict[str, object]]
 
@@ -62,6 +65,8 @@ class GraphStatsOutput(TypedDict):
     database_size_bytes: int
     vector_available: bool
     vector_unavailable_reason: str | None
+    semantic_search_ready: bool
+    semantic_search_unavailable_reason: str | None
 
 
 class InspectFileOutput(TypedDict):
@@ -71,6 +76,8 @@ class InspectFileOutput(TypedDict):
     file_path: str
     nodes: list[dict[str, object]]
     edges: dict[str, list[dict[str, object]]]
+    nodes_truncated: bool
+    edges_truncated: bool
 
 
 class RegressionRiskOutput(TypedDict):
@@ -82,18 +89,31 @@ class RegressionRiskOutput(TypedDict):
     test_dependents: list[dict[str, object]]
 
 
-class _OptionalReferenceFields(TypedDict, total=False):
-    """Fields selected by the available and unavailable reference variants."""
+class _ReferenceOutput(BaseModel):
+    """Reject extra fields so each public reference-result variant stays exact."""
 
-    file_path: NotRequired[str]
-    reason: NotRequired[str]
-    language_server_configured: NotRequired[bool]
-    symbol: NotRequired[dict[str, object]]
-    references: NotRequired[list[dict[str, object]]]
-
-
-class ReferencesOutput(_OptionalReferenceFields):
-    """Indexed references or a typed explanation that references are unavailable."""
-
-    available: bool
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
     source: str
+
+
+class AvailableReferencesOutput(_ReferenceOutput):
+    """References resolved from SCS's indexed structural graph."""
+
+    available: Literal[True]
+    symbol: dict[str, object]
+    references: list[dict[str, object]]
+
+
+class UnavailableReferencesOutput(_ReferenceOutput):
+    """Typed explanation for a source position without an indexed symbol."""
+
+    available: Literal[False]
+    file_path: str
+    reason: str
+    language_server_configured: bool
+
+
+ReferencesOutput: TypeAlias = Annotated[
+    AvailableReferencesOutput | UnavailableReferencesOutput,
+    Field(discriminator="available"),
+]

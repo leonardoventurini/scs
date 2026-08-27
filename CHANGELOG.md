@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-26
+
+- fix: harden MCP graph and reference contracts
+
 ## 2026-08-05
 
 - fix: preserve graph state when rejecting invalid embedding dimensions

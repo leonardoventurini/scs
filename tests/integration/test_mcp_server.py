@@ -32,7 +32,12 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
         "matches": [],
         "related": [],
     },
-    "knowledge.graph_context": {"query": "retained", "seeds": [], "context": []},
+    "knowledge.graph_context": {
+        "query": "retained",
+        "direction": "both",
+        "seeds": [],
+        "context": [],
+    },
     "knowledge.nodes.list": {"nodes": [], "total": 0, "limit": 50, "offset": 0},
     "repository.ingest_files": {"accepted": True, "job": {"id": "job-1"}},
     "repository.index": {"accepted": True, "job": {"id": "job-2"}},
@@ -48,12 +53,16 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
         "database_size_bytes": 0,
         "vector_available": False,
         "vector_unavailable_reason": "disabled in test",
+        "semantic_search_ready": False,
+        "semantic_search_unavailable_reason": "disabled in test",
     },
     "knowledge.inspect_file": {
         "repo_path": "/repo",
         "file_path": "module.py",
         "nodes": [],
         "edges": {},
+        "nodes_truncated": False,
+        "edges_truncated": False,
     },
     "knowledge.composite.regression_risk": {
         "file_paths": [],
@@ -64,14 +73,16 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
     "lsp.references": {
         "available": False,
         "source": "index",
+        "file_path": "/repo/module.py",
         "reason": "not indexed",
+        "language_server_configured": False,
     },
 }
 
 EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
     "search_code": {"query", "results", "neighbors", "total", "retrieval_mode"},
     "get_related": {"symbol_name", "node_id", "matches", "related"},
-    "graph_context": {"query", "seeds", "context"},
+    "graph_context": {"query", "direction", "seeds", "context"},
     "list_symbols": {"nodes", "total", "limit", "offset"},
     "ingest_files": {"accepted", "job"},
     "ingest_project": {"accepted", "job"},
@@ -87,22 +98,22 @@ EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
         "database_size_bytes",
         "vector_available",
         "vector_unavailable_reason",
+        "semantic_search_ready",
+        "semantic_search_unavailable_reason",
     },
-    "inspect_file": {"repo_path", "file_path", "nodes", "edges"},
+    "inspect_file": {
+        "repo_path",
+        "file_path",
+        "nodes",
+        "edges",
+        "nodes_truncated",
+        "edges_truncated",
+    },
     "regression_risk_report": {
         "file_paths",
         "affected_node_ids",
         "dependents",
         "test_dependents",
-    },
-    "find_references": {
-        "available",
-        "source",
-        "file_path",
-        "reason",
-        "language_server_configured",
-        "symbol",
-        "references",
     },
 }
 
@@ -118,6 +129,20 @@ class RecordingGateway:
     ) -> dict[str, object]:
         self.calls.append((method, params))
         return ROUTE_OUTPUTS[method]
+
+
+@dataclass(slots=True)
+class StaticGateway:
+    """Return one exact SCSWire payload to exercise MCP output variants."""
+
+    response: dict[str, object]
+
+    async def call(
+        self, method: str, params: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        assert method == "lsp.references"
+        del params
+        return self.response
 
 
 async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> None:
@@ -164,6 +189,7 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
                     "node_type": None,
                     "vector_limit": 5,
                     "hop_limit": 2,
+                    "direction": "both",
                     "repo_path": repo,
                 },
             ),
@@ -197,7 +223,15 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
         (
             "inspect_file",
             {"repo_path": repo, "file_path": source_path},
-            ("knowledge.inspect_file", {"repo_path": repo, "file_path": "module.py"}),
+            (
+                "knowledge.inspect_file",
+                {
+                    "repo_path": repo,
+                    "file_path": "module.py",
+                    "node_limit": 50,
+                    "edge_limit": 100,
+                },
+            ),
         ),
         (
             "regression_risk_report",
@@ -314,10 +348,57 @@ async def test_streamable_http_lists_exact_inventory_on_ephemeral_port() -> None
                 annotations.openWorldHint,
             ) == (True, False, True, False)
         assert tool.outputSchema is not None
-        assert set(tool.outputSchema["properties"]) == EXPECTED_OUTPUT_FIELDS[tool.name]
+        if tool.name != "find_references":
+            assert set(tool.outputSchema["properties"]) == EXPECTED_OUTPUT_FIELDS[tool.name]
         assert tool.outputSchema.get("additionalProperties") is not True
     references = next(tool for tool in tools.tools if tool.name == "find_references")
     assert set(references.inputSchema["properties"]) == {"file_path", "line"}
+    assert references.outputSchema is not None
+    reference_result_schema = references.outputSchema["properties"]["result"]
+    assert reference_result_schema.get("oneOf")
+    assert reference_result_schema["discriminator"]["propertyName"] == "available"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {
+            "available": True,
+            "source": "index",
+            "symbol": {"id": "symbol"},
+            "references": [{"id": "reference"}],
+        },
+        {
+            "available": False,
+            "source": "index",
+            "file_path": "/repo/missing.py",
+            "reason": "no indexed symbol exists at this position",
+            "language_server_configured": False,
+        },
+    ],
+)
+async def test_streamable_http_returns_both_reference_variants(
+    response: dict[str, object],
+    tmp_path,
+) -> None:
+    source = tmp_path / "module.py"
+    source.write_text("def referenced():\n    return 1\n", encoding="utf-8")
+    server = MCPHTTPServer(build_mcp(StaticGateway(response)), port=0)
+    await server.start()
+    host, port = server.address
+    try:
+        async with streamable_http_client(f"http://{host}:{port}/mcp") as streams:
+            read_stream, write_stream, _ = streams
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    "find_references", {"file_path": str(source), "line": 1}
+                )
+    finally:
+        await server.stop()
+
+    assert result.isError is False
+    assert result.structuredContent == {"result": response}
 
 
 async def test_http_server_fails_closed_when_port_is_occupied() -> None:

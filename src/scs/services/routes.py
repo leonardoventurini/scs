@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-from scs.graph.models import Edge, Node, NodeType
+from scs.graph.models import Edge, Node, NodeType, RelationshipType
 from scs.graph.native import NativeGraph
 from scs.indexing.jobs import IngestionJobStore, job_to_dict
 from scs.indexing.repository_paths import canonicalize_repo_path
@@ -24,6 +24,19 @@ SYMBOL_NODE_TYPES = frozenset(
     }
 )
 TEST_PATH_MARKERS = ("tests/", "test/", "test_", "_test.", ".test.", "Tests.swift")
+DEPENDENCY_RELATIONSHIPS = frozenset(
+    {
+        RelationshipType.CALLS,
+        RelationshipType.IMPORTS,
+        RelationshipType.INHERITS,
+        RelationshipType.IMPLEMENTS,
+        RelationshipType.REFERENCES,
+    }
+)
+DEFAULT_INSPECT_NODE_LIMIT = 50
+DEFAULT_INSPECT_EDGE_LIMIT = 100
+MAX_INSPECT_NODE_LIMIT = 200
+MAX_INSPECT_EDGE_LIMIT = 500
 
 
 def _node_dict(node: Node) -> dict[str, object]:
@@ -240,6 +253,23 @@ class SCSServiceRoutes:
                 asyncio.to_thread(graph.get_ingestion_stats_sync),
             )
         total_nodes = sum(counts.values())
+        embedding_count = total_nodes - without_embeddings
+        provider_metadata = self._embeddings().metadata
+        semantic_search_ready = (
+            provider_metadata.available
+            and graph.vector_state.available
+            and embedding_count > 0
+        )
+        if semantic_search_ready:
+            semantic_search_unavailable_reason: str | None = None
+        elif not provider_metadata.available:
+            semantic_search_unavailable_reason = provider_metadata.reason
+        elif not graph.vector_state.available:
+            semantic_search_unavailable_reason = graph.vector_state.reason
+        else:
+            semantic_search_unavailable_reason = (
+                "no indexed embeddings are available for this scope"
+            )
         canonical_repo = canonicalize_repo_path(repo_path) if repo_path else None
         ingestion = (
             {canonical_repo: all_ingestion.get(canonical_repo, {})}
@@ -251,7 +281,7 @@ class SCSServiceRoutes:
             "status": "ready" if total_nodes else "empty",
             "total_nodes": total_nodes,
             "nodes_by_type": counts,
-            "embedding_count": total_nodes - without_embeddings,
+            "embedding_count": embedding_count,
             "vector_index_count": vector_index_count,
             "vector_index_scope": "global",
             "ingestion_stats": ingestion,
@@ -260,6 +290,8 @@ class SCSServiceRoutes:
             else 0,
             "vector_available": graph.vector_state.available,
             "vector_unavailable_reason": graph.vector_state.reason,
+            "semantic_search_ready": semantic_search_ready,
+            "semantic_search_unavailable_reason": semantic_search_unavailable_reason,
         }
 
     async def related(self, params: dict[str, object]) -> dict[str, object]:
@@ -284,9 +316,29 @@ class SCSServiceRoutes:
             ]
         else:
             assert symbol is not None
-            matches = await asyncio.to_thread(
-                graph.search_by_name_sync, symbol, limit=20, repo_id=repo_id
+            matches_by_type = await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        graph.search_by_name_sync,
+                        symbol,
+                        node_type=node_type,
+                        limit=20,
+                        repo_id=repo_id,
+                    )
+                    for node_type in SYMBOL_NODE_TYPES
+                )
             )
+            matches = sorted(
+                {node.id: node for nodes in matches_by_type for node in nodes}.values(),
+                key=lambda node: (node.name.casefold() != symbol.casefold(), node.name, node.id),
+            )
+            # An exact declaration is the deterministic answer to a symbol lookup.
+            # Retaining substring matches only when no exact symbol exists preserves
+            # discovery without letting a similarly named test/helper dilute lookup.
+            exact_matches = [
+                node for node in matches if node.name.casefold() == symbol.casefold()
+            ]
+            matches = (exact_matches or matches)[:20]
         if not matches:
             return {
                 "symbol_name": symbol,
@@ -326,49 +378,91 @@ class SCSServiceRoutes:
         }
         seeds = await self.search(search_params)
         graph = self._graph()
+        direction = _string(params, "direction") or "both"
+        if direction not in {"outgoing", "incoming", "both"}:
+            raise ValueError("direction must be outgoing, incoming, or both")
+        directions = ("outgoing", "incoming") if direction == "both" else (direction,)
         context: list[dict[str, object]] = []
         seen: set[str] = set()
         seed_results = _dict_list(seeds.get("results"), key="results")
         for seed in seed_results:
-            traversal = await asyncio.to_thread(
-                graph.traverse_sync,
-                str(seed["id"]),
-                depth=min(3, _integer(params, "hop_limit", 2, minimum=1)),
-            )
-            for item in traversal:
-                raw_node = item.get("node", item)
-                node = (
-                    cast(dict[str, object], raw_node)
-                    if isinstance(raw_node, dict)
-                    else None
+            for active_direction in directions:
+                traversal = await asyncio.to_thread(
+                    graph.traverse_sync,
+                    str(seed["id"]),
+                    depth=min(3, _integer(params, "hop_limit", 2, minimum=1)),
+                    direction=active_direction,
                 )
-                key = str(node.get("id", "")) if node is not None else repr(item)
-                if key not in seen:
-                    seen.add(key)
-                    context.append(item)
-        return {"query": seeds["query"], "seeds": seed_results, "context": context}
+                for item in traversal:
+                    raw_node = item.get("node", item)
+                    node = (
+                        cast(dict[str, object], raw_node)
+                        if isinstance(raw_node, dict)
+                        else None
+                    )
+                    key = str(node.get("id", "")) if node is not None else repr(item)
+                    if key not in seen:
+                        seen.add(key)
+                        context.append({**item, "direction": active_direction})
+        return {
+            "query": seeds["query"],
+            "direction": direction,
+            "seeds": seed_results,
+            "context": context,
+        }
 
     async def inspect_file(self, params: dict[str, object]) -> dict[str, object]:
         repo_path = _string(params, "repo_path", required=True)
         file_path = _string(params, "file_path", required=True)
         assert repo_path is not None and file_path is not None
         graph = self._graph()
-        node_ids = await asyncio.to_thread(
+        node_ids = sorted(await asyncio.to_thread(
             graph.get_node_ids_for_file_sync,
             canonicalize_repo_path(repo_path),
             Path(file_path).as_posix(),
+        ))
+        node_limit = min(
+            MAX_INSPECT_NODE_LIMIT,
+            _integer(
+                params,
+                "node_limit",
+                DEFAULT_INSPECT_NODE_LIMIT,
+                minimum=1,
+            ),
         )
+        edge_limit = min(
+            MAX_INSPECT_EDGE_LIMIT,
+            _integer(
+                params,
+                "edge_limit",
+                DEFAULT_INSPECT_EDGE_LIMIT,
+                minimum=1,
+            ),
+        )
+        selected_node_ids = node_ids[:node_limit]
         nodes = [
             node
-            for node_id in node_ids
+            for node_id in selected_node_ids
             if (node := await asyncio.to_thread(graph.get_node_sync, node_id))
             is not None
         ]
-        edges = (
-            await asyncio.to_thread(graph.batch_get_edges_sync, node_ids)
-            if node_ids
+        all_edges = (
+            await asyncio.to_thread(graph.batch_get_edges_sync, selected_node_ids)
+            if selected_node_ids
             else {}
         )
+        ordered_edges = [
+            (node_id, edge)
+            for node_id in sorted(all_edges)
+            for edge in sorted(
+                all_edges[node_id],
+                key=lambda edge: (edge.source_id, edge.target_id, edge.relationship, edge.id),
+            )
+        ]
+        limited_edges = ordered_edges[:edge_limit]
+        edges: dict[str, list[Edge]] = {}
+        for node_id, edge in limited_edges:
+            edges.setdefault(node_id, []).append(edge)
         return {
             "repo_path": canonicalize_repo_path(repo_path),
             "file_path": Path(file_path).as_posix(),
@@ -377,6 +471,8 @@ class SCSServiceRoutes:
                 node_id: [_edge_dict(edge) for edge in values]
                 for node_id, values in edges.items()
             },
+            "nodes_truncated": len(node_ids) > len(selected_node_ids),
+            "edges_truncated": len(ordered_edges) > len(limited_edges),
         }
 
     async def ingest_files(self, params: dict[str, object]) -> dict[str, object]:
@@ -436,12 +532,17 @@ class SCSServiceRoutes:
             if affected_ids
             else {}
         )
+        affected_id_set = set(affected_ids)
         dependent_ids = sorted(
             {
                 edge.source_id
                 for values in edges.values()
                 for edge in values
-                if edge.target_id in affected_ids
+                if (
+                    edge.target_id in affected_id_set
+                    and edge.source_id not in affected_id_set
+                    and edge.relationship in DEPENDENCY_RELATIONSHIPS
+                )
             }
         )
         dependents = [

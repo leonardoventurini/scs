@@ -8,6 +8,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Protocol
@@ -16,6 +17,8 @@ DAEMON_LABEL = "com.mentagen.scs.daemon"
 PROXY_LABEL = "com.mentagen.scs.proxy"
 SERVICE_LABELS = (PROXY_LABEL, DAEMON_LABEL)
 LAUNCHD_THROTTLE_SECONDS = 10
+LAUNCHD_TEARDOWN_TIMEOUT_SECONDS = 2.0
+LAUNCHD_TEARDOWN_POLL_SECONDS = 0.05
 
 
 class CommandRunner(Protocol):
@@ -141,13 +144,20 @@ class ServiceManager:
             if not plist_path.exists():
                 raise RuntimeError(f"SCS service is not installed: {plist_path}")
             if self._is_loaded(label):
-                self._runner.run(
-                    ("launchctl", "kickstart", "-k", f"{self.domain}/{label}")
+                kickstart = (
+                    "launchctl",
+                    "kickstart",
+                    "-k",
+                    f"{self.domain}/{label}",
                 )
-            else:
-                self._runner.run(
-                    ("launchctl", "bootstrap", self.domain, str(plist_path))
-                )
+                # launchd may report a just-booted-out service as loaded while it
+                # completes teardown. A failed kickstart followed by an absent
+                # registration is that narrow race; bootstrap is then safe.
+                if self._runner.run(kickstart, check=False) == 0:
+                    continue
+                if not self._wait_for_unload(label):
+                    raise RuntimeError(f"failed to restart loaded SCS service: {label}")
+            self._runner.run(("launchctl", "bootstrap", self.domain, str(plist_path)))
 
     def stop(self) -> None:
         """Unload daemon then proxy while preserving all persistent data."""
@@ -217,3 +227,13 @@ class ServiceManager:
             )
             == 0
         )
+
+    def _wait_for_unload(self, label: str) -> bool:
+        """Wait briefly for a just-booted-out launchd registration to disappear."""
+
+        deadline = time.monotonic() + LAUNCHD_TEARDOWN_TIMEOUT_SECONDS
+        while self._is_loaded(label):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(LAUNCHD_TEARDOWN_POLL_SECONDS)
+        return True

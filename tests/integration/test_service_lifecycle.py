@@ -28,6 +28,27 @@ class RecordingRunner:
         return 0
 
 
+class TeardownRaceRunner(RecordingRunner):
+    """Model launchd's stale loaded response during a completed bootout."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._stale_label = "com.mentagen.scs.proxy"
+        self.loaded.add(self._stale_label)
+
+    def run(self, command: tuple[str, ...], *, check: bool = True) -> int:
+        self.commands.append(command)
+        if command[1] == "print":
+            label = command[-1].split("/")[-1]
+            return 0 if label in self.loaded else 1
+        if command[1] == "kickstart" and command[-1].endswith(self._stale_label):
+            self.loaded.discard(self._stale_label)
+            return 37
+        if command[1] == "bootstrap":
+            self.loaded.add(Path(command[-1]).stem)
+        return 0
+
+
 def test_install_start_stop_and_uninstall_preserve_scs_home(tmp_path: Path) -> None:
     home = tmp_path / "data"
     home.mkdir()
@@ -64,6 +85,33 @@ def test_install_start_stop_and_uninstall_preserve_scs_home(tmp_path: Path) -> N
     assert not proxy_plist.exists()
     assert not daemon_plist.exists()
     assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+
+def test_start_bootstraps_after_launchd_teardown_race(tmp_path: Path) -> None:
+    """A stale print result cannot strand services after a restart."""
+
+    runner = TeardownRaceRunner()
+    manager = ServiceManager(
+        launch_agents_dir=tmp_path / "LaunchAgents",
+        executable=Path("/opt/scs/bin/scs"),
+        log_dir=tmp_path / "logs",
+        runner=runner,
+        user_id=501,
+    )
+    manager.install()
+
+    manager.start()
+
+    assert (
+        "launchctl",
+        "kickstart",
+        "-k",
+        "gui/501/com.mentagen.scs.proxy",
+    ) in runner.commands
+    assert any(
+        command[1] == "bootstrap" and "com.mentagen.scs.proxy" in command[-1]
+        for command in runner.commands
+    )
 
 
 def test_duplicate_process_lock_is_refused(tmp_path: Path) -> None:
