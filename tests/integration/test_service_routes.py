@@ -212,6 +212,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         assert results["knowledge.related"]["matches"][0]["id"] == "symbol-production"
         assert results["knowledge.stats"]["repo_path"] == repo_path
         assert results["knowledge.stats"]["total_nodes"] == 5
+        assert results["knowledge.stats"]["vector_index_scope"] == "project"
         assert results["knowledge.stats"]["semantic_search_ready"] is False
         assert (
             results["knowledge.stats"]["semantic_search_unavailable_reason"]

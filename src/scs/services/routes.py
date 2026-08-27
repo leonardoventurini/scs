@@ -333,7 +333,10 @@ class SCSServiceRoutes:
             "nodes_by_type": counts,
             "embedding_count": embedding_count,
             "vector_index_count": vector_index_count,
-            "vector_index_scope": "global",
+            # A NativeGraph is opened from exactly one catalog generation, so its
+            # vector count cannot span repositories.  Retaining the former
+            # "global" label would invite clients to merge unrelated stores.
+            "vector_index_scope": "project",
             "ingestion_stats": ingestion,
             "database_size_bytes": graph.database_path.stat().st_size
             if graph.database_path.exists()
