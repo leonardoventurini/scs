@@ -10,6 +10,7 @@ import pytest
 from scs.storage import (
     ProjectStoreCatalog,
     ProjectStorePaths,
+    StoreState,
     StoreGeneration,
     StoreId,
     StorePathError,
@@ -97,3 +98,30 @@ def test_project_paths_reject_existing_symlinked_store_directory(tmp_path: Path)
 
     with pytest.raises(StorePathError, match="escapes|real directory"):
         paths.ensure()
+
+
+def test_catalog_state_update_requires_the_active_generation(tmp_path: Path) -> None:
+    home = tmp_path / "scs-home"
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    catalog = ProjectStoreCatalog(home)
+    catalog.register(repository)
+    catalog.activate(
+        repository,
+        generation=StoreGeneration("g00000001"),
+        state=StoreState.SEMANTIC_STALE,
+    )
+
+    ready = catalog.update_state(
+        repository,
+        expected_generation=StoreGeneration("g00000001"),
+        state=StoreState.SEMANTIC_READY,
+    )
+
+    assert ready.state is StoreState.SEMANTIC_READY
+    with pytest.raises(RuntimeError, match="generation"):
+        catalog.update_state(
+            repository,
+            expected_generation=StoreGeneration("g00000002"),
+            state=StoreState.SEMANTIC_READY,
+        )

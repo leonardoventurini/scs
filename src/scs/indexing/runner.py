@@ -26,6 +26,7 @@ class DeletableGraph(Protocol):
 
 
 GraphResolver = Callable[[IngestionJob], DeletableGraph]
+CompletionHandler = Callable[[IngestionJob], None]
 
 
 class IngestionJobRunner:
@@ -37,6 +38,7 @@ class IngestionJobRunner:
         store: IngestionJobStore,
         graph_for_job: GraphResolver | None = None,
         graph: DeletableGraph | None = None,
+        on_completed: CompletionHandler | None = None,
         pipeline_factory: PipelineFactory,
         event_sink: EventSink | None = None,
         poll_interval_seconds: float = 1.0,
@@ -51,6 +53,7 @@ class IngestionJobRunner:
             else lambda _job: cast(DeletableGraph, graph)
         )
         self._pipeline_factory: PipelineFactory = pipeline_factory
+        self._on_completed: CompletionHandler | None = on_completed
         self._events: EventSink = event_sink or NullEventSink()
         self._poll_interval_seconds: float = poll_interval_seconds
         self._lease_seconds: float = lease_seconds
@@ -99,6 +102,8 @@ class IngestionJobRunner:
             if current is not None and current.status == "cancelling":
                 final = await asyncio.to_thread(self._store.mark_cancelled, job.id)
             else:
+                if self._on_completed is not None:
+                    await asyncio.to_thread(self._on_completed, job)
                 final = await asyncio.to_thread(
                     self._store.complete, job.id, result=result
                 )

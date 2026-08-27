@@ -89,6 +89,18 @@ class ProjectStoreRegistry:
             raise RuntimeError("project-store graph is missing for durable job")
         return self._open(record, paths)
 
+    def mark_semantic_ready(self, root: str, binding: StoreBinding) -> CatalogRecord:
+        """Publish semantic readiness for the generation completed by a job."""
+
+        record = self.catalog.lookup(root)
+        if record is None or binding.store_id != record.store_id:
+            raise RuntimeError("project-store binding no longer matches the catalog")
+        return self.catalog.update_state(
+            root,
+            expected_generation=StoreGeneration(binding.generation),
+            state=StoreState.SEMANTIC_READY,
+        )
+
     def records(self) -> list[CatalogRecord]:
         """Return registered stores for startup watcher restoration."""
 

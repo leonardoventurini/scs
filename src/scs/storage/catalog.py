@@ -186,6 +186,55 @@ class ProjectStoreCatalog:
             connection.close()
         return _record_from_row(row)
 
+    def update_state(
+        self,
+        root: str | Path,
+        *,
+        expected_generation: StoreGeneration,
+        state: StoreState,
+    ) -> CatalogRecord:
+        """Transition state only when the expected generation is still active.
+
+        A queued job carries an immutable generation binding. The conditional
+        update prevents an old worker from publishing readiness for a newer
+        generation after a catalog cutover.
+        """
+
+        canonical_root = canonical_repository_root(root)
+        generation = validate_store_generation(expected_generation)
+        connection = sqlite3.connect(self._database, isolation_level=None)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE project_stores
+                SET state = ?
+                WHERE canonical_root = ? AND active_generation = ?
+                """,
+                (state.value, canonical_root, generation),
+            )
+            if cursor.rowcount != 1:
+                raise CatalogError(
+                    "project-store generation no longer matches the durable job"
+                )
+            row = cast(
+                tuple[str, str, str | None, str],
+                connection.execute(
+                    """
+                    SELECT canonical_root, store_id, active_generation, state
+                    FROM project_stores WHERE canonical_root = ?
+                    """,
+                    (canonical_root,),
+                ).fetchone(),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error as exc:
+            connection.execute("ROLLBACK")
+            raise CatalogError(f"Could not update project-store state for {canonical_root}") from exc
+        finally:
+            connection.close()
+        return _record_from_row(row)
+
     def list_records(self) -> list[CatalogRecord]:
         """List registered stores without creating a catalog or project data."""
 

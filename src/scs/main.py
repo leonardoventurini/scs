@@ -153,10 +153,23 @@ class SCSDaemon:
                     progress=report,
                 )
 
+            def mark_job_store_ready(job: IngestionJob) -> None:
+                """Publish readiness only after a bound indexing job has succeeded."""
+
+                if job.mode == "drop_index":
+                    return
+                if job.store_id is None or job.store_generation is None:
+                    raise RuntimeError("legacy unbound ingestion job cannot publish readiness")
+                stores.mark_semantic_ready(
+                    job.repo_path,
+                    StoreBinding(job.store_id, job.store_generation),
+                )
+
             runner = IngestionJobRunner(
                 store=jobs,
                 graph_for_job=graph_for_job,
                 pipeline_factory=pipeline_factory,
+                on_completed=mark_job_store_ready,
                 event_sink=BrokerEventSink(self._events),
             )
             await runner.start()

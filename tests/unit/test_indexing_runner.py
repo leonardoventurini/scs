@@ -49,6 +49,26 @@ async def test_runner_completes_only_after_pipeline_returns(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_runner_publishes_store_readiness_before_job_completion(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    job = store.enqueue(repo_path=str(repo), mode="full", reason="explicit")
+    completed: list[str] = []
+    runner = IngestionJobRunner(
+        store=store,
+        graph=object(),
+        pipeline_factory=lambda _: Pipeline(),
+        on_completed=lambda indexed: completed.append(indexed.id),
+    )
+
+    assert await runner.run_once()
+
+    assert completed == [job.id]
+    assert store.get(job.id).status == "completed"
+
+
+@pytest.mark.asyncio
 async def test_start_returns_while_background_job_is_active(tmp_path: Path) -> None:
     store = IngestionJobStore(tmp_path / "jobs.db")
     runner = IngestionJobRunner(
