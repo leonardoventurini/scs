@@ -1,12 +1,23 @@
-//! DDL constants and direct schema initialization.
+//! Forward-only SQLite schema migrations for the SCS graph store.
 //!
-//! The knowledge graph lives in a single SQLite database. This module
-//! defines the SQL statements that create the current schema. All DDL is
-//! idempotent (`IF NOT EXISTS`) so startup can always apply it directly.
+//! SQLite's `user_version` and `schema_migrations` ledger advance together in
+//! one `BEGIN IMMEDIATE` transaction. The ledger is durable evidence of every
+//! migration that ran; startup never repairs schema by dropping objects.
 
 use rusqlite::Connection;
 
-use scs_core::error::SCSResult;
+use scs_core::error::{SCSError, SCSResult};
+
+/// The newest SQLite schema supported by this binary.
+pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+
+/// Durable, forward-only record of applied SQLite migrations.
+pub const DDL_SCHEMA_MIGRATIONS: &str = "
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version    INTEGER PRIMARY KEY CHECK(version > 0),
+    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+";
 
 /// Core nodes table — vertices of the knowledge graph.
 pub const DDL_NODES: &str = "
@@ -36,16 +47,7 @@ pub const DDL_NODES_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_nodes_repo_type_updated_at_id ON nodes(repo_id, type, updated_at DESC, id DESC);",
 ];
 
-/// Remove schema objects owned by capabilities that SCS no longer exposes.
-const LEGACY_SCHEMA_CLEANUP: &str = "
-DROP INDEX IF EXISTS idx_nodes_summarizable_repo_id_id;
-";
-
 /// Normalized repository table — stores repo paths once, referenced by FK.
-///
-/// Integer PK enables fast B-tree comparisons in repo-scoped search queries
-/// and avoids repeating 60-byte path strings per node. `UNIQUE(path)` ensures
-/// `INSERT OR IGNORE` + `SELECT` is idempotent for `get_or_create_repo`.
 pub const DDL_REPOS: &str = "
 CREATE TABLE IF NOT EXISTS repos (
     id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,8 +79,7 @@ pub const DDL_EDGES_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_edges_target_rel ON edges(target_id, relationship);",
 ];
 
-/// File ingestion tracking table — records which files have been indexed
-/// and their content hashes for incremental change detection.
+/// File ingestion tracking table — records which files have been indexed.
 pub const DDL_INGESTED_FILES: &str = "
 CREATE TABLE IF NOT EXISTS ingested_files (
     id           TEXT PRIMARY KEY,
@@ -92,10 +93,38 @@ CREATE TABLE IF NOT EXISTS ingested_files (
 );
 ";
 
-/// Returns all DDL statements in order for initial schema creation.
+/// SQLite is the authoritative embedding store; the USearch sidecar is derived.
 ///
+/// `payload_f32` is canonical little-endian IEEE-754 f32 data. The length
+/// check makes malformed vectors impossible to commit. `vector_key` is fixed
+/// width hexadecimal text because SQLite INTEGER cannot represent all u64 keys.
+pub const DDL_EMBEDDING_RECORDS: &str = "
+CREATE TABLE IF NOT EXISTS embedding_records (
+    node_id              TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+    vector_key           TEXT NOT NULL UNIQUE CHECK(length(vector_key) = 16),
+    provider_id          TEXT NOT NULL,
+    model_id             TEXT NOT NULL,
+    dimension            INTEGER NOT NULL CHECK(dimension > 0),
+    content_digest       TEXT NOT NULL,
+    payload_encoding     TEXT NOT NULL DEFAULT 'f32le' CHECK(payload_encoding = 'f32le'),
+    payload_f32          BLOB NOT NULL CHECK(length(payload_f32) = dimension * 4),
+    payload_digest       TEXT NOT NULL,
+    vector_generation    INTEGER NOT NULL CHECK(vector_generation >= 0),
+    created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+";
+
+/// Indexes used by provider/generation parity checks and sidecar rebuilds.
+pub const DDL_EMBEDDING_RECORDS_INDEXES: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_embedding_records_generation ON embedding_records(vector_generation);",
+    "CREATE INDEX IF NOT EXISTS idx_embedding_records_provider_model ON embedding_records(provider_id, model_id);",
+];
+
+/// Returns the DDL needed by a fresh database at the current version.
 pub fn all_ddl() -> Vec<String> {
-    let mut stmts = Vec::with_capacity(15);
+    let mut stmts = Vec::with_capacity(19);
+    stmts.push(DDL_SCHEMA_MIGRATIONS.to_string());
     stmts.push(DDL_REPOS.to_string());
     stmts.push(DDL_NODES.to_string());
     for idx in DDL_NODES_INDEXES {
@@ -106,18 +135,98 @@ pub fn all_ddl() -> Vec<String> {
         stmts.push(idx.to_string());
     }
     stmts.push(DDL_INGESTED_FILES.to_string());
+    stmts.push(DDL_EMBEDDING_RECORDS.to_string());
+    for idx in DDL_EMBEDDING_RECORDS_INDEXES {
+        stmts.push(idx.to_string());
+    }
     stmts
 }
 
-/// Ensure the current schema exists before the graph serves requests.
+/// Ensure every migration up to [`CURRENT_SCHEMA_VERSION`] is applied.
+///
+/// Version-zero databases predate the ledger. Migration one intentionally uses
+/// idempotent creation statements to adopt them without deleting their data.
 pub fn initialize_schema(conn: &Connection) -> SCSResult<()> {
-    conn.execute_batch(
-        "DROP TABLE IF EXISTS community_assignments;
-         DROP TABLE IF EXISTS communities;",
-    )?;
-    conn.execute_batch(LEGACY_SCHEMA_CLEANUP)?;
-    for ddl in all_ddl() {
-        conn.execute_batch(&ddl)?;
+    conn.execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE;")?;
+    match apply_pending_migrations(conn) {
+        Ok(()) => conn.execute_batch("COMMIT;").map_err(Into::into),
+        Err(error) => {
+            if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
+                return Err(SCSError::Migration(format!(
+                    "migration failed ({error}); rollback also failed ({rollback_error})"
+                )));
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Apply the ordered migration list while an immediate transaction is held.
+fn apply_pending_migrations(conn: &Connection) -> SCSResult<()> {
+    let user_version = read_user_version(conn)?;
+    if user_version > CURRENT_SCHEMA_VERSION {
+        return Err(SCSError::Migration(format!(
+            "database schema version {user_version} is newer than supported version {CURRENT_SCHEMA_VERSION}"
+        )));
+    }
+    for version in (user_version + 1)..=CURRENT_SCHEMA_VERSION {
+        apply_migration(conn, version)?;
+        conn.execute(
+            "INSERT INTO schema_migrations (version) VALUES (?1)",
+            [version],
+        )?;
+        conn.execute_batch(&format!("PRAGMA user_version = {version};"))?;
+    }
+    validate_migration_ledger(conn, CURRENT_SCHEMA_VERSION)
+}
+
+/// Apply one forward-only migration. New migrations are append-only match arms.
+fn apply_migration(conn: &Connection, version: i64) -> SCSResult<()> {
+    match version {
+        1 => {
+            conn.execute_batch(DDL_SCHEMA_MIGRATIONS)?;
+            conn.execute_batch(DDL_REPOS)?;
+            conn.execute_batch(DDL_NODES)?;
+            for ddl in DDL_NODES_INDEXES {
+                conn.execute_batch(ddl)?;
+            }
+            conn.execute_batch(DDL_EDGES)?;
+            for ddl in DDL_EDGES_INDEXES {
+                conn.execute_batch(ddl)?;
+            }
+            conn.execute_batch(DDL_INGESTED_FILES)?;
+        }
+        2 => {
+            conn.execute_batch(DDL_EMBEDDING_RECORDS)?;
+            for ddl in DDL_EMBEDDING_RECORDS_INDEXES {
+                conn.execute_batch(ddl)?;
+            }
+        }
+        _ => {
+            return Err(SCSError::Migration(format!(
+                "no migration is defined for schema version {version}"
+            )))
+        }
+    }
+    Ok(())
+}
+
+/// Read SQLite's application-managed schema version.
+fn read_user_version(conn: &Connection) -> SCSResult<i64> {
+    Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+}
+
+/// Reject a tampered or partial migration ledger before serving requests.
+fn validate_migration_ledger(conn: &Connection, expected_version: i64) -> SCSResult<()> {
+    let versions = conn
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")?
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected: Vec<i64> = (1..=expected_version).collect();
+    if versions != expected {
+        return Err(SCSError::Migration(format!(
+            "schema migration ledger {versions:?} does not match expected {expected:?}"
+        )));
     }
     Ok(())
 }
@@ -128,87 +237,85 @@ mod tests {
     use crate::connection::create_test_pool;
 
     #[test]
-    fn all_ddl_returns_correct_count() {
-        // repos + nodes + 7 indexes + edges + 4 indexes + ingested_files
-        // = 15
-        assert_eq!(all_ddl().len(), 15);
+    fn all_ddl_contains_current_schema_objects() {
+        assert_eq!(all_ddl().len(), 19);
+        assert!(DDL_SCHEMA_MIGRATIONS.contains("schema_migrations"));
+        assert!(DDL_EMBEDDING_RECORDS.contains("embedding_records"));
     }
 
     #[test]
-    fn ddl_matches_current_table_names() {
-        assert!(DDL_REPOS.contains("repos"));
-        assert!(DDL_NODES.contains("nodes"));
-        assert!(DDL_EDGES.contains("edges"));
-        assert!(DDL_INGESTED_FILES.contains("ingested_files"));
-    }
-
-    #[test]
-    fn initialize_schema_is_idempotent_and_removes_retired_indexes() {
+    fn initialize_schema_records_every_migration_and_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let pool = create_test_pool(&dir.path().join("test.db")).unwrap();
         let conn = pool.get().unwrap();
-
         initialize_schema(&conn).unwrap();
-        let historical_node_metadata =
-            r#"{"file_path":"src/main.py","summary":"Legacy node summary"}"#;
-        let historical_edge_metadata = r#"{"summary":"Legacy edge summary"}"#;
+        initialize_schema(&conn).unwrap();
+        assert_eq!(read_user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
+        let versions = conn
+            .prepare("SELECT version FROM schema_migrations ORDER BY version")
+            .unwrap()
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(versions, vec![1, 2]);
+    }
+
+    #[test]
+    fn migration_adopts_legacy_schema_without_dropping_data_or_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = create_test_pool(&dir.path().join("test.db")).unwrap();
+        let conn = pool.get().unwrap();
+        conn.execute_batch(DDL_REPOS).unwrap();
+        conn.execute_batch(DDL_NODES).unwrap();
         conn.execute(
-            "INSERT INTO nodes (id, type, name, metadata) VALUES ('node-a', 'file', 'a', ?1)",
-            [historical_node_metadata],
+            "INSERT INTO nodes (id, type, name) VALUES ('node-a', 'file', 'a')",
+            [],
         )
         .unwrap();
+        conn.execute_batch("CREATE TABLE communities (id TEXT PRIMARY KEY); INSERT INTO communities VALUES ('legacy');").unwrap();
+        initialize_schema(&conn).unwrap();
+        let node_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get(0))
+            .unwrap();
+        let community: String = conn
+            .query_row("SELECT id FROM communities", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(node_count, 1);
+        assert_eq!(community, "legacy");
+    }
+
+    #[test]
+    fn embedding_records_enforce_payload_shape_and_vector_key_uniqueness() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = create_test_pool(&dir.path().join("test.db")).unwrap();
+        let conn = pool.get().unwrap();
+        initialize_schema(&conn).unwrap();
         conn.execute(
-            "INSERT INTO nodes (id, type, name) VALUES ('node-b', 'function', 'b')",
+            "INSERT INTO nodes (id, type, name) VALUES ('node-a', 'file', 'a')",
             [],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO edges (id, source_id, target_id, relationship, metadata)
-             VALUES ('edge-a-b', 'node-a', 'node-b', 'contains', ?1)",
-            [historical_edge_metadata],
+            "INSERT INTO nodes (id, type, name) VALUES ('node-b', 'file', 'b')",
+            [],
         )
         .unwrap();
-        conn.execute_batch("CREATE INDEX idx_nodes_summarizable_repo_id_id ON nodes(repo_id, id);")
-            .unwrap();
-        initialize_schema(&conn).unwrap();
+        let invalid_payload = conn.execute("INSERT INTO embedding_records (node_id, vector_key, provider_id, model_id, dimension, content_digest, payload_f32, payload_digest, vector_generation) VALUES ('node-a', '0000000000000001', 'omlx', 'model', 2, 'content', X'00000000', 'payload', 0)", []);
+        assert!(invalid_payload.is_err());
+        conn.execute("INSERT INTO embedding_records (node_id, vector_key, provider_id, model_id, dimension, content_digest, payload_f32, payload_digest, vector_generation) VALUES ('node-a', '0000000000000001', 'omlx', 'model', 1, 'content', X'00000000', 'payload', 0)", []).unwrap();
+        let duplicate_key = conn.execute("INSERT INTO embedding_records (node_id, vector_key, provider_id, model_id, dimension, content_digest, payload_f32, payload_digest, vector_generation) VALUES ('node-b', '0000000000000001', 'omlx', 'model', 1, 'content', X'00000000', 'payload', 0)", []);
+        assert!(duplicate_key.is_err());
+    }
 
-        let index_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'index'
-               AND name = 'idx_nodes_summarizable_repo_id_id'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(index_count, 0);
-
-        let active_index_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-                 WHERE type = 'index'
-                   AND name = 'idx_nodes_repo_type_updated_at_id'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(active_index_count, 1);
-
-        let preserved_node_metadata: String = conn
-            .query_row(
-                "SELECT metadata FROM nodes WHERE id = 'node-a'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let preserved_edge_metadata: String = conn
-            .query_row(
-                "SELECT metadata FROM edges WHERE id = 'edge-a-b'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(preserved_node_metadata, historical_node_metadata);
-        assert_eq!(preserved_edge_metadata, historical_edge_metadata);
+    #[test]
+    fn newer_database_version_is_rejected_without_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = create_test_pool(&dir.path().join("test.db")).unwrap();
+        let conn = pool.get().unwrap();
+        conn.execute_batch("PRAGMA user_version = 999;").unwrap();
+        let error = initialize_schema(&conn).unwrap_err();
+        assert!(error.to_string().contains("newer than supported"));
+        assert_eq!(read_user_version(&conn).unwrap(), 999);
     }
 }
