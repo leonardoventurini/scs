@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,65 @@ def test_queue_merges_incremental_paths(tmp_path: Path) -> None:
 
     assert first.id == second.id
     assert second.payload["file_paths"] == ["a.py", "b.py"]
+
+
+def test_explicit_job_persists_immutable_project_store_binding(tmp_path: Path) -> None:
+    """A worker must receive the store identity selected at enqueue time."""
+
+    store = IngestionJobStore(tmp_path / "jobs.db")
+
+    job = store.enqueue(
+        repo_path="/repo",
+        store_id="a" * 64,
+        store_generation="g00000001",
+        mode="force_full",
+        reason="explicit_reindex",
+    )
+
+    assert job.store_id == "a" * 64
+    assert job.store_generation == "g00000001"
+    claimed = store.claim_next(lease_owner="worker")
+    assert claimed is not None
+    assert claimed.store_id == job.store_id
+    assert claimed.store_generation == job.store_generation
+
+
+def test_job_database_adds_store_binding_columns_without_losing_jobs(tmp_path: Path) -> None:
+    """Pre-topology queues remain readable until cutover archives them."""
+
+    database = tmp_path / "jobs.db"
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(
+            """
+            CREATE TABLE ingestion_jobs (
+                id TEXT PRIMARY KEY, repo_path TEXT NOT NULL, mode TEXT NOT NULL,
+                reason TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL,
+                phase TEXT NOT NULL, current INTEGER NOT NULL, total INTEGER NOT NULL,
+                message TEXT NOT NULL, attempts INTEGER NOT NULL, max_attempts INTEGER NOT NULL,
+                lease_owner TEXT, lease_expires_at TEXT, error TEXT, result_json TEXT,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO ingestion_jobs VALUES
+            ('legacy', '/repo', 'full', 'legacy', '{}', 'queued', 'queued', 0, 0,
+             '', 0, 3, NULL, NULL, NULL, NULL, '2026-01-01T00:00:00Z',
+             '2026-01-01T00:00:00Z', NULL)
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    store = IngestionJobStore(database)
+    legacy = store.get("legacy")
+
+    assert legacy is not None
+    assert legacy.store_id is None
+    assert legacy.store_generation is None
 
 
 def test_failed_running_job_requeues_and_releases_lease(tmp_path: Path) -> None:

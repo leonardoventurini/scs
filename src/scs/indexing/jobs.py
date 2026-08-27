@@ -48,6 +48,8 @@ class IngestionJob:
 
     id: str
     repo_path: str
+    store_id: str | None
+    store_generation: str | None
     mode: IngestionJobMode
     reason: str
     payload: dict[str, object]
@@ -239,6 +241,8 @@ class IngestionJobStore:
         self,
         *,
         repo_path: str,
+        store_id: str | None = None,
+        store_generation: str | None = None,
         mode: IngestionJobMode,
         reason: str,
         payload: dict[str, object] | None = None,
@@ -290,15 +294,17 @@ class IngestionJobStore:
             conn.execute(
                 """
                 INSERT INTO ingestion_jobs (
-                    id, repo_path, mode, reason, payload_json, status, phase,
+                    id, repo_path, store_id, store_generation, mode, reason, payload_json, status, phase,
                     current, total, message, attempts, max_attempts,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, 'queued', 'queued', 0, 0, '', 0, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', 0, 0, '', 0, ?, ?, ?)
                 """,
                 (
                     job_id,
                     repo_path,
+                    store_id,
+                    store_generation,
                     mode,
                     reason,
                     json.dumps(normalized_payload, sort_keys=True),
@@ -321,13 +327,14 @@ class IngestionJobStore:
                 sqlite3.Row | None,
                 conn.execute(
                     """
-                SELECT candidate.*
+                    SELECT candidate.*
                 FROM ingestion_jobs AS candidate
                 WHERE candidate.status IN ('queued', 'retrying')
                   AND NOT EXISTS (
                     SELECT 1
                     FROM ingestion_jobs AS running
-                    WHERE running.repo_path = candidate.repo_path
+                    WHERE COALESCE(running.store_id, running.repo_path)
+                        = COALESCE(candidate.store_id, candidate.repo_path)
                       AND running.status IN ('running', 'cancelling')
                   )
                 ORDER BY
@@ -750,6 +757,8 @@ class IngestionJobStore:
                 CREATE TABLE IF NOT EXISTS ingestion_jobs (
                     id TEXT PRIMARY KEY,
                     repo_path TEXT NOT NULL,
+                    store_id TEXT,
+                    store_generation TEXT,
                     mode TEXT NOT NULL,
                     reason TEXT NOT NULL DEFAULT '',
                     payload_json TEXT NOT NULL DEFAULT '{}',
@@ -778,6 +787,17 @@ class IngestionJobStore:
                     WHERE status IN ('queued', 'retrying');
                 """
             )
+            schema_rows = cast(
+                list[sqlite3.Row],
+                conn.execute("PRAGMA table_info(ingestion_jobs)").fetchall(),
+            )
+            columns = {_row_str(row, "name") for row in schema_rows}
+            if "store_id" not in columns:
+                conn.execute("ALTER TABLE ingestion_jobs ADD COLUMN store_id TEXT")
+            if "store_generation" not in columns:
+                conn.execute(
+                    "ALTER TABLE ingestion_jobs ADD COLUMN store_generation TEXT"
+                )
 
     def _get_locked(self, conn: sqlite3.Connection, job_id: str) -> IngestionJob:
         row = cast(
@@ -794,6 +814,8 @@ class IngestionJobStore:
         return IngestionJob(
             id=_row_str(row, "id"),
             repo_path=_row_str(row, "repo_path"),
+            store_id=_row_optional_str(row, "store_id"),
+            store_generation=_row_optional_str(row, "store_generation"),
             mode=_row_mode(row),
             reason=_row_str(row, "reason"),
             payload=_loads(_row_str(row, "payload_json")),
@@ -833,6 +855,8 @@ def job_to_dict(job: IngestionJob) -> dict[str, object]:
     return {
         "id": job.id,
         "repo_path": job.repo_path,
+        "store_id": job.store_id,
+        "store_generation": job.store_generation,
         "mode": job.mode,
         "reason": job.reason,
         "payload": job.payload,
