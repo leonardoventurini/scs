@@ -13,7 +13,7 @@ def build_embed_text(entity: "ParsedEntity") -> str:
 
     doc = f": {entity.docstring[:512]}" if entity.docstring else ""
     if entity.kind is NodeType.FILE:
-        return f"file: {entity.qualified_name}"
+        return f"file: {entity.qualified_name}{doc}"
     if entity.kind is NodeType.CLASS:
         return f"class {entity.name}{doc}"
     if entity.kind in {NodeType.FUNCTION, NodeType.METHOD}:
@@ -65,7 +65,9 @@ class ParsedEdge:
 class LanguageParser(Protocol):
     """Parse source text into repository-independent entities and edges."""
 
-    def parse(self, source: str, file_path: str) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
+    def parse(
+        self, source: str, file_path: str
+    ) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
         """Parse one repository-relative source path."""
 
         ...

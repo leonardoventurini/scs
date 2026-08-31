@@ -64,13 +64,17 @@ class CrossFileCallParser:
     def supported_extensions(self) -> frozenset[str]:
         return frozenset({".py"})
 
-    def parse(self, source: str, file_path: str) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
+    def parse(
+        self, source: str, file_path: str
+    ) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
         del source
         module = file_path.removesuffix(".py")
         qualified = f"{module}.{module}"
         entities = [
             ParsedEntity(NodeType.FILE, file_path, module, 0, 1, raw_text=file_path),
-            ParsedEntity(NodeType.FUNCTION, module, qualified, 1, 1, raw_text=qualified),
+            ParsedEntity(
+                NodeType.FUNCTION, module, qualified, 1, 1, raw_text=qualified
+            ),
         ]
         edges = [ParsedEdge(module, qualified, RelationshipType.CONTAINS)]
         if module == "caller":
@@ -84,17 +88,23 @@ class CrossBatchRetryParser:
     def supported_extensions(self) -> frozenset[str]:
         return frozenset({".py"})
 
-    def parse(self, source: str, file_path: str) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
+    def parse(
+        self, source: str, file_path: str
+    ) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
         del source
         module = file_path.removesuffix(".py")
         qualified = f"{module}.{module}"
         entities = [
             ParsedEntity(NodeType.FILE, file_path, module, 0, 1, raw_text=file_path),
-            ParsedEntity(NodeType.FUNCTION, module, qualified, 1, 1, raw_text=qualified),
+            ParsedEntity(
+                NodeType.FUNCTION, module, qualified, 1, 1, raw_text=qualified
+            ),
         ]
         edges = [ParsedEdge(module, qualified, RelationshipType.CONTAINS)]
         if module == "a_source":
-            edges.append(ParsedEdge(qualified, "b_target.b_target", RelationshipType.CALLS))
+            edges.append(
+                ParsedEdge(qualified, "b_target.b_target", RelationshipType.CALLS)
+            )
         return entities, edges
 
 
@@ -149,7 +159,9 @@ def test_deleted_file_cascades_nodes_edges_and_vectors(repository: Path) -> None
     source = repository / "main.py"
     source.write_text("def run():\n    pass\n")
     graph = FakeGraph()
-    pipeline = IngestionPipeline(graph=graph, parser=FakeParser(), embeddings=FakeEmbeddings())
+    pipeline = IngestionPipeline(
+        graph=graph, parser=FakeParser(), embeddings=FakeEmbeddings()
+    )
     pipeline.ingest(repository)
     source.unlink()
 
@@ -161,7 +173,9 @@ def test_deleted_file_cascades_nodes_edges_and_vectors(repository: Path) -> None
     assert graph.embeddings == {}
 
 
-def test_deletion_reopen_failure_preserves_ingestion_checkpoint(repository: Path) -> None:
+def test_deletion_reopen_failure_preserves_ingestion_checkpoint(
+    repository: Path,
+) -> None:
     """A deleted hash survives until a fresh sidecar handle confirms removal."""
 
     source = repository / "main.py"
@@ -187,13 +201,17 @@ def test_vectors_flush_before_hash_commit(repository: Path) -> None:
     source.write_text("def run():\n    pass\n")
     graph = FakeGraph()
 
-    IngestionPipeline(graph=graph, parser=FakeParser(), embeddings=FakeEmbeddings()).ingest(repository)
+    IngestionPipeline(
+        graph=graph, parser=FakeParser(), embeddings=FakeEmbeddings()
+    ).ingest(repository)
 
     assert graph.flushes == 1
     assert graph.hashes[str(repository.resolve())]["main.py"]
 
 
-def test_missing_vector_after_reopen_does_not_acknowledge_hash(repository: Path) -> None:
+def test_missing_vector_after_reopen_does_not_acknowledge_hash(
+    repository: Path,
+) -> None:
     """A fresh sidecar handle is the semantic durability oracle."""
 
     source = repository / "main.py"
@@ -212,7 +230,9 @@ def test_missing_vector_after_reopen_does_not_acknowledge_hash(repository: Path)
     assert graph.hashes.get(str(repository.resolve()), {}) == {}
 
 
-def test_embedding_outage_preserves_structure_but_does_not_acknowledge_hash(repository: Path) -> None:
+def test_embedding_outage_preserves_structure_but_does_not_acknowledge_hash(
+    repository: Path,
+) -> None:
     source = repository / "main.py"
     source.write_text("def run():\n    pass\n")
     graph = FakeGraph()
@@ -240,7 +260,9 @@ def test_second_batch_failure_retries_only_unacknowledged_files(
     monkeypatch.setattr(pipeline_module, "INGESTION_BATCH_MAX_FILES", 1)
     graph = FakeGraph()
     embeddings = FailsSecondBatchEmbeddings()
-    pipeline = IngestionPipeline(graph=graph, parser=FakeParser(), embeddings=embeddings)
+    pipeline = IngestionPipeline(
+        graph=graph, parser=FakeParser(), embeddings=embeddings
+    )
 
     first = pipeline.ingest(repository)
 

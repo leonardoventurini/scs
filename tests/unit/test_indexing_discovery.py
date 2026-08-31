@@ -28,18 +28,37 @@ def test_build_file_entry_enforces_repository_and_ignore_boundaries(
     skipped.write_text("dependency = True\n", encoding="utf-8")
     monkeypatch.setattr(discovery, "_git_check_ignored_paths", lambda *_: None)
 
-    entry = discovery.build_file_entry(accepted, repo, frozenset({".py"}))
+    code_only = discovery.IngestionPolicy(text_fallback=False)
+    entry = discovery.build_file_entry(
+        accepted, repo, frozenset({".py"}), policy=code_only
+    )
 
     assert entry is not None
     assert entry.rel_path == "src/main.py"
     assert entry.language == "python"
     assert entry.byte_size == accepted.stat().st_size
     assert entry.content_hash == hashlib.sha256(accepted.read_bytes()).hexdigest()
-    assert discovery.build_file_entry(ignored, repo, frozenset({".py"})) is None
-    assert discovery.build_file_entry(unsupported, repo, frozenset({".py"})) is None
-    assert discovery.build_file_entry(outside, repo, frozenset({".py"})) is None
-    assert discovery.build_file_entry(skipped, repo, frozenset({".py"})) is None
-    assert discovery.build_file_entry(repo / "missing.py", repo) is None
+    assert (
+        discovery.build_file_entry(ignored, repo, frozenset({".py"}), policy=code_only)
+        is None
+    )
+    assert (
+        discovery.build_file_entry(
+            unsupported, repo, frozenset({".py"}), policy=code_only
+        )
+        is None
+    )
+    assert (
+        discovery.build_file_entry(outside, repo, frozenset({".py"}), policy=code_only)
+        is None
+    )
+    assert (
+        discovery.build_file_entry(skipped, repo, frozenset({".py"}), policy=code_only)
+        is None
+    )
+    assert (
+        discovery.build_file_entry(repo / "missing.py", repo, policy=code_only) is None
+    )
 
 
 def test_discover_git_fast_path_rechecks_every_candidate_boundary(
@@ -65,7 +84,11 @@ def test_discover_git_fast_path_rechecks_every_candidate_boundary(
         ],
     )
 
-    entries = discovery.discover(repo, extensions=frozenset({".py"}))
+    entries = discovery.discover(
+        repo,
+        extensions=frozenset({".py"}),
+        policy=discovery.IngestionPolicy(text_fallback=False),
+    )
 
     assert [entry.rel_path for entry in entries] == ["src/main.py"]
 
@@ -84,7 +107,11 @@ def test_discover_falls_back_to_root_gitignore_when_git_is_unavailable(
     monkeypatch.setattr(discovery, "_list_git_non_ignored_paths", lambda _repo: None)
     monkeypatch.setattr(discovery, "_git_check_ignored_paths", lambda *_: None)
 
-    entries = discovery.discover(repo, extensions=frozenset({".py"}))
+    entries = discovery.discover(
+        repo,
+        extensions=frozenset({".py"}),
+        policy=discovery.IngestionPolicy(text_fallback=False),
+    )
 
     assert [entry.rel_path for entry in entries] == ["keep.py"]
 
@@ -162,9 +189,7 @@ def test_discover_accepts_non_parser_text_and_rejects_binary_and_oversized_files
     )
     policy = discovery.IngestionPolicy(max_file_bytes=64, text_sample_bytes=32)
 
-    entries = discovery.discover(
-        repo, extensions=frozenset({".py"}), policy=policy
-    )
+    entries = discovery.discover(repo, extensions=frozenset({".py"}), policy=policy)
 
     assert [(entry.rel_path, entry.language) for entry in entries] == [
         (".editorconfig", "text"),
@@ -206,3 +231,23 @@ def test_discover_prunes_only_large_generated_or_vendor_directories(
     assert [entry.rel_path for entry in entries] == [
         f"src/module_{index}.txt" for index in range(4)
     ]
+
+
+def test_build_file_entry_applies_large_generated_directory_policy(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    generated = repo / "generated"
+    generated.mkdir(parents=True)
+    files = [generated / f"artifact_{index}.txt" for index in range(4)]
+    for file_path in files:
+        file_path.write_text("generated\n", encoding="utf-8")
+    policy = discovery.IngestionPolicy(
+        large_dir_file_count=3,
+        large_dir_byte_size=1_000_000,
+    )
+
+    assert (
+        discovery.build_file_entry(files[0], repo, frozenset({".py"}), policy=policy)
+        is None
+    )

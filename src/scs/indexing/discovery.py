@@ -8,6 +8,7 @@ change detection.
 import hashlib
 import logging
 import subprocess
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,6 +61,39 @@ ALWAYS_SKIP_DIRS: frozenset[str] = frozenset(
         "deps",  # Elixir/Mix dependency directory.
     }
 )
+
+GENERATED_DIRECTORY_NAMES: frozenset[str] = frozenset(
+    {
+        ".cache",
+        ".generated",
+        ".next",
+        ".nuxt",
+        ".parcel-cache",
+        ".turbo",
+        "cache",
+        "generated",
+        "vendor",
+    }
+)
+GENERATED_FILE_MARKERS: tuple[str, ...] = (
+    ".generated.",
+    ".min.",
+    ".bundle.",
+    ".map",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionPolicy:
+    """Bounded discovery policy shared by full and incremental ingestion."""
+
+    text_fallback: bool = True
+    max_file_bytes: int = 1_048_576
+    text_sample_bytes: int = 8_192
+    large_dir_file_count: int = 10_000
+    large_dir_byte_size: int = 536_870_912
+    generated_sample_files: int = 64
+    generated_sample_ratio: float = 0.8
 
 
 @dataclass
@@ -241,10 +275,157 @@ def _is_in_always_skipped_directory(rel_path: Path) -> bool:
     return any(part in ALWAYS_SKIP_DIRS for part in rel_path.parts[:-1])
 
 
+def _is_text_file(file_path: Path, sample_bytes: int) -> bool:
+    """Classify a fallback candidate from a bounded UTF-8 byte sample."""
+
+    with file_path.open("rb") as handle:
+        sample = handle.read(sample_bytes)
+    if b"\0" in sample:
+        return False
+    try:
+        sample.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _language_for_candidate(
+    file_path: Path,
+    extensions: frozenset[str],
+    policy: IngestionPolicy,
+) -> str | None:
+    """Return a parser language or the safe plain-text fallback discriminator."""
+
+    if file_path.suffix in extensions:
+        return _EXTENSION_TO_LANGUAGE.get(file_path.suffix, "unknown")
+    if policy.text_fallback and _is_text_file(file_path, policy.text_sample_bytes):
+        return "text"
+    return None
+
+
+def _generated_artifact_name(path: str) -> bool:
+    """Identify common generated artifact naming without inspecting content."""
+
+    name = Path(path).name.lower()
+    return any(marker in name for marker in GENERATED_FILE_MARKERS)
+
+
+def _pruned_large_directories(
+    repo_path: Path,
+    rel_paths: list[str],
+    policy: IngestionPolicy,
+) -> set[str]:
+    """Select threshold-exceeding directories that also look generated or vendored."""
+
+    counts: dict[str, int] = defaultdict(int)
+    sizes: dict[str, int] = defaultdict(int)
+    samples: dict[str, list[str]] = defaultdict(list)
+    for rel_path in rel_paths:
+        try:
+            byte_size = (repo_path / rel_path).stat().st_size
+        except OSError:
+            continue
+        parent = Path(rel_path).parent
+        for directory in (parent, *parent.parents):
+            directory_name = directory.as_posix()
+            if directory_name == ".":
+                continue
+            counts[directory_name] += 1
+            sizes[directory_name] += byte_size
+            if len(samples[directory_name]) < policy.generated_sample_files:
+                samples[directory_name].append(rel_path)
+
+    pruned: set[str] = set()
+    for directory, count in counts.items():
+        exceeds_limit = (
+            count > policy.large_dir_file_count
+            or sizes[directory] > policy.large_dir_byte_size
+        )
+        sample = samples[directory]
+        artifact_ratio = (
+            sum(_generated_artifact_name(path) for path in sample) / len(sample)
+            if sample
+            else 0.0
+        )
+        has_generated_name = any(
+            part.lower() in GENERATED_DIRECTORY_NAMES for part in Path(directory).parts
+        )
+        if exceeds_limit and (
+            has_generated_name or artifact_ratio >= policy.generated_sample_ratio
+        ):
+            pruned.add(directory)
+    return pruned
+
+
+def _is_in_pruned_directory(rel_path: str, pruned: set[str]) -> bool:
+    """Return whether a candidate falls within a selected directory subtree."""
+
+    parts = Path(rel_path).parts[:-1]
+    return any(
+        Path(*parts[:index]).as_posix() in pruned for index in range(1, len(parts) + 1)
+    )
+
+
+def _path_has_large_generated_ancestor(
+    file_path: Path,
+    repo_path: Path,
+    policy: IngestionPolicy,
+) -> bool:
+    """Apply directory pruning to an explicit file without a repository walk."""
+
+    for directory in (file_path.parent, *file_path.parent.parents):
+        try:
+            relative_directory = directory.relative_to(repo_path)
+        except ValueError:
+            break
+        if relative_directory == Path("."):
+            continue
+        has_generated_name = any(
+            part.lower() in GENERATED_DIRECTORY_NAMES
+            for part in relative_directory.parts
+        )
+        count = 0
+        byte_size = 0
+        sample_count = 0
+        artifact_count = 0
+        try:
+            for child in directory.iterdir():
+                if not child.is_file():
+                    continue
+                count += 1
+                byte_size += child.stat().st_size
+                if sample_count < policy.generated_sample_files:
+                    sample_count += 1
+                    artifact_count += int(_generated_artifact_name(child.name))
+                exceeds_limit = (
+                    count > policy.large_dir_file_count
+                    or byte_size > policy.large_dir_byte_size
+                )
+                sample_is_generated = (
+                    sample_count >= policy.generated_sample_files
+                    and artifact_count / sample_count >= policy.generated_sample_ratio
+                )
+                if exceeds_limit and (has_generated_name or sample_is_generated):
+                    return True
+        except OSError:
+            continue
+        if (
+            sample_count
+            and (
+                count > policy.large_dir_file_count
+                or byte_size > policy.large_dir_byte_size
+            )
+            and artifact_count / sample_count >= policy.generated_sample_ratio
+        ):
+            return True
+    return False
+
+
 def build_file_entry(
     file_path: Path,
     repo_path: Path,
     extensions: frozenset[str] | None = None,
+    policy: IngestionPolicy | None = None,
 ) -> FileEntry | None:
     """Build a FileEntry for a single file without walking the directory tree.
 
@@ -258,6 +439,7 @@ def build_file_entry(
     """
     file_path = file_path.resolve()
     repo_path = repo_path.resolve()
+    policy = policy or IngestionPolicy()
 
     # The file must exist and be a regular file (not a directory or symlink to one).
     if not file_path.is_file():
@@ -274,11 +456,10 @@ def build_file_entry(
     # Skip files in always-excluded directories (e.g., .venv, node_modules).
     if _is_in_always_skipped_directory(rel_file_path):
         return None
-
-    # Skip unsupported extensions (must match the parser registry).
-    extensions = extensions or supported_extensions()
-    if file_path.suffix not in extensions:
+    if _path_has_large_generated_ancestor(file_path, repo_path, policy):
         return None
+
+    extensions = extensions or supported_extensions()
 
     rel_path = rel_file_path.as_posix()
 
@@ -291,12 +472,15 @@ def build_file_entry(
     # Compute content hash and file size.
     try:
         byte_size = file_path.stat().st_size
+        if byte_size > policy.max_file_bytes:
+            return None
+        language = _language_for_candidate(file_path, extensions, policy)
+        if language is None:
+            return None
         content_hash = _compute_hash(file_path)
     except OSError:
         logger.warning("Failed to read %s — skipping", file_path)
         return None
-
-    language = _EXTENSION_TO_LANGUAGE.get(file_path.suffix, "unknown")
 
     return FileEntry(
         rel_path=rel_path,
@@ -311,6 +495,7 @@ def discover(
     repo_path: Path,
     extensions: frozenset[str] | None = None,
     skip_always_dirs: bool = True,
+    policy: IngestionPolicy | None = None,
 ) -> list[FileEntry]:
     """Walk the repository and discover all parseable source files.
 
@@ -332,6 +517,7 @@ def discover(
     repo_path = repo_path.resolve()
     fallback_spec = _load_gitignore_spec(repo_path)
     extensions = extensions or supported_extensions()
+    policy = policy or IngestionPolicy()
     entries: list[FileEntry] = []
     candidate_rel_paths = (
         _list_git_non_ignored_paths(repo_path) if skip_always_dirs else None
@@ -351,10 +537,6 @@ def discover(
             if skip_always_dirs and _is_in_always_skipped_directory(rel_file_path):
                 continue
 
-            # Skip unsupported extensions.
-            if file_path.suffix not in extensions:
-                continue
-
             candidates.append((file_path, rel_file_path.as_posix()))
 
         ignored_paths = _resolve_ignored_paths(
@@ -372,7 +554,16 @@ def discover(
             (repo_path / rel_path, rel_path) for rel_path in candidate_rel_paths
         )
 
-    for file_path, rel_path in iterable:
+    candidate_items = list(iterable)
+    pruned_directories: set[str] = (
+        _pruned_large_directories(
+            repo_path, [rel_path for _, rel_path in candidate_items], policy
+        )
+        if skip_always_dirs
+        else set[str]()
+    )
+
+    for file_path, rel_path in candidate_items:
         # Skip directories, broken symlinks, and files in always-excluded
         # directories (unless disabled for library ingestion where source
         # IS inside venv/node_modules).
@@ -382,20 +573,21 @@ def discover(
         rel_file_path = file_path.relative_to(repo_path)
         if skip_always_dirs and _is_in_always_skipped_directory(rel_file_path):
             continue
-
-        # Skip unsupported extensions.
-        if file_path.suffix not in extensions:
+        if _is_in_pruned_directory(rel_path, pruned_directories):
             continue
 
         # Compute content hash and file size.
         try:
             byte_size = file_path.stat().st_size
+            if byte_size > policy.max_file_bytes:
+                continue
+            language = _language_for_candidate(file_path, extensions, policy)
+            if language is None:
+                continue
             content_hash = _compute_hash(file_path)
         except OSError:
             logger.warning("Failed to read %s — skipping", file_path)
             continue
-
-        language = _EXTENSION_TO_LANGUAGE.get(file_path.suffix, "unknown")
 
         entries.append(
             FileEntry(
@@ -407,5 +599,6 @@ def discover(
             )
         )
 
+    entries.sort(key=lambda entry: entry.rel_path)
     logger.info("Discovered %d source files in %s", len(entries), repo_path)
     return entries

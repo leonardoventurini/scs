@@ -10,7 +10,9 @@ from scs.config import SCSSettings
 from scs.paths import UnsafeStorageRootError, validate_scs_home
 
 
-def test_defaults_are_scs_owned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_defaults_are_scs_owned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "user"))
     settings = SCSSettings()
 
@@ -71,7 +73,9 @@ def test_omlx_rejects_remote_embedding_endpoint() -> None:
         SCSSettings(omlx_base_url="http://embeddings.example.com/v1")
 
 
-def test_rejects_legacy_root_alias(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rejects_legacy_root_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     legacy = tmp_path / "legacy"
     legacy.mkdir()
     alias = tmp_path / "alias"
@@ -96,7 +100,9 @@ def test_rejects_nested_or_containing_legacy_root(
         validate_scs_home((legacy / relative).resolve())
 
 
-def test_rejects_external_volume_symlink_alias(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rejects_external_volume_symlink_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     external = tmp_path / "Volumes" / "Data" / "external-product"
     external.mkdir(parents=True)
     link = tmp_path / "mounted-external-product"

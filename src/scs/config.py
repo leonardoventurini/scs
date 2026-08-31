@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import ClassVar, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from scs.paths import SCSPaths
@@ -46,6 +46,19 @@ class SCSSettings(BaseSettings):
     omlx_base_url: str = DEFAULT_OMLX_BASE_URL
     mcp_internal_host: str = DEFAULT_MCP_INTERNAL_HOST
     mcp_internal_port: int = Field(default=DEFAULT_MCP_INTERNAL_PORT, ge=0, le=65535)
+    index_text_fallback: bool = True
+    index_max_file_bytes: int = Field(default=1_048_576, ge=1)
+    index_text_sample_bytes: int = Field(default=8_192, ge=1)
+    index_large_dir_files: int = Field(default=10_000, ge=1)
+    index_large_dir_bytes: int = Field(default=536_870_912, ge=1)
+
+    @model_validator(mode="after")
+    def _validate_index_limits(self) -> "SCSSettings":
+        """Keep bounded text detection within the accepted file envelope."""
+
+        if self.index_text_sample_bytes > self.index_max_file_bytes:
+            raise ValueError("index text sample cannot exceed maximum file size")
+        return self
 
     @field_validator("omlx_base_url")
     @classmethod

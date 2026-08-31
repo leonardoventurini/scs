@@ -15,6 +15,7 @@ from scs.graph.native import NativeGraph
 from scs.indexing.jobs import IngestionJob, IngestionJobStore, job_to_dict
 from scs.indexing.parser.native import NativeParser
 from scs.indexing.pipeline import IngestionPipeline, IngestionProgress
+from scs.indexing.discovery import IngestionPolicy
 from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
@@ -158,6 +159,13 @@ class SCSDaemon:
                     parser=parser,
                     embeddings=embeddings,
                     progress=report,
+                    policy=IngestionPolicy(
+                        text_fallback=self.settings.index_text_fallback,
+                        max_file_bytes=self.settings.index_max_file_bytes,
+                        text_sample_bytes=self.settings.index_text_sample_bytes,
+                        large_dir_file_count=self.settings.index_large_dir_files,
+                        large_dir_byte_size=self.settings.index_large_dir_bytes,
+                    ),
                 )
 
             def mark_job_store_ready(job: IngestionJob) -> None:
@@ -166,7 +174,9 @@ class SCSDaemon:
                 if job.mode == "drop_index":
                     return
                 if job.store_id is None or job.store_generation is None:
-                    raise RuntimeError("legacy unbound ingestion job cannot publish readiness")
+                    raise RuntimeError(
+                        "legacy unbound ingestion job cannot publish readiness"
+                    )
                 stores.mark_semantic_ready(
                     job.repo_path,
                     StoreBinding(job.store_id, job.store_generation),
@@ -178,7 +188,9 @@ class SCSDaemon:
                 if job.mode == "drop_index":
                     return
                 if job.store_id is None or job.store_generation is None:
-                    raise RuntimeError("legacy unbound ingestion job cannot publish staleness")
+                    raise RuntimeError(
+                        "legacy unbound ingestion job cannot publish staleness"
+                    )
                 stores.catalog.update_state(
                     job.repo_path,
                     expected_generation=StoreGeneration(job.store_generation),
@@ -434,7 +446,9 @@ class SCSDaemon:
         record, graph = await asyncio.to_thread(stores.ensure_graph, str(repo_path))
         generation = record.active_generation
         if generation is None:
-            raise RuntimeError("explicit project store creation did not activate a generation")
+            raise RuntimeError(
+                "explicit project store creation did not activate a generation"
+            )
         self._graph = graph
         job = await asyncio.to_thread(
             jobs.enqueue,

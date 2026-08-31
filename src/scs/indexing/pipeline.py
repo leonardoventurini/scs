@@ -11,8 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TypeVar
 
-from scs.indexing.discovery import FileEntry, build_file_entry, discover
-from scs.graph.models import Edge
+from scs.indexing.discovery import (
+    FileEntry,
+    IngestionPolicy,
+    build_file_entry,
+    discover,
+)
+from scs.graph.models import Edge, NodeType
 from scs.indexing.parser.base import LanguageParser, ParsedEdge, ParsedEntity
 from scs.indexing.repository_paths import (
     assert_ingestable_repo_path,
@@ -45,7 +50,9 @@ class GraphStore(Protocol):
     ) -> str | None: ...
     def batch_upsert_nodes_sync(self, nodes: list[dict[str, object]]) -> int: ...
     def batch_upsert_edges_sync(self, edges: list[dict[str, object]]) -> int: ...
-    def get_edges_sync(self, node_id: str, *, direction: str = "both") -> list[Edge]: ...
+    def get_edges_sync(
+        self, node_id: str, *, direction: str = "both"
+    ) -> list[Edge]: ...
     def batch_upsert_embeddings_sync(
         self, embeddings: list[tuple[str, list[float]]]
     ) -> int: ...
@@ -53,7 +60,9 @@ class GraphStore(Protocol):
     def reopened_vectors_contain_sync(self, node_ids: list[str]) -> bool: ...
     def reopened_vectors_absent_sync(self, node_ids: list[str]) -> bool: ...
     def delete_node_sync(self, node_id: str) -> bool: ...
-    def remove_file_graph_and_vector_sync(self, repo_path: str, rel_path: str) -> int: ...
+    def remove_file_graph_and_vector_sync(
+        self, repo_path: str, rel_path: str
+    ) -> int: ...
     def delete_ingestion_records_batch_sync(
         self, repo_path: str, rel_paths: list[str]
     ) -> int: ...
@@ -155,6 +164,7 @@ class IngestionPipeline:
         parser: LanguageParser,
         embeddings: EmbeddingProvider | None = None,
         progress: Callable[[IngestionProgress], None] | None = None,
+        policy: IngestionPolicy | None = None,
     ) -> None:
         self._graph: GraphStore = graph
         self._parser: LanguageParser = parser
@@ -162,6 +172,7 @@ class IngestionPipeline:
         self._progress: Callable[[IngestionProgress], None] = (
             progress or self._ignore_progress
         )
+        self._policy: IngestionPolicy = policy or IngestionPolicy()
 
     @staticmethod
     def _ignore_progress(_progress: IngestionProgress) -> None:
@@ -190,7 +201,11 @@ class IngestionPipeline:
                 "language": entry.language,
                 "byte_size": entry.byte_size,
             }
-            for entry in discover(Path(canonical), self._parser.supported_extensions())
+            for entry in discover(
+                Path(canonical),
+                self._parser.supported_extensions(),
+                policy=self._policy,
+            )
         ]
 
     def acknowledged_force_snapshot_paths(
@@ -232,12 +247,14 @@ class IngestionPipeline:
         canonical = canonicalize_repo_path(repo_path)
         assert_ingestable_repo_path(self._graph, canonical)
         if force_snapshot is None:
-            entries = discover(Path(canonical), self._parser.supported_extensions())
+            entries = discover(
+                Path(canonical),
+                self._parser.supported_extensions(),
+                policy=self._policy,
+            )
             sweep_deleted = True
         else:
-            entries = self._entries_from_force_snapshot(
-                Path(canonical), force_snapshot
-            )
+            entries = self._entries_from_force_snapshot(Path(canonical), force_snapshot)
             # A snapshot's path set is immutable.  A retry must not delete a
             # file merely because it was created after that force attempt.
             sweep_deleted = False
@@ -263,7 +280,11 @@ class IngestionPipeline:
         entries = [
             entry
             for path in file_paths
-            if (entry := build_file_entry(path, Path(canonical), extensions))
+            if (
+                entry := build_file_entry(
+                    path, Path(canonical), extensions, policy=self._policy
+                )
+            )
             is not None
         ]
         result = self._ingest_entries(
@@ -278,7 +299,11 @@ class IngestionPipeline:
         canonical = canonicalize_repo_path(repo_path)
         discovered = {
             entry.rel_path
-            for entry in discover(Path(canonical), self._parser.supported_extensions())
+            for entry in discover(
+                Path(canonical),
+                self._parser.supported_extensions(),
+                policy=self._policy,
+            )
         }
         indexed = set(self._graph.get_file_paths_for_repo_sync(canonical))
         result = IngestionResult(files_discovered=len(discovered))
@@ -338,7 +363,9 @@ class IngestionPipeline:
             result.entities_created = self._graph.batch_upsert_nodes_sync(plan.nodes)
         committed_edges = [*plan.edges, *retained_inbound_edges]
         result.edges_created = (
-            self._graph.batch_upsert_edges_sync(committed_edges) if committed_edges else 0
+            self._graph.batch_upsert_edges_sync(committed_edges)
+            if committed_edges
+            else 0
         )
         result.edges_dropped = sum(len(item.edges) for item in parsed) - len(plan.edges)
 
@@ -350,8 +377,7 @@ class IngestionPipeline:
                 len(batches),
                 path=batch.files[0].entry.rel_path,
                 message=(
-                    "Embedding and acknowledging complete-file batch "
-                    f"{batch_number}"
+                    f"Embedding and acknowledging complete-file batch {batch_number}"
                 ),
             )
             if not self._embed_batch(batch, plan.node_ids, result):
@@ -366,9 +392,7 @@ class IngestionPipeline:
             if (
                 self._embeddings is not None
                 and batch_node_ids
-                and not self._graph.reopened_vectors_contain_sync(
-                batch_node_ids
-                )
+                and not self._graph.reopened_vectors_contain_sync(batch_node_ids)
             ):
                 result.files_failed += len(batch.files)
                 result.semantic_degraded_reason = (
@@ -388,9 +412,7 @@ class IngestionPipeline:
                 self._ingestion_records(repo_path, batch)
             )
             if on_batch_acknowledged is not None:
-                on_batch_acknowledged(
-                    [item.entry.rel_path for item in batch.files]
-                )
+                on_batch_acknowledged([item.entry.rel_path for item in batch.files])
         return result
 
     def _entries_from_force_snapshot(
@@ -420,7 +442,9 @@ class IngestionPipeline:
             ):
                 raise ValueError("Invalid force-full snapshot record")
             expected_paths.add(rel_path)
-            entry = build_file_entry(repo_path / rel_path, repo_path, extensions)
+            entry = build_file_entry(
+                repo_path / rel_path, repo_path, extensions, policy=self._policy
+            )
             if entry is None:
                 raise RuntimeError(
                     f"Force-full snapshot source is no longer ingestable: {rel_path}"
@@ -430,9 +454,7 @@ class IngestionPipeline:
                 or entry.language != language
                 or entry.byte_size != byte_size
             ):
-                raise RuntimeError(
-                    f"Force-full snapshot source changed: {rel_path}"
-                )
+                raise RuntimeError(f"Force-full snapshot source changed: {rel_path}")
             entries.append(entry)
         return sorted(entries, key=lambda entry: entry.rel_path)
 
@@ -445,7 +467,9 @@ class IngestionPipeline:
             removed_node_ids = [
                 node_id
                 for rel_path in deleted_batch
-                for node_id in self._graph.get_node_ids_for_file_sync(repo_path, rel_path)
+                for node_id in self._graph.get_node_ids_for_file_sync(
+                    repo_path, rel_path
+                )
             ]
             for rel_path in deleted_batch:
                 self._graph.remove_file_graph_and_vector_sync(repo_path, rel_path)
@@ -467,7 +491,21 @@ class IngestionPipeline:
             if hashlib.sha256(source_bytes).hexdigest() != entry.content_hash:
                 raise RuntimeError("source changed after discovery")
             source = source_bytes.decode("utf-8", errors="replace")
-            entities, edges = self._parser.parse(source, entry.rel_path)
+            if entry.language == "text":
+                entities = [
+                    ParsedEntity(
+                        kind=NodeType.FILE,
+                        name=entry.rel_path,
+                        qualified_name=entry.rel_path,
+                        start_line=0,
+                        end_line=source.count("\n"),
+                        docstring=source,
+                        raw_text=source,
+                    )
+                ]
+                edges: list[ParsedEdge] = []
+            else:
+                entities, edges = self._parser.parse(source, entry.rel_path)
             return _ParsedFile(entry, entities, edges)
 
         parsed: list[_ParsedFile] = []
@@ -586,7 +624,10 @@ class IngestionPipeline:
         retained: dict[tuple[str, str, str], dict[str, object]] = {}
         for target_id in sorted(replaced_ids):
             for edge in self._graph.get_edges_sync(target_id, direction="incoming"):
-                if edge.source_id in replaced_ids or edge.target_id not in replacement_ids:
+                if (
+                    edge.source_id in replaced_ids
+                    or edge.target_id not in replacement_ids
+                ):
                     continue
                 key = (edge.source_id, edge.target_id, edge.relationship.value)
                 retained[key] = {
@@ -662,7 +703,9 @@ class IngestionPipeline:
             # readiness is separately derived from provider metadata by routes.
             return True
         entities = [entity for item in batch.files for entity in item.entities]
-        texts = [entity.embed_text() for item in batch.files for entity in item.entities]
+        texts = [
+            entity.embed_text() for item in batch.files for entity in item.entities
+        ]
         try:
             vectors: list[list[float]] = []
             for offset in range(0, len(texts), EMBED_BATCH_SIZE):
