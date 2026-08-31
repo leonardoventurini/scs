@@ -18,6 +18,9 @@ deletions, and non-ignored untracked files.
   files, so it is a safe incremental reconciliation primitive.
 - The job runner currently drains one job at a time, providing a hard indexing
   concurrency bound.
+- Live rollout sampling showed full reconciliation spending nearly all CPU in
+  repeated retained-symbol resolution. The lookup filtered a JSON qualified
+  name without an index, making large structural plans effectively quadratic.
 
 ## Uncertainty
 
@@ -49,6 +52,8 @@ deletions, and non-ignored untracked files.
 10. Poll cadence, maximum backoff, debounce, and Git-command timeout have typed
     conservative configuration defaults.
 11. Indexing concurrency remains bounded by the single durable job runner.
+12. Retained-symbol lookup uses a forward-migrated repository/qualified-name
+    expression index while preserving a legacy metadata fallback.
 
 ## Test strategy and acceptance criteria
 
@@ -100,6 +105,7 @@ state change.
 - [ ] Document operation and environment controls.
 - [ ] Record the architectural decision.
 - [ ] Run targeted and full verification.
+- [ ] Add and verify the retained-symbol lookup index migration.
 - [ ] Rebuild, restart, and health-check daemon and proxy.
 - [ ] Reindex all enrolled projects and verify successful completion.
 
