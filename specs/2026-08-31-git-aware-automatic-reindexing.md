@@ -97,17 +97,17 @@ state change.
 
 ## Executable checklist
 
-- [ ] Add failing configuration and Git-state poller tests.
-- [ ] Implement typed Git fingerprint collection.
-- [ ] Implement startup reconciliation, debounce, and adaptive backoff.
-- [ ] Restore pollers for every active catalog project.
-- [ ] Stop pollers on drop and daemon shutdown.
-- [ ] Document operation and environment controls.
-- [ ] Record the architectural decision.
-- [ ] Run targeted and full verification.
-- [ ] Add and verify the retained-symbol lookup index migration.
-- [ ] Rebuild, restart, and health-check daemon and proxy.
-- [ ] Reindex all enrolled projects and verify successful completion.
+- [x] Add failing configuration and Git-state poller tests.
+- [x] Implement typed Git fingerprint collection.
+- [x] Implement startup reconciliation, debounce, and adaptive backoff.
+- [x] Restore pollers for every active catalog project.
+- [x] Stop pollers on drop and daemon shutdown.
+- [x] Document operation and environment controls.
+- [x] Record the architectural decision.
+- [x] Run targeted and full verification.
+- [x] Add and verify the retained-symbol lookup index migration.
+- [x] Rebuild, restart, and health-check daemon and proxy.
+- [ ] Complete startup reconciliation for all enrolled projects (durable queue in progress).
 
 ## Verification
 
