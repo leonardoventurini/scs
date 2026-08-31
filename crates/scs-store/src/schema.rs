@@ -238,9 +238,12 @@ mod tests {
 
     #[test]
     fn all_ddl_contains_current_schema_objects() {
-        assert_eq!(all_ddl().len(), 19);
+        assert_eq!(all_ddl().len(), 20);
         assert!(DDL_SCHEMA_MIGRATIONS.contains("schema_migrations"));
         assert!(DDL_EMBEDDING_RECORDS.contains("embedding_records"));
+        assert!(DDL_NODES_INDEXES
+            .iter()
+            .any(|ddl| ddl.contains("idx_nodes_repo_qualified_name")));
     }
 
     #[test]
@@ -258,7 +261,15 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(versions, vec![1, 2]);
+        let qualified_name_index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_nodes_repo_qualified_name'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(qualified_name_index, 1);
+        assert_eq!(versions, vec![1, 2, 3]);
     }
 
     #[test]
