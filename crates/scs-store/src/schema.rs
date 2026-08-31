@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use scs_core::error::{SCSError, SCSResult};
 
 /// The newest SQLite schema supported by this binary.
-pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 /// Durable, forward-only record of applied SQLite migrations.
 pub const DDL_SCHEMA_MIGRATIONS: &str = "
@@ -45,6 +45,7 @@ pub const DDL_NODES_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_nodes_type_updated_at_id ON nodes(type, updated_at DESC, id DESC);",
     "CREATE INDEX IF NOT EXISTS idx_nodes_repo_updated_at_id ON nodes(repo_id, updated_at DESC, id DESC);",
     "CREATE INDEX IF NOT EXISTS idx_nodes_repo_type_updated_at_id ON nodes(repo_id, type, updated_at DESC, id DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_nodes_repo_qualified_name ON nodes(repo_id, json_extract(metadata, '$.qualified_name'));",
 ];
 
 /// Normalized repository table — stores repo paths once, referenced by FK.
@@ -123,7 +124,7 @@ pub const DDL_EMBEDDING_RECORDS_INDEXES: &[&str] = &[
 
 /// Returns the DDL needed by a fresh database at the current version.
 pub fn all_ddl() -> Vec<String> {
-    let mut stmts = Vec::with_capacity(19);
+    let mut stmts = Vec::with_capacity(20);
     stmts.push(DDL_SCHEMA_MIGRATIONS.to_string());
     stmts.push(DDL_REPOS.to_string());
     stmts.push(DDL_NODES.to_string());
@@ -201,6 +202,12 @@ fn apply_migration(conn: &Connection, version: i64) -> SCSResult<()> {
             for ddl in DDL_EMBEDDING_RECORDS_INDEXES {
                 conn.execute_batch(ddl)?;
             }
+        }
+        3 => {
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_nodes_repo_qualified_name
+                 ON nodes(repo_id, json_extract(metadata, '$.qualified_name'));",
+            )?;
         }
         _ => {
             return Err(SCSError::Migration(format!(

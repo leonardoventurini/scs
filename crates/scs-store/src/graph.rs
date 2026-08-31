@@ -258,9 +258,8 @@ impl KnowledgeGraph {
         let result = conn.query_row(
             "SELECT n.id
              FROM nodes n
-             LEFT JOIN repos r ON r.id = n.repo_id
-             WHERE json_extract(n.metadata, '$.qualified_name') = ?2
-               AND (r.path = ?1 OR json_extract(n.metadata, '$.repo_path') = ?1)
+             WHERE n.repo_id = (SELECT id FROM repos WHERE path = ?1)
+               AND json_extract(n.metadata, '$.qualified_name') = ?2
              ORDER BY n.id ASC
              LIMIT 1",
             params![repo_path, qualified_name],
@@ -268,7 +267,22 @@ impl KnowledgeGraph {
         );
         match result {
             Ok(id) => Ok(Some(id)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                let legacy = conn.query_row(
+                    "SELECT id FROM nodes
+                     WHERE json_extract(metadata, '$.qualified_name') = ?2
+                       AND json_extract(metadata, '$.repo_path') = ?1
+                     ORDER BY id ASC
+                     LIMIT 1",
+                    params![repo_path, qualified_name],
+                    |row| row.get::<_, String>(0),
+                );
+                match legacy {
+                    Ok(id) => Ok(Some(id)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(error) => Err(error.into()),
+                }
+            }
             Err(error) => Err(error.into()),
         }
     }
