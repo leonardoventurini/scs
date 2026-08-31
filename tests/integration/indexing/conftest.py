@@ -35,6 +35,7 @@ class FakeGraph:
         self.hashes: dict[str, dict[str, str]] = {}
         self.fail_at = fail_at
         self.flushes = 0
+        self.qualified_name_resolutions = 0
 
     def _fail(self, boundary: str) -> None:
         if self.fail_at == boundary:
@@ -62,6 +63,7 @@ class FakeGraph:
     def resolve_node_id_by_qualified_name_sync(
         self, repo_path: str, qualified_name: str
     ) -> str | None:
+        self.qualified_name_resolutions += 1
         repo_id = self.repos.get(repo_path)
         return next(
             (

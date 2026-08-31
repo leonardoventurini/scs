@@ -82,6 +82,25 @@ class CrossFileCallParser:
         return entities, edges
 
 
+class RepeatedMissingTargetParser:
+    """Emit repeated unresolved targets to bound retained-graph lookups."""
+
+    def supported_extensions(self) -> frozenset[str]:
+        return frozenset({".py"})
+
+    def parse(
+        self, source: str, file_path: str
+    ) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
+        del source
+        module = file_path.removesuffix(".py")
+        entity = ParsedEntity(NodeType.FILE, file_path, module, 0, 1)
+        edges = [
+            ParsedEdge(module, "missing.target", RelationshipType.CALLS),
+            ParsedEdge(module, "missing.target", RelationshipType.REFERENCES),
+        ]
+        return [entity], edges
+
+
 class CrossBatchRetryParser:
     """Make the first batch own a relationship to the second batch's node."""
 
@@ -376,6 +395,19 @@ def test_partial_batch_retry_preserves_edges_owned_by_acknowledged_files(
         and names_by_id[str(edge["target_id"])] == "b_target"
         for edge in graph.edges
     )
+
+
+def test_structural_plan_caches_repeated_missing_symbol_lookups(
+    repository: Path,
+) -> None:
+    (repository / "source.py").write_text("source")
+    graph = FakeGraph()
+
+    IngestionPipeline(graph=graph, parser=RepeatedMissingTargetParser()).ingest(
+        repository
+    )
+
+    assert graph.qualified_name_resolutions == 1
 
 
 def test_embeddings_consume_only_parser_owned_entity_text(repository: Path) -> None:
