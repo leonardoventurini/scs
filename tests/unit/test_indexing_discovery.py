@@ -133,3 +133,76 @@ def test_git_ignore_lookup_failure_uses_fallback_spec(
     assert discovery._resolve_ignored_paths(
         repo, ["ignored.py", "keep.py"], fallback
     ) == {"ignored.py"}
+
+
+def test_discover_accepts_non_parser_text_and_rejects_binary_and_oversized_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "main.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    (repo / ".editorconfig").write_text("root = true\n", encoding="utf-8")
+    (repo / "settings.toml").write_text("enabled = true\n", encoding="utf-8")
+    (repo / "binary.dat").write_bytes(b"header\0payload")
+    (repo / "invalid.txt").write_bytes(b"\xff\xfe")
+    (repo / "large.txt").write_text("x" * 65, encoding="utf-8")
+    monkeypatch.setattr(
+        discovery,
+        "_list_git_non_ignored_paths",
+        lambda _repo: [
+            ".editorconfig",
+            "Dockerfile",
+            "binary.dat",
+            "invalid.txt",
+            "large.txt",
+            "main.py",
+            "settings.toml",
+        ],
+    )
+    policy = discovery.IngestionPolicy(max_file_bytes=64, text_sample_bytes=32)
+
+    entries = discovery.discover(
+        repo, extensions=frozenset({".py"}), policy=policy
+    )
+
+    assert [(entry.rel_path, entry.language) for entry in entries] == [
+        (".editorconfig", "text"),
+        ("Dockerfile", "text"),
+        ("main.py", "python"),
+        ("settings.toml", "text"),
+    ]
+
+
+def test_discover_prunes_only_large_generated_or_vendor_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    first_party = repo / "src"
+    generated = repo / "generated"
+    first_party.mkdir(parents=True)
+    generated.mkdir()
+    for index in range(4):
+        (first_party / f"module_{index}.txt").write_text("owned\n", encoding="utf-8")
+        (generated / f"bundle_{index}.min.js").write_text(
+            "generated\n", encoding="utf-8"
+        )
+    candidates = [
+        *(f"src/module_{index}.txt" for index in range(4)),
+        *(f"generated/bundle_{index}.min.js" for index in range(4)),
+    ]
+    monkeypatch.setattr(
+        discovery, "_list_git_non_ignored_paths", lambda _repo: candidates
+    )
+    policy = discovery.IngestionPolicy(
+        large_dir_file_count=3,
+        large_dir_byte_size=1_000_000,
+        generated_sample_files=4,
+        generated_sample_ratio=0.75,
+    )
+
+    entries = discovery.discover(repo, extensions=frozenset({".py"}), policy=policy)
+
+    assert [entry.rel_path for entry in entries] == [
+        f"src/module_{index}.txt" for index in range(4)
+    ]

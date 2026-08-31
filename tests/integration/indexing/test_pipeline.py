@@ -109,6 +109,26 @@ def test_failed_parse_does_not_record_hash(repository: Path) -> None:
     assert graph.get_all_ingested_files_sync(str(repository.resolve())) == {}
 
 
+def test_plain_text_fallback_creates_one_searchable_file_node(repository: Path) -> None:
+    dockerfile = repository / "Dockerfile"
+    dockerfile.write_text("FROM python:3.13\nRUN useradd app\n", encoding="utf-8")
+    graph = FakeGraph()
+
+    result = IngestionPipeline(graph=graph, parser=FakeParser()).ingest(repository)
+
+    nodes = [
+        node
+        for node in graph.nodes.values()
+        if node["metadata"].get("file_path") == "Dockerfile"
+    ]
+    assert result.files_failed == 0
+    assert len(nodes) == 1
+    assert nodes[0]["type"] == NodeType.FILE.value
+    assert nodes[0]["name"] == "Dockerfile"
+    assert nodes[0]["content"] == "FROM python:3.13\nRUN useradd app\n"
+    assert nodes[0]["metadata"]["language"] == "text"
+
+
 def test_incremental_change_removes_stale_nodes(repository: Path) -> None:
     source = repository / "main.py"
     source.write_text("def old():\n    pass\n")

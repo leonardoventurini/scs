@@ -34,6 +34,29 @@ def test_internal_mcp_endpoint_is_typed_from_environment(
     assert settings.mcp_internal_port == 0
 
 
+def test_text_ingestion_limits_have_typed_environment_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCS_INDEX_TEXT_FALLBACK", "false")
+    monkeypatch.setenv("SCS_INDEX_MAX_FILE_BYTES", "2048")
+    monkeypatch.setenv("SCS_INDEX_TEXT_SAMPLE_BYTES", "512")
+    monkeypatch.setenv("SCS_INDEX_LARGE_DIR_FILES", "300")
+    monkeypatch.setenv("SCS_INDEX_LARGE_DIR_BYTES", "4096")
+
+    settings = SCSSettings()
+
+    assert settings.index_text_fallback is False
+    assert settings.index_max_file_bytes == 2048
+    assert settings.index_text_sample_bytes == 512
+    assert settings.index_large_dir_files == 300
+    assert settings.index_large_dir_bytes == 4096
+
+
+def test_text_sample_cannot_exceed_maximum_file_size() -> None:
+    with pytest.raises(ValueError, match="sample"):
+        SCSSettings(index_max_file_bytes=128, index_text_sample_bytes=256)
+
+
 def test_omlx_defaults_target_the_verified_local_embedding_service() -> None:
     settings = SCSSettings()
 
