@@ -59,6 +59,42 @@ def test_text_sample_cannot_exceed_maximum_file_size() -> None:
         SCSSettings(index_max_file_bytes=128, index_text_sample_bytes=256)
 
 
+def test_automatic_reindex_settings_have_adaptive_defaults() -> None:
+    settings = SCSSettings()
+
+    assert settings.auto_reindex_enabled is True
+    assert settings.auto_reindex_active_seconds == 2.0
+    assert settings.auto_reindex_idle_seconds == 30.0
+    assert settings.auto_reindex_debounce_seconds == 0.5
+    assert settings.auto_reindex_git_timeout_seconds == 10.0
+
+
+def test_automatic_reindex_settings_accept_environment_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCS_AUTO_REINDEX_ENABLED", "false")
+    monkeypatch.setenv("SCS_AUTO_REINDEX_ACTIVE_SECONDS", "3")
+    monkeypatch.setenv("SCS_AUTO_REINDEX_IDLE_SECONDS", "45")
+    monkeypatch.setenv("SCS_AUTO_REINDEX_DEBOUNCE_SECONDS", "1.25")
+    monkeypatch.setenv("SCS_AUTO_REINDEX_GIT_TIMEOUT_SECONDS", "12")
+
+    settings = SCSSettings()
+
+    assert settings.auto_reindex_enabled is False
+    assert settings.auto_reindex_active_seconds == 3.0
+    assert settings.auto_reindex_idle_seconds == 45.0
+    assert settings.auto_reindex_debounce_seconds == 1.25
+    assert settings.auto_reindex_git_timeout_seconds == 12.0
+
+
+def test_automatic_reindex_idle_interval_cannot_be_shorter_than_active() -> None:
+    with pytest.raises(ValueError, match="idle interval"):
+        SCSSettings(
+            auto_reindex_active_seconds=10.0,
+            auto_reindex_idle_seconds=5.0,
+        )
+
+
 def test_omlx_defaults_target_the_verified_local_embedding_service() -> None:
     settings = SCSSettings()
 
