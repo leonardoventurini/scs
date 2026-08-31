@@ -210,15 +210,9 @@ class SCSDaemon:
             for record in await asyncio.to_thread(stores.records):
                 if record.active_generation is None:
                     continue
-                graph = stores.lookup_graph(record.canonical_root)
-                if graph is None:
+                if stores.lookup_graph(record.canonical_root) is None:
                     continue
-                await self._ensure_watcher(
-                    record.canonical_root,
-                    graph=graph,
-                    jobs=jobs,
-                    parser=parser,
-                )
+                await self._ensure_watcher(record.canonical_root, jobs=jobs)
             server = WireServer(self._router, socket_path=paths.runtime / "scs.sock")
             await server.start()
             mcp_server = MCPHTTPServer(
@@ -508,26 +502,28 @@ class SCSDaemon:
         self,
         repo_path: str,
         *,
-        graph: NativeGraph | None = None,
         jobs: IngestionJobStore | None = None,
-        parser: NativeParser | None = None,
     ) -> None:
         canonical = canonicalize_repo_path(repo_path)
-        if canonical in self._watchers or not Path(canonical).is_dir():
+        if (
+            not self.settings.auto_reindex_enabled
+            or canonical in self._watchers
+            or not Path(canonical).is_dir()
+        ):
             return
-        active_graph = graph or self._require_graph()
         active_jobs = jobs or self._require_jobs()
-        active_parser = parser or NativeParser()
         record = self._require_stores().catalog.lookup(canonical)
         if record is None or record.active_generation is None:
             return
         watcher = RepositoryWatcher(
-            graph=active_graph,
             jobs=active_jobs,
-            base_dir=Path(canonical),
-            supported_extensions=active_parser.supported_extensions(),
-            store_id=record.store_id,
-            store_generation=record.active_generation,
+            repo_path=Path(canonical),
+            store_id=str(record.store_id),
+            store_generation=str(record.active_generation),
+            active_interval_seconds=self.settings.auto_reindex_active_seconds,
+            idle_interval_seconds=self.settings.auto_reindex_idle_seconds,
+            debounce_seconds=self.settings.auto_reindex_debounce_seconds,
+            git_timeout_seconds=self.settings.auto_reindex_git_timeout_seconds,
         )
         await watcher.start()
         self._watchers[canonical] = watcher

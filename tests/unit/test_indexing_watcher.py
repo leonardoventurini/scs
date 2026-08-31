@@ -13,8 +13,9 @@ class Jobs:
     def __init__(self) -> None:
         self.enqueued: list[dict[str, object]] = []
 
-    def enqueue(self, **kwargs: object) -> None:
+    def enqueue(self, **kwargs: object) -> object:
         self.enqueued.append(kwargs)
+        return None
 
 
 def _git(repo: Path, *args: str) -> None:

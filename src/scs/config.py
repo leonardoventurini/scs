@@ -51,6 +51,11 @@ class SCSSettings(BaseSettings):
     index_text_sample_bytes: int = Field(default=8_192, ge=1)
     index_large_dir_files: int = Field(default=10_000, ge=1)
     index_large_dir_bytes: int = Field(default=536_870_912, ge=1)
+    auto_reindex_enabled: bool = True
+    auto_reindex_active_seconds: float = Field(default=2.0, gt=0)
+    auto_reindex_idle_seconds: float = Field(default=30.0, gt=0)
+    auto_reindex_debounce_seconds: float = Field(default=0.5, ge=0)
+    auto_reindex_git_timeout_seconds: float = Field(default=10.0, gt=0)
 
     @model_validator(mode="after")
     def _validate_index_limits(self) -> "SCSSettings":
@@ -58,6 +63,10 @@ class SCSSettings(BaseSettings):
 
         if self.index_text_sample_bytes > self.index_max_file_bytes:
             raise ValueError("index text sample cannot exceed maximum file size")
+        if self.auto_reindex_idle_seconds < self.auto_reindex_active_seconds:
+            raise ValueError(
+                "automatic reindex idle interval cannot be shorter than active interval"
+            )
         return self
 
     @field_validator("omlx_base_url")

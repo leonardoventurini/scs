@@ -10,7 +10,6 @@ dependencies = [
     "pydantic>=2.11",
     "pydantic-settings>=2.10",
     "uvicorn>=0.41",
-    "watchfiles>=1.2.0",
 ]
 
 [project.scripts]
