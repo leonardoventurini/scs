@@ -30,6 +30,29 @@ The default ingestion limits can be changed with environment variables:
 
 The text sample size must not exceed the maximum file size.
 
+## Automatic reindexing
+
+SCS automatically reconciles every active enrolled project from Git-visible
+state. Each daemon start queues a full discovery pass, which uses stored hashes
+to parse and embed only changed files and removes stale file graphs. Subsequent
+polls fingerprint `HEAD` plus Git porcelain status, covering commits, branch
+switches, staged and unstaged edits, deletions, and non-ignored untracked files.
+Ignored files do not trigger work.
+
+Active repositories are checked every 2 seconds. Unchanged repositories back
+off exponentially to 30 seconds; any change resets the interval to 2 seconds
+and is debounced for 500 ms. Durable jobs coalesce per project and the single
+job runner bounds indexing concurrency. The behavior is configurable with:
+
+- `SCS_AUTO_REINDEX_ENABLED` (default `true`).
+- `SCS_AUTO_REINDEX_ACTIVE_SECONDS` (default `2`).
+- `SCS_AUTO_REINDEX_IDLE_SECONDS` (default `30`).
+- `SCS_AUTO_REINDEX_DEBOUNCE_SECONDS` (default `0.5`).
+- `SCS_AUTO_REINDEX_GIT_TIMEOUT_SECONDS` (default `10`).
+
+The idle interval must be at least the active interval. Disabling automatic
+reindexing does not affect explicit `scs index` or `scs reindex` requests.
+
 The service has no graphical interface. Use `scs status`, `scs doctor`, logs,
 SCSWire, or MCP index statistics for operational visibility.
 
