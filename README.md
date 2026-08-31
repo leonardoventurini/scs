@@ -12,6 +12,24 @@ Semantic embeddings are generated locally from parser-owned entity text. SCS
 does not call a remote file-summarization service and requires no API key for
 indexing or search.
 
+Files supported by a native parser are indexed structurally. Other regular
+UTF-8 text files—including `Dockerfile`, dotfiles, extensionless files, and
+configuration formats—are indexed as file-level text for lexical and semantic
+search. Git ignore rules remain authoritative; common dependency, cache, VCS,
+and build directories are always skipped. Large directories are additionally
+pruned only when they cross a resource limit and exhibit generated or vendored
+evidence. Binary and oversized files are not indexed.
+
+The default ingestion limits can be changed with environment variables:
+
+- `SCS_INDEX_TEXT_FALLBACK` enables or disables non-parser text ingestion.
+- `SCS_INDEX_MAX_FILE_BYTES` limits each indexed file (default 1 MiB).
+- `SCS_INDEX_TEXT_SAMPLE_BYTES` controls bounded UTF-8 detection (default 8 KiB).
+- `SCS_INDEX_LARGE_DIR_FILES` sets the large-directory file threshold (default 10,000).
+- `SCS_INDEX_LARGE_DIR_BYTES` sets the aggregate-size threshold (default 512 MiB).
+
+The text sample size must not exceed the maximum file size.
+
 The service has no graphical interface. Use `scs status`, `scs doctor`, logs,
 SCSWire, or MCP index statistics for operational visibility.
 
