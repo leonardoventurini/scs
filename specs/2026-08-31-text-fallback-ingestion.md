@@ -70,16 +70,16 @@ Ship the policy enabled by default with conservative limits. Existing indexes ch
 
 ## Executable checklist
 
-- [ ] Add failing configuration and discovery tests.
-- [ ] Add a failing pipeline test for plain-text file nodes.
-- [ ] Introduce a typed ingestion policy sourced from `SCSSettings`.
-- [ ] Implement bounded text detection and per-file limits.
-- [ ] Implement deterministic directory statistics and conservative generated/vendor pruning.
-- [ ] Emit a plain-text `file` entity for unsupported textual files.
-- [ ] Wire the policy through daemon-created pipelines and every ingestion mode.
-- [ ] Document environment controls and behavior.
-- [ ] Record the architectural decision.
-- [ ] Run targeted and full verification.
+- [x] Add failing configuration and discovery tests.
+- [x] Add a failing pipeline test for plain-text file nodes.
+- [x] Introduce a typed ingestion policy sourced from `SCSSettings`.
+- [x] Implement bounded text detection and per-file limits.
+- [x] Implement deterministic directory statistics and conservative generated/vendor pruning.
+- [x] Emit a plain-text `file` entity for unsupported textual files.
+- [x] Wire the policy through daemon-created pipelines and every ingestion mode.
+- [x] Document environment controls and behavior.
+- [x] Record the architectural decision.
+- [x] Run targeted and full verification.
 
 ## Verification
 
