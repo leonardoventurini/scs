@@ -580,22 +580,30 @@ class IngestionPipeline:
     ) -> list[dict[str, object]]:
         edges: list[dict[str, object]] = []
         seen: set[tuple[str, str, str]] = set()
+        retained_ids: dict[str, str | None] = {}
+
+        def resolve(qualified_name: str) -> str | None:
+            """Resolve unchanged symbols once, including negative lookups."""
+
+            changed_id = qualified_to_id.get(qualified_name)
+            if changed_id is not None:
+                return changed_id
+            if qualified_name not in retained_ids:
+                retained_ids[qualified_name] = (
+                    self._graph.resolve_node_id_by_qualified_name_sync(
+                        repo_path, qualified_name
+                    )
+                )
+            return retained_ids[qualified_name]
+
         for item in parsed:
             for edge in item.edges:
                 # A changed endpoint is resolved from the immutable structural
                 # plan; an unchanged endpoint is resolved from the retained,
                 # repository-scoped graph.  This preserves changed-file edges
                 # that target a file outside the current structural plan.
-                source = qualified_to_id.get(
-                    edge.source_qualified_name
-                ) or self._graph.resolve_node_id_by_qualified_name_sync(
-                    repo_path, edge.source_qualified_name
-                )
-                target = qualified_to_id.get(
-                    edge.target_qualified_name
-                ) or self._graph.resolve_node_id_by_qualified_name_sync(
-                    repo_path, edge.target_qualified_name
-                )
+                source = resolve(edge.source_qualified_name)
+                target = resolve(edge.target_qualified_name)
                 key = (source or "", target or "", edge.relationship.value)
                 if source and target and key not in seen:
                     seen.add(key)
