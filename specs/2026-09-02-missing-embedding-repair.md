@@ -29,8 +29,8 @@ The main risk is re-embedding more files than necessary. Select only files ownin
 - [x] Give repeated qualified names distinct path-scoped embedding targets.
 - [x] Run targeted Python tests and strict type checking.
 - [x] Run `just verify`.
-- [ ] Restart `gui/501/com.mentagen.scs.daemon` and confirm readiness.
-- [ ] Repeat the previously failing semantic searches successfully.
+- [x] Restart `gui/501/com.mentagen.scs.daemon` and confirm readiness.
+- [x] Repeat the previously failing semantic searches successfully.
 
 ## Direct rollout and verification
 
