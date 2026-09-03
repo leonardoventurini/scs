@@ -6,7 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from scs.config import SCSSettings
+from scs.config import (
+    DEFAULT_OPENAI_BASE_URL,
+    DEFAULT_OPENAI_EMBEDDING_DIMENSION,
+    DEFAULT_OPENAI_EMBEDDING_MODEL,
+    SCSSettings,
+)
 from scs.paths import UnsafeStorageRootError, validate_scs_home
 
 
@@ -95,13 +100,119 @@ def test_automatic_reindex_idle_interval_cannot_be_shorter_than_active() -> None
         )
 
 
-def test_omlx_defaults_target_the_verified_local_embedding_service() -> None:
+def test_embedding_defaults_target_openai(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "user"))
+    settings = SCSSettings()
+
+    assert settings.embedding_provider == "openai"
+    assert settings.embedding_model == DEFAULT_OPENAI_EMBEDDING_MODEL
+    assert settings.embedding_dimension == DEFAULT_OPENAI_EMBEDDING_DIMENSION
+    assert settings.openai_base_url == DEFAULT_OPENAI_BASE_URL
+
+
+def test_embedding_configuration_loads_from_scs_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_home = tmp_path / "user"
+    config_dir = user_home / ".scs"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'embedding_provider = "omlx"',
+                'embedding_model = "local-model"',
+                "embedding_dimension = 2048",
+                'omlx_base_url = "http://localhost:9000/v1"',
+                'openai_api_key = "config-secret"',
+            ]
+        )
+    )
+    config_path.chmod(0o600)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
+
     settings = SCSSettings()
 
     assert settings.embedding_provider == "omlx"
+    assert settings.embedding_model == "local-model"
+    assert settings.embedding_dimension == 2048
+    assert settings.omlx_base_url == "http://localhost:9000/v1"
+    assert settings.openai_api_key is not None
+    assert settings.openai_api_key.get_secret_value() == "config-secret"
+
+
+def test_selecting_omlx_applies_local_model_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_home = tmp_path / "user"
+    config_dir = user_home / ".scs"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text('embedding_provider = "omlx"\n')
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
+
+    settings = SCSSettings()
+
     assert settings.embedding_model == "Qwen3-Embedding-8B-4bit-DWQ"
     assert settings.embedding_dimension == 4096
-    assert settings.omlx_base_url == "http://127.0.0.1:10000/v1"
+
+
+def test_environment_overrides_embedding_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_home = tmp_path / "user"
+    config_dir = user_home / ".scs"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "config.toml"
+    config_path.write_text(
+        'embedding_provider = "omlx"\nopenai_api_key = "config-secret"\n'
+    )
+    config_path.chmod(0o600)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
+    monkeypatch.setenv("SCS_EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "environment-secret")
+
+    settings = SCSSettings()
+
+    assert settings.embedding_provider == "openai"
+    assert settings.openai_api_key is not None
+    assert settings.openai_api_key.get_secret_value() == "environment-secret"
+
+
+def test_explicit_embedding_settings_override_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCS_EMBEDDING_PROVIDER", "openai")
+
+    settings = SCSSettings(embedding_provider="mlx")
+
+    assert settings.embedding_provider == "mlx"
+
+
+def test_omlx_disables_openai_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-be-used")
+
+    settings = SCSSettings(embedding_provider="omlx")
+
+    assert settings.effective_openai_api_key is None
+
+
+def test_config_file_rejects_exposed_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_home = tmp_path / "user"
+    config_dir = user_home / ".scs"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "config.toml"
+    config_path.write_text('openai_api_key = "exposed-secret"\n')
+    config_path.chmod(0o644)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
+
+    with pytest.raises(ValueError, match="owner-only permissions"):
+        SCSSettings()
 
 
 def test_omlx_rejects_remote_embedding_endpoint() -> None:

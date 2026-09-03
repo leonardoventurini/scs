@@ -107,12 +107,19 @@ class SCSDaemon:
         identity: IdentityPublisher | None = None
         try:
             embeddings: EmbeddingProvider
-            if self.settings.embedding_provider == "omlx":
+            if self.settings.embedding_provider in {"openai", "omlx"}:
+                is_openai = self.settings.embedding_provider == "openai"
                 embeddings = OpenAICompatibleEmbeddingProvider(
-                    base_url=self.settings.omlx_base_url,
+                    base_url=(
+                        self.settings.openai_base_url
+                        if is_openai
+                        else self.settings.omlx_base_url
+                    ),
                     model_name=self.settings.embedding_model,
                     dimension=self.settings.embedding_dimension,
                     batch_size=self.settings.embedding_batch_size,
+                    provider_name="openai" if is_openai else "omlx-openai-compatible",
+                    api_key=self.settings.effective_openai_api_key,
                 )
             else:
                 embeddings = MLXEmbeddingProvider(

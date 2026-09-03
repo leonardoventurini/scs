@@ -105,6 +105,66 @@ async def test_openai_compatible_provider_preserves_response_index_order() -> No
 
 
 @pytest.mark.asyncio
+async def test_openai_provider_sends_bearer_authentication() -> None:
+    requests: list[tuple[dict[str, object], dict[str, str]]] = []
+
+    async def request(payload: dict[str, object], headers: dict[str, str]) -> object:
+        requests.append((payload, headers))
+        return {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
+
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://api.openai.com/v1",
+        model_name="text-embedding-3-small",
+        dimension=2,
+        provider_name="openai",
+        api_key="secret-key",
+        request_with_headers=request,
+    )
+
+    await provider.embed_query("query")
+
+    assert provider.metadata.provider == "openai"
+    assert requests[0][1] == {"Authorization": "Bearer secret-key"}
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_without_api_key_is_unavailable() -> None:
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://api.openai.com/v1",
+        model_name="text-embedding-3-small",
+        dimension=2,
+        provider_name="openai",
+    )
+
+    assert provider.metadata.available is False
+    assert provider.metadata.reason == "OPENAI_API_KEY is not configured"
+    with pytest.raises(ProviderUnavailableError, match="not configured"):
+        await provider.embed_query("query")
+
+
+@pytest.mark.asyncio
+async def test_omlx_provider_sends_no_authentication() -> None:
+    headers_seen: list[dict[str, str]] = []
+
+    async def request(_payload: dict[str, object], headers: dict[str, str]) -> object:
+        headers_seen.append(headers)
+        return {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
+
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="http://127.0.0.1:10000/v1",
+        model_name="local-model",
+        dimension=2,
+        provider_name="omlx-openai-compatible",
+        api_key=None,
+        request_with_headers=request,
+    )
+
+    await provider.embed_query("query")
+
+    assert headers_seen == [{}]
+
+
+@pytest.mark.asyncio
 async def test_openai_compatible_provider_rejects_malformed_vectors() -> None:
     async def malformed(_payload: dict[str, object]) -> object:
         return {"data": [{"index": 0, "embedding": [1.0]}]}

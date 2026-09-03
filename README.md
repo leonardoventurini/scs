@@ -8,9 +8,45 @@ SCS starts with an empty index. It does not migrate, inspect, or recreate any
 legacy External product graph data. Repositories are added only through an explicit CLI,
 MCP, or client request.
 
-Semantic embeddings are generated locally from parser-owned entity text. SCS
-does not call a remote file-summarization service and requires no API key for
-indexing or search.
+Semantic embeddings are generated from parser-owned entity text. SCS defaults
+to the OpenAI embeddings API, while local OMLX and in-process MLX providers are
+available by explicit configuration. SCS does not send repository files to a
+summarization service; an embedding provider receives only the entity text used
+to build the semantic index.
+
+## Embedding configuration
+
+Persistent configuration lives at `~/.scs/config.toml`. Explicit Python
+settings take precedence over environment variables, environment variables
+take precedence over TOML, and TOML takes precedence over defaults. The
+standard `OPENAI_API_KEY` environment variable overrides `openai_api_key` in
+the file. For a background launchd service, storing the key in the owner-only
+configuration file is more reliable than relying on an interactive shell
+environment.
+
+The unconfigured default is:
+
+```toml
+embedding_provider = "openai"
+embedding_model = "text-embedding-3-small"
+embedding_dimension = 1536
+openai_base_url = "https://api.openai.com/v1"
+openai_api_key = "replace-with-your-key"
+```
+
+To use OMLX without an API key:
+
+```toml
+embedding_provider = "omlx"
+embedding_model = "Qwen3-Embedding-8B-4bit-DWQ"
+embedding_dimension = 4096
+omlx_base_url = "http://127.0.0.1:10000/v1"
+```
+
+OMLX endpoints must be loopback HTTP URLs. In OMLX mode, SCS ignores OpenAI
+credentials and sends no authorization header. Changing the provider, model,
+or dimension quarantines incompatible vectors; the next indexing pass
+regenerates embeddings while preserving the structural graph.
 
 Files supported by a native parser are indexed structurally. Other regular
 UTF-8 text files—including `Dockerfile`, dotfiles, extensionless files, and

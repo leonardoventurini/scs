@@ -7,7 +7,7 @@ import importlib
 from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol, SupportsFloat, SupportsIndex, cast, runtime_checkable
 
-from scs.config import DEFAULT_EMBEDDING_DIMENSION, DEFAULT_EMBEDDING_MODEL
+from scs.config import DEFAULT_LOCAL_EMBEDDING_DIMENSION, DEFAULT_LOCAL_EMBEDDING_MODEL
 from scs.providers.base import ProviderMetadata, ProviderUnavailableError
 
 
@@ -42,8 +42,8 @@ class MLXEmbeddingProvider:
     def __init__(
         self,
         *,
-        model_name: str = DEFAULT_EMBEDDING_MODEL,
-        dimension: int = DEFAULT_EMBEDDING_DIMENSION,
+        model_name: str = DEFAULT_LOCAL_EMBEDDING_MODEL,
+        dimension: int = DEFAULT_LOCAL_EMBEDDING_DIMENSION,
         batch_size: int = 32,
         loader: Callable[[str], _EncodingModel] | None = None,
     ) -> None:

@@ -1,4 +1,4 @@
-"""Local OpenAI-compatible embeddings provider used for OMLX."""
+"""Strict adapter for OpenAI and local OpenAI-compatible embedding APIs."""
 
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ DOCUMENT_PREFIX: Final[str] = "search_document"
 QUERY_PREFIX: Final[str] = "search_query"
 REQUEST_TIMEOUT_SECONDS: Final[float] = 30.0
 ProviderRequest = Callable[[dict[str, object]], Awaitable[object]]
+ProviderRequestWithHeaders = Callable[
+    [dict[str, object], dict[str, str]], Awaitable[object]
+]
 
 
 class OpenAICompatibleEmbeddingProvider:
@@ -27,23 +30,35 @@ class OpenAICompatibleEmbeddingProvider:
         model_name: str,
         dimension: int,
         batch_size: int = 32,
+        provider_name: str = "omlx-openai-compatible",
+        api_key: str | None = None,
         request: ProviderRequest | None = None,
+        request_with_headers: ProviderRequestWithHeaders | None = None,
     ) -> None:
         self._base_url: str = base_url.rstrip("/")
         self._model_name: str = model_name
         self._dimension: int = dimension
+        self._provider_name: str = provider_name
+        self._api_key: str | None = api_key
         if batch_size < 1:
             raise ValueError("batch_size must be positive")
         self._batch_size: int = batch_size
         self._request: ProviderRequest | None = request
-        self._unavailable_reason: str | None = None
+        self._request_with_headers: ProviderRequestWithHeaders | None = (
+            request_with_headers
+        )
+        self._unavailable_reason: str | None = (
+            "OPENAI_API_KEY is not configured"
+            if provider_name == "openai" and api_key is None
+            else None
+        )
 
     @property
     def metadata(self) -> ProviderMetadata:
         """Expose the durable identity that makes vectors interpretable."""
 
         return ProviderMetadata(
-            provider="omlx-openai-compatible",
+            provider=self._provider_name,
             model=self._model_name,
             dimension=self._dimension,
             available=self._unavailable_reason is None,
@@ -64,6 +79,8 @@ class OpenAICompatibleEmbeddingProvider:
     async def _embed(self, prefix: str, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
             return []
+        if self._provider_name == "openai" and self._api_key is None:
+            raise ProviderUnavailableError("OPENAI_API_KEY is not configured")
         try:
             vectors: list[list[float]] = []
             for offset in range(0, len(texts), self._batch_size):
@@ -81,20 +98,34 @@ class OpenAICompatibleEmbeddingProvider:
                 )
             self._unavailable_reason = None
             return vectors
-        except (aiohttp.ClientError, OSError, TimeoutError, TypeError, ValueError) as exc:
+        except (
+            aiohttp.ClientError,
+            OSError,
+            TimeoutError,
+            TypeError,
+            ValueError,
+        ) as exc:
             self._unavailable_reason = str(exc)
             raise ProviderUnavailableError(
                 f"OpenAI-compatible embedding provider is unavailable: {exc}"
             ) from exc
 
     async def _post(self, payload: dict[str, object]) -> object:
+        headers = (
+            {"Authorization": f"Bearer {self._api_key}"}
+            if self._api_key is not None
+            else {}
+        )
+        request_with_headers = self._request_with_headers
+        if request_with_headers is not None:
+            return await request_with_headers(payload, headers)
         request = self._request
         if request is not None:
             return await request(payload)
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
-                f"{self._base_url}/{EMBEDDINGS_PATH}", json=payload
+                f"{self._base_url}/{EMBEDDINGS_PATH}", json=payload, headers=headers
             ) as response:
                 response.raise_for_status()
                 return cast(object, await response.json(content_type=None))
@@ -124,9 +155,13 @@ class OpenAICompatibleEmbeddingProvider:
                 or not 0 <= index < expected_count
                 or ordered[index] is not None
             ):
-                raise ValueError("embedding response indexes must be unique and contiguous")
+                raise ValueError(
+                    "embedding response indexes must be unique and contiguous"
+                )
             if not isinstance(raw_embedding, list):
-                raise ValueError("embedding response entry must contain an embedding list")
+                raise ValueError(
+                    "embedding response entry must contain an embedding list"
+                )
             vector = [
                 self._component(value) for value in cast(list[object], raw_embedding)
             ]

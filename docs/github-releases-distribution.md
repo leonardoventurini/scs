@@ -38,7 +38,7 @@ For the first release, the supported matrix should be intentionally narrow:
 | Installation scope | Current user; no `sudo` |
 | Service manager | Per-user launchd domain |
 | Package host | GitHub Releases |
-| Embedding provider | External loopback OMLX service |
+| Embedding provider | OpenAI by default; external loopback OMLX or local MLX by configuration |
 | Persistent data | Existing `SCS_HOME`; preserved across upgrades |
 
 Intel macOS, Linux, Windows, a graphical installer, and offline installation
@@ -131,6 +131,7 @@ The installer should accept:
 --home PATH              Configure SCS_HOME without moving existing data implicitly.
 --provider NAME          Select the supported embedding provider.
 --omlx-base-url URL      Configure the loopback OMLX endpoint.
+--openai-api-key KEY     Persist an OpenAI key in the owner-only SCS config.
 --no-start               Install services but do not start them.
 --check                  Validate prerequisites without changing the system.
 --unattended             Disable prompts and require complete explicit configuration.
@@ -167,7 +168,8 @@ The installer should perform these stages in order:
    schema without opening it through a mutating graph constructor. Abort before
    starting a new binary against an unsupported store.
 9. **Persist service configuration.** Write validated provider and path
-   settings to an SCS-owned configuration file with user-only permissions.
+   settings to `~/.scs/config.toml` with user-only permissions. Never place an
+   API key in a launchd plist or command line.
 10. **Install launchd services.** Invoke `scs service install`; never duplicate
     plist generation logic in the shell installer.
 11. **Start and verify.** Invoke the supported service start operation, wait for
@@ -364,21 +366,22 @@ log redaction is harder.
 
 ## Provider and model handling
 
-OMLX remains an external runtime prerequisite. The SCS installer should not
+OMLX remains an optional external runtime. The SCS installer should not
 bundle model weights or silently install an unrelated background service.
 
 `scs doctor` must distinguish:
 
 - daemon/proxy readiness
 - structural index readiness
-- configured OMLX endpoint reachability
+- configured provider and endpoint reachability
+- OpenAI credential presence without revealing the credential
 - configured model availability
 - embedding dimension compatibility
 - semantic index coverage
 
-The daemon may start in an explicitly degraded structural-only state when OMLX
-is unavailable. The installer must not report semantic readiness merely because
-the launchd processes are running.
+The daemon may start in an explicitly degraded structural-only state when the
+configured provider is unavailable. The installer must not report semantic
+readiness merely because the launchd processes are running.
 
 If OMLX itself later has a supported GitHub-distributed installer, SCS may link
 to or orchestrate it only after defining ownership, version compatibility,
@@ -474,7 +477,7 @@ GitHub Release page and public documentation.
 | Service lifecycle | install/start/status/doctor/stop/uninstall | Block release |
 | Upgrade safety | prior-version upgrade fixture | Block stable release |
 | Data preservation | disposable `SCS_HOME` survives upgrade/uninstall | Block release |
-| Provider reporting | ready and unavailable OMLX fixtures | Block release |
+| Provider reporting | ready and unavailable OpenAI/OMLX fixtures | Block release |
 
 ## Rollout sequence
 
