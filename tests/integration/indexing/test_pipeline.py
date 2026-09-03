@@ -228,6 +228,33 @@ def test_vectors_flush_before_hash_commit(repository: Path) -> None:
     assert graph.hashes[str(repository.resolve())]["main.py"]
 
 
+def test_unchanged_file_regenerates_missing_embeddings(repository: Path) -> None:
+    """Hash acknowledgement must not suppress repair of missing semantic state."""
+
+    source = repository / "main.py"
+    source.write_text("def run():\n    pass\n")
+    graph = FakeGraph()
+    embeddings = FakeEmbeddings()
+    pipeline = IngestionPipeline(
+        graph=graph,
+        parser=FakeParser(),
+        embeddings=embeddings,
+    )
+    pipeline.ingest(repository)
+    graph.embeddings.clear()
+    first_inputs = list(embeddings.document_inputs)
+
+    repaired = pipeline.ingest(repository)
+
+    assert repaired.files_changed == 1
+    assert repaired.embeddings_created == 2
+    assert embeddings.document_inputs[len(first_inputs) :] == [
+        "file: main",
+        "function main.run ",
+    ]
+    assert len(graph.embeddings) == 2
+
+
 def test_missing_vector_after_reopen_does_not_acknowledge_hash(
     repository: Path,
 ) -> None:

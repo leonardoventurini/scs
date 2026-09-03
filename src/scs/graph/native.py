@@ -72,6 +72,13 @@ class _NativeGraphHandle(Protocol):
     def count_nodes_without_embeddings(
         self, node_type: str | None, repo_id: int | None
     ) -> int: ...
+    def list_nodes_without_embeddings(
+        self,
+        node_type: str | None,
+        limit: int,
+        offset: int,
+        repo_id: int | None,
+    ) -> object: ...
     def get_edges(
         self, node_id: str, relationship: str | None, direction: str
     ) -> object: ...
@@ -367,6 +374,22 @@ class NativeGraph:
         return self._inner.count_nodes_without_embeddings(
             node_type.value if node_type else None, repo_id
         )
+
+    def get_file_paths_with_missing_embeddings_sync(self, *, repo_id: int) -> set[str]:
+        """Return source paths owning nodes absent from the active vector index."""
+
+        count = self._inner.count_nodes_without_embeddings(None, repo_id)
+        if count == 0:
+            return set()
+        raw = _json_value(
+            self._inner.list_nodes_without_embeddings(None, count, 0, repo_id)
+        )
+        nodes = [Node.model_validate(item) for item in cast(list[object], raw)]
+        return {
+            file_path
+            for node in nodes
+            if isinstance((file_path := node.metadata.get("file_path")), str)
+        }
 
     def get_edges_sync(
         self,

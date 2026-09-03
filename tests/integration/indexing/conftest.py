@@ -13,15 +13,37 @@ class FakeParser:
     def supported_extensions(self) -> frozenset[str]:
         return frozenset({".py"})
 
-    def parse(self, source: str, file_path: str) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
+    def parse(
+        self, source: str, file_path: str
+    ) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
         if "PARSE_ERROR" in source:
             raise ValueError("synthetic parse failure")
         module = file_path.removesuffix(".py").replace("/", ".")
-        entities = [ParsedEntity(NodeType.FILE, file_path, module, 0, max(0, source.count("\n")), raw_text=source)]
+        entities = [
+            ParsedEntity(
+                NodeType.FILE,
+                file_path,
+                module,
+                0,
+                max(0, source.count("\n")),
+                raw_text=source,
+            )
+        ]
         edges: list[ParsedEdge] = []
-        for line_number, name in enumerate(re.findall(r"^def\s+([A-Za-z_]\w*)", source, re.MULTILINE), start=1):
+        for line_number, name in enumerate(
+            re.findall(r"^def\s+([A-Za-z_]\w*)", source, re.MULTILINE), start=1
+        ):
             qualified = f"{module}.{name}"
-            entities.append(ParsedEntity(NodeType.FUNCTION, name, qualified, line_number, line_number, raw_text=f"def {name}"))
+            entities.append(
+                ParsedEntity(
+                    NodeType.FUNCTION,
+                    name,
+                    qualified,
+                    line_number,
+                    line_number,
+                    raw_text=f"def {name}",
+                )
+            )
             edges.append(ParsedEdge(module, qualified, RelationshipType.CONTAINS))
         return entities, edges
 
@@ -48,17 +70,39 @@ class FakeGraph:
         return self.repos.get(path)
 
     def get_ingestion_stats_sync(self) -> dict[str, dict[str, object]]:
-        return {path: {"file_count": len(self.hashes.get(path, {}))} for path in self.repos}
+        return {
+            path: {"file_count": len(self.hashes.get(path, {}))} for path in self.repos
+        }
 
     def get_all_ingested_files_sync(self, repo_path: str) -> dict[str, str]:
         return dict(self.hashes.get(repo_path, {}))
 
     def get_file_paths_for_repo_sync(self, repo_path: str) -> list[str]:
-        return sorted({str(node["metadata"]["file_path"]) for node in self.nodes.values() if node.get("repo_id") == self.repos.get(repo_path)})
+        return sorted(
+            {
+                str(node["metadata"]["file_path"])
+                for node in self.nodes.values()
+                if node.get("repo_id") == self.repos.get(repo_path)
+            }
+        )
 
     def get_node_ids_for_file_sync(self, repo_path: str, rel_path: str) -> list[str]:
         repo_id = self.repos.get(repo_path)
-        return [node_id for node_id, node in self.nodes.items() if node.get("repo_id") == repo_id and node["metadata"].get("file_path") == rel_path]
+        return [
+            node_id
+            for node_id, node in self.nodes.items()
+            if node.get("repo_id") == repo_id
+            and node["metadata"].get("file_path") == rel_path
+        ]
+
+    def get_file_paths_with_missing_embeddings_sync(self, *, repo_id: int) -> set[str]:
+        return {
+            str(node["metadata"]["file_path"])
+            for node_id, node in self.nodes.items()
+            if node.get("repo_id") == repo_id
+            and node_id not in self.embeddings
+            and isinstance(node["metadata"].get("file_path"), str)
+        }
 
     def resolve_node_id_by_qualified_name_sync(
         self, repo_path: str, qualified_name: str
@@ -84,12 +128,20 @@ class FakeGraph:
     def batch_upsert_edges_sync(self, edges: list[dict[str, object]]) -> int:
         self._fail("edges")
         by_identity = {
-            (str(edge["source_id"]), str(edge["target_id"]), str(edge["relationship"])): edge
+            (
+                str(edge["source_id"]),
+                str(edge["target_id"]),
+                str(edge["relationship"]),
+            ): edge
             for edge in self.edges
         }
         for edge in edges:
             by_identity[
-                (str(edge["source_id"]), str(edge["target_id"]), str(edge["relationship"]))
+                (
+                    str(edge["source_id"]),
+                    str(edge["target_id"]),
+                    str(edge["relationship"]),
+                )
             ] = edge
         self.edges = list(by_identity.values())
         return len(edges)
@@ -98,12 +150,17 @@ class FakeGraph:
         return [
             Edge.model_validate({"id": "fake", **edge})
             for edge in self.edges
-            if (direction == "both" and node_id in {edge["source_id"], edge["target_id"]})
+            if (
+                direction == "both"
+                and node_id in {edge["source_id"], edge["target_id"]}
+            )
             or (direction == "incoming" and edge["target_id"] == node_id)
             or (direction == "outgoing" and edge["source_id"] == node_id)
         ]
 
-    def batch_upsert_embeddings_sync(self, embeddings: list[tuple[str, list[float]]]) -> int:
+    def batch_upsert_embeddings_sync(
+        self, embeddings: list[tuple[str, list[float]]]
+    ) -> int:
         self._fail("embeddings")
         self.embeddings.update(embeddings)
         return len(embeddings)
@@ -144,7 +201,11 @@ class FakeGraph:
         for node_id in node_ids:
             self.nodes.pop(node_id, None)
             self.embeddings.pop(node_id, None)
-        self.edges = [edge for edge in self.edges if edge["source_id"] not in node_ids and edge["target_id"] not in node_ids]
+        self.edges = [
+            edge
+            for edge in self.edges
+            if edge["source_id"] not in node_ids and edge["target_id"] not in node_ids
+        ]
         return len(node_ids)
 
     def delete_ingestion_records_batch_sync(
@@ -155,7 +216,9 @@ class FakeGraph:
             records.pop(rel_path, None)
         return len(rel_paths)
 
-    def acknowledge_ingested_files_batch_sync(self, files: list[dict[str, object]]) -> None:
+    def acknowledge_ingested_files_batch_sync(
+        self, files: list[dict[str, object]]
+    ) -> None:
         self._fail("hash")
         committed = [
             (str(file["repo_path"]), str(file["rel_path"]), str(file["content_hash"]))
@@ -177,6 +240,7 @@ class FakeEmbeddings:
     @property
     def metadata(self):
         from scs.providers.base import ProviderMetadata
+
         return ProviderMetadata("fake", "deterministic", 2)
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:

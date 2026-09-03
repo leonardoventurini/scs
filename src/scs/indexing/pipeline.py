@@ -45,6 +45,9 @@ class GraphStore(Protocol):
     def get_node_ids_for_file_sync(
         self, repo_path: str, rel_path: str
     ) -> list[str]: ...
+    def get_file_paths_with_missing_embeddings_sync(
+        self, *, repo_id: int
+    ) -> set[str]: ...
     def resolve_node_id_by_qualified_name_sync(
         self, repo_path: str, qualified_name: str
     ) -> str | None: ...
@@ -322,10 +325,17 @@ class IngestionPipeline:
         result = IngestionResult(files_discovered=len(entries))
         repo_id = self._graph.get_or_create_repo_sync(repo_path)
         hashes = self._graph.get_all_ingested_files_sync(repo_path)
+        missing_embedding_paths: set[str] = (
+            self._graph.get_file_paths_with_missing_embeddings_sync(repo_id=repo_id)
+            if self._embeddings is not None
+            else set()
+        )
         changed = [
             entry
             for entry in entries
-            if force or hashes.get(entry.rel_path) != entry.content_hash
+            if force
+            or hashes.get(entry.rel_path) != entry.content_hash
+            or entry.rel_path in missing_embedding_paths
         ]
         result.files_changed = len(changed)
 
