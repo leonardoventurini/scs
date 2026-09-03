@@ -121,6 +121,7 @@ class _StructuralPlan:
     parsed: tuple[_ParsedFile, ...]
     nodes: list[dict[str, object]]
     node_ids: dict[str, str]
+    entity_node_ids: dict[tuple[str, str], str]
     replaced_ids: set[str]
     edges: list[dict[str, object]]
 
@@ -390,12 +391,12 @@ class IngestionPipeline:
                     f"Embedding and acknowledging complete-file batch {batch_number}"
                 ),
             )
-            if not self._embed_batch(batch, plan.node_ids, result):
+            if not self._embed_batch(batch, plan.entity_node_ids, result):
                 result.files_failed += len(batch.files)
                 break
             self._graph.flush_vector_index_sync()
             batch_node_ids = [
-                plan.node_ids[entity.qualified_name]
+                plan.entity_node_ids[(item.entry.rel_path, entity.qualified_name)]
                 for item in batch.files
                 for entity in item.entities
             ]
@@ -538,11 +539,13 @@ class IngestionPipeline:
     ) -> _StructuralPlan:
         nodes: list[dict[str, object]] = []
         qualified_to_id: dict[str, str] = {}
+        entity_node_ids: dict[tuple[str, str], str] = {}
         replaced_ids: set[str] = set()
         for item in parsed:
             for entity in item.entities:
                 node_id = _node_id(repo_path, item.entry.rel_path, entity)
                 qualified_to_id[entity.qualified_name] = node_id
+                entity_node_ids[(item.entry.rel_path, entity.qualified_name)] = node_id
                 metadata: dict[str, object] = {
                     "file_path": item.entry.rel_path,
                     "language": item.entry.language,
@@ -578,6 +581,7 @@ class IngestionPipeline:
             parsed=tuple(sorted(parsed, key=lambda item: item.entry.rel_path)),
             nodes=nodes,
             node_ids=qualified_to_id,
+            entity_node_ids=entity_node_ids,
             replaced_ids=replaced_ids,
             edges=edges,
         )
@@ -713,7 +717,7 @@ class IngestionPipeline:
     def _embed_batch(
         self,
         batch: _IngestionBatch,
-        node_ids: dict[str, str],
+        entity_node_ids: dict[tuple[str, str], str],
         result: IngestionResult,
     ) -> bool:
         if self._embeddings is None:
@@ -742,8 +746,15 @@ class IngestionPipeline:
             result.semantic_degraded_reason = str(exc)
             return False
         pairs = [
-            (node_ids[entity.qualified_name], vector)
-            for entity, vector in zip(entities, vectors, strict=True)
+            (
+                entity_node_ids[(item.entry.rel_path, entity.qualified_name)],
+                vector,
+            )
+            for (item, entity), vector in zip(
+                ((item, entity) for item in batch.files for entity in item.entities),
+                vectors,
+                strict=True,
+            )
         ]
         result.embeddings_created = (
             self._graph.batch_upsert_embeddings_sync(pairs) if pairs else 0

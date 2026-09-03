@@ -101,6 +101,28 @@ class RepeatedMissingTargetParser:
         return [entity], edges
 
 
+class RepeatedQualifiedNameParser:
+    """Emit the same parser-qualified identity from distinct source files."""
+
+    def supported_extensions(self) -> frozenset[str]:
+        return frozenset({".py"})
+
+    def parse(
+        self, source: str, file_path: str
+    ) -> tuple[list[ParsedEntity], list[ParsedEdge]]:
+        del source
+        return [
+            ParsedEntity(
+                NodeType.FUNCTION,
+                file_path,
+                "shared.run",
+                1,
+                1,
+                raw_text=file_path,
+            )
+        ], []
+
+
 class CrossBatchRetryParser:
     """Make the first batch own a relationship to the second batch's node."""
 
@@ -253,6 +275,23 @@ def test_unchanged_file_regenerates_missing_embeddings(repository: Path) -> None
         "function main.run ",
     ]
     assert len(graph.embeddings) == 2
+
+
+def test_repeated_qualified_names_receive_distinct_embeddings(repository: Path) -> None:
+    """Embedding identity includes the owning path, matching structural node IDs."""
+
+    (repository / "first.py").write_text("first")
+    (repository / "second.py").write_text("second")
+    graph = FakeGraph()
+
+    result = IngestionPipeline(
+        graph=graph,
+        parser=RepeatedQualifiedNameParser(),
+        embeddings=FakeEmbeddings(),
+    ).ingest(repository)
+
+    assert result.embeddings_created == 2
+    assert graph.embeddings.keys() == graph.nodes.keys()
 
 
 def test_missing_vector_after_reopen_does_not_acknowledge_hash(

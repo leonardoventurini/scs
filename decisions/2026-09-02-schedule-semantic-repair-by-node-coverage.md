@@ -10,6 +10,8 @@ At each ingestion pass with an embedding provider configured, SCS will inspect t
 
 The repair reuses parsing, embedding, sidecar flush/reopen verification, source-stability validation, and atomic hash acknowledgement. It introduces no alternate semantic repair path and no public contract or persisted-format change.
 
+Within that plan, embedding targets use `(source path, qualified name)` identity, matching the deterministic structural node ID. The qualified-name-only map remains limited to relationship resolution, where parser references do not carry an owning path.
+
 ## Rejected alternatives
 
 - Falling back to lexical search alone hides incomplete indexing and does not restore semantic behavior.

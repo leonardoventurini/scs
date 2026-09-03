@@ -15,7 +15,7 @@ Observed evidence on 2026-09-02: `<external-project>` reports a populated struct
 
 ## Uncertainty
 
-The generic router error erases the search exception, but durable job history independently shows repeated `Reopened vector sidecar is missing an acknowledged batch vector` failures. A regression test will isolate the unchanged-hash/missing-vector scheduling defect before implementation.
+The generic router error erases the search exception, but durable job history independently shows repeated `Reopened vector sidecar is missing an acknowledged batch vector` failures. Regression testing and rollout exposed a second cause: distinct files can emit the same parser-qualified name, while the embedding plan previously keyed targets only by that name. The corrected embedding identity must match structural identity by including the owning file path.
 
 ## Risks and recovery
 
@@ -26,6 +26,7 @@ The main risk is re-embedding more files than necessary. Select only files ownin
 - [x] Add a pipeline regression test with an acknowledged, unchanged file whose nodes have no vectors.
 - [x] Confirm the current pipeline incorrectly reports zero changed files and generates no embeddings.
 - [x] Include files with missing node embeddings in incremental ingestion work.
+- [x] Give repeated qualified names distinct path-scoped embedding targets.
 - [x] Run targeted Python tests and strict type checking.
 - [x] Run `just verify`.
 - [ ] Restart `gui/501/com.mentagen.scs.daemon` and confirm readiness.
