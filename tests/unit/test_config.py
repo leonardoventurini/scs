@@ -107,6 +107,8 @@ def test_embedding_defaults_target_openai(
     settings = SCSSettings()
 
     assert settings.embedding_provider == "openai"
+    assert settings.embedding_model == "text-embedding-3-large"
+    assert settings.embedding_dimension == 3072
     assert settings.embedding_model == DEFAULT_OPENAI_EMBEDDING_MODEL
     assert settings.embedding_dimension == DEFAULT_OPENAI_EMBEDDING_DIMENSION
     assert settings.openai_base_url == DEFAULT_OPENAI_BASE_URL

@@ -12,7 +12,9 @@ while existing local users must retain an explicit zero-credential path.
 OpenAI is the default embedding provider for an installation without explicit
 configuration. SCS reads persistent settings from `~/.scs/config.toml`; the
 standard `OPENAI_API_KEY` environment variable has precedence over a key in
-that file. A file containing a key must have owner-only permissions.
+that file. A file containing a key must have owner-only permissions. The
+default model is `text-embedding-3-large` at its native 3,072 dimensions, the
+closest OpenAI vector size to the established 4,096-dimensional OMLX model.
 
 OMLX remains an explicit provider using a loopback-only HTTP endpoint. OMLX
 mode ignores OpenAI credentials and emits no authorization header. In-process

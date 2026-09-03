@@ -28,8 +28,8 @@ The unconfigured default is:
 
 ```toml
 embedding_provider = "openai"
-embedding_model = "text-embedding-3-small"
-embedding_dimension = 1536
+embedding_model = "text-embedding-3-large"
+embedding_dimension = 3072
 openai_base_url = "https://api.openai.com/v1"
 openai_api_key = "replace-with-your-key"
 ```

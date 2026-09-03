@@ -26,7 +26,7 @@ and an explicit OMLX mode that never requires or transmits an API key.
 - The standard `OPENAI_API_KEY` environment variable overrides
   `openai_api_key` in TOML.
 - The unconfigured default is OpenAI at `https://api.openai.com/v1`, using
-  `text-embedding-3-small` with 1,536 dimensions.
+  `text-embedding-3-large` with 3,072 dimensions.
 - `embedding_provider = "omlx"` uses only the configured loopback OMLX URL,
   ignores every OpenAI credential, and sends no authorization header.
 - `embedding_provider = "mlx"` remains available.
