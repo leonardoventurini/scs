@@ -55,13 +55,3 @@ pub enum SCSError {
 
 /// Convenience alias used throughout the crate.
 pub type SCSResult<T> = Result<T, SCSError>;
-
-/// Auto-convert `rusqlite::Error` → `SCSError::Database` when the
-/// `rusqlite` feature is enabled, restoring seamless `?` propagation
-/// for crates that depend on both scs-core and rusqlite.
-#[cfg(feature = "rusqlite")]
-impl From<rusqlite::Error> for SCSError {
-    fn from(e: rusqlite::Error) -> Self {
-        SCSError::Database(e.to_string())
-    }
-}

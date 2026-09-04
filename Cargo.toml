@@ -28,26 +28,17 @@ serde_json = "1"
 # Database
 rusqlite = { version = "0.40", features = ["bundled", "column_decltype"] }
 
-# Pooling
-r2d2 = "0.8"
-r2d2_sqlite = "0.35"
-
 # Error handling
 thiserror = "2"
 
 # Enums
 strum = { version = "0.26", features = ["derive"] }
 
-# IDs and hashing
+# IDs
 uuid = { version = "1", features = ["v4", "v5"] }
-sha2 = "0.10"
-hex = "0.4"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
-
-# HNSW vector index for embedding search
-usearch = "2.26"
 
 # Logging
 log = "0.4"
@@ -65,9 +56,6 @@ tree-sitter-css = "0.25"
 
 # FFI
 pyo3 = { version = "0.23", features = ["extension-module"] }
-
-# Randomized temporary filenames for atomic vector-index writes
-rand = "0.8"
 
 # Testing
 tempfile = "3"
