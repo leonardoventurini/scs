@@ -2,14 +2,19 @@
 
 ## Unreleased
 
-## 0.1.0 - 2026-09-04
+## 0.1.1 - 2026-09-04
 
 - feat: route all SCS graph and embedding persistence through TSG 0.2
 - feat: replace launchd and TCP MCP services with lazy per-harness stdio bridges
 - feat: package SCS as one native wheel with a verified cross-platform installer
 - ci: add stable GitHub Releases with checksums, SBOMs, and attestations
 - security: upgrade PyO3 to 0.29.2 and refresh yanked WebAssembly transitive locks
+- fix: migrate the MCP host and public contracts to MCP SDK 2.1.1
 - ci: install the pinned task runner and enforce a clean RustSec audit
+
+The `v0.1.0` tag failed its clean-install release gate and did not publish a
+GitHub Release. Per the immutable-tag policy, `v0.1.1` is the first published
+SCS release.
 
 ## 2026-08-27
 

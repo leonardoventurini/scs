@@ -37,7 +37,7 @@ Download the versioned installer and `SHA256SUMS` from the same release. Verify
 before execution:
 
 ```bash
-VERSION=0.1.0
+VERSION=0.1.1
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/scs-installer-${VERSION}.sh"
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/SHA256SUMS"
 shasum -a 256 -c SHA256SUMS --ignore-missing

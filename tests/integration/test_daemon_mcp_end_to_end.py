@@ -56,10 +56,10 @@ async def test_two_stdio_bridges_share_daemon_until_final_disconnect(
                             second_identity["generation"]
                             == first_identity["generation"]
                         )
-                        assert result.isError is False
+                        assert result.is_error is False
 
                 result = await first.call_tool("get_graph_stats", {})
-                assert result.isError is False
+                assert result.is_error is False
                 assert {tool.name for tool in first_tools.tools} == MOVED_TO_SCS_TOOLS
 
         for _ in range(100):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from scs.mcp.inventory import MOVED_TO_SCS_TOOLS
 from scs.mcp.observability import ToolRecorder
@@ -246,8 +246,9 @@ async def test_search_dispatches_through_public_service_gateway(tmp_path) -> Non
         {"query": "router contract", "repo_path": str(tmp_path), "limit": 999},
     )
 
-    assert result[1]["query"] == "retained"
-    assert result[1]["results"] == []
+    assert result.structured_content is not None
+    assert result.structured_content["query"] == "retained"
+    assert result.structured_content["results"] == []
     assert gateway.calls == [
         (
             "knowledge.search",
@@ -270,7 +271,8 @@ async def test_explicit_project_ingestion_is_acknowledged_without_waiting(
         {"repo_path": str(tmp_path)},
     )
 
-    assert result[1]["accepted"] is True
+    assert result.structured_content is not None
+    assert result.structured_content["accepted"] is True
     assert gateway.calls == [
         ("repository.index", {"repo_path": str(tmp_path.resolve())})
     ]
@@ -308,25 +310,25 @@ async def test_mcp_application_lists_exact_inventory() -> None:
         assert annotations is not None
         if tool.name in {"ingest_project", "ingest_files"}:
             assert (
-                annotations.readOnlyHint,
-                annotations.destructiveHint,
-                annotations.openWorldHint,
+                annotations.read_only_hint,
+                annotations.destructive_hint,
+                annotations.open_world_hint,
             ) == (False, True, False)
         else:
             assert (
-                annotations.readOnlyHint,
-                annotations.destructiveHint,
-                annotations.idempotentHint,
-                annotations.openWorldHint,
+                annotations.read_only_hint,
+                annotations.destructive_hint,
+                annotations.idempotent_hint,
+                annotations.open_world_hint,
             ) == (True, False, True, False)
-        assert tool.outputSchema is not None
+        assert tool.output_schema is not None
         if tool.name != "find_references":
-            assert set(tool.outputSchema["properties"]) == EXPECTED_OUTPUT_FIELDS[tool.name]
-        assert tool.outputSchema.get("additionalProperties") is not True
+            assert set(tool.output_schema["properties"]) == EXPECTED_OUTPUT_FIELDS[tool.name]
+        assert tool.output_schema.get("additionalProperties") is not True
     references = next(tool for tool in tools if tool.name == "find_references")
-    assert set(references.inputSchema["properties"]) == {"file_path", "line"}
-    assert references.outputSchema is not None
-    reference_result_schema = references.outputSchema["properties"]["result"]
+    assert set(references.input_schema["properties"]) == {"file_path", "line"}
+    assert references.output_schema is not None
+    reference_result_schema = references.output_schema["properties"]["result"]
     assert reference_result_schema.get("oneOf")
     assert reference_result_schema["discriminator"]["propertyName"] == "available"
 
@@ -341,4 +343,5 @@ async def test_observability_failure_is_fail_open() -> None:
         {},
     )
 
-    assert result[1]["status"] == "empty"
+    assert result.structured_content is not None
+    assert result.structured_content["status"] == "empty"

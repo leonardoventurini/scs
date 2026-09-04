@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from collections.abc import Callable
+from typing import TypeVar, cast
 
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from scs.mcp.contracts import (
@@ -19,7 +21,7 @@ from scs.mcp.contracts import (
     SearchCodeOutput,
 )
 from scs.mcp.gateway import ServiceGateway
-from scs.mcp.observability import ObservedFastMCP, ToolRecorder
+from scs.mcp.observability import ObservedMCPServer, ToolRecorder
 from scs.mcp.paths import (
     canonical_repo_path,
     contained_deleted_path,
@@ -29,20 +31,21 @@ from scs.mcp.paths import (
 MAX_RESULTS = 200
 MAX_TRAVERSAL_DEPTH = 3
 MINIMUM_INSPECT_LIMIT = 1
+ToolInputT = TypeVar("ToolInputT")
 
 # Query tools inspect only SCS-owned state derived from local repositories.
 # Ingestion tools are separately annotated because they mutate the index even
 # though the repository source itself remains immutable.
 READ_ONLY_LOCAL = ToolAnnotations(
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 INDEX_MUTATING_LOCAL = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=True,
+    open_world_hint=False,
 )
 
 
@@ -50,14 +53,23 @@ def _limit(value: int) -> int:
     return max(1, min(value, MAX_RESULTS))
 
 
+def _validated(operation: Callable[[], ToolInputT]) -> ToolInputT:
+    """Preserve actionable input errors across MCP's public tool boundary."""
+
+    try:
+        return operation()
+    except ValueError as error:
+        raise ToolError(str(error)) from error
+
+
 def build_mcp(
     gateway: ServiceGateway,
     *,
     recorder: ToolRecorder | None = None,
-) -> ObservedFastMCP:
+) -> ObservedMCPServer:
     """Build an isolated MCP application over SCS's public service contract."""
 
-    mcp = ObservedFastMCP("scs", recorder=recorder or ToolRecorder())
+    mcp = ObservedMCPServer("scs", recorder=recorder or ToolRecorder())
 
     @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def search_code(
@@ -75,7 +87,7 @@ def build_mcp(
                     "query": query,
                     "node_type": node_type,
                     "limit": _limit(limit),
-                    "repo_path": canonical_repo_path(repo_path),
+                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
                 },
             ),
         )
@@ -100,7 +112,7 @@ def build_mcp(
                     "depth": max(1, min(depth, MAX_TRAVERSAL_DEPTH)),
                     "relationship": relationship,
                     "direction": direction,
-                    "repo_path": canonical_repo_path(repo_path),
+                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
                 },
             ),
         )
@@ -125,7 +137,7 @@ def build_mcp(
                     "vector_limit": _limit(vector_limit),
                     "hop_limit": max(1, min(hop_limit, MAX_TRAVERSAL_DEPTH)),
                     "direction": direction,
-                    "repo_path": canonical_repo_path(repo_path),
+                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
                 },
             ),
         )
@@ -146,7 +158,7 @@ def build_mcp(
                     "node_type": node_type,
                     "limit": _limit(limit),
                     "offset": max(0, offset),
-                    "repo_path": canonical_repo_path(repo_path),
+                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
                 },
             ),
         )
@@ -158,10 +170,16 @@ def build_mcp(
         deleted_paths: list[str] | None = None,
     ) -> IngestionOutput:
         """Queue explicit changed and deleted source files for indexing."""
-        repo = canonical_repo_path(repo_path)
+        repo = _validated(lambda: canonical_repo_path(repo_path))
         assert repo is not None
-        files = [contained_file_path(path, repo) for path in (file_paths or [])]
-        deleted = [contained_deleted_path(path) for path in (deleted_paths or [])]
+        files = [
+            _validated(lambda path=path: contained_file_path(path, repo))
+            for path in (file_paths or [])
+        ]
+        deleted = [
+            _validated(lambda path=path: contained_deleted_path(path))
+            for path in (deleted_paths or [])
+        ]
         if not files and not deleted:
             raise ValueError("at least one changed or deleted file is required")
         return cast(
@@ -178,7 +196,8 @@ def build_mcp(
         return cast(
             IngestionOutput,
             await gateway.call(
-                "repository.index", {"repo_path": canonical_repo_path(repo_path)}
+                "repository.index",
+                {"repo_path": _validated(lambda: canonical_repo_path(repo_path))},
             ),
         )
 
@@ -188,7 +207,8 @@ def build_mcp(
         return cast(
             GraphStatsOutput,
             await gateway.call(
-                "knowledge.stats", {"repo_path": canonical_repo_path(repo_path)}
+                "knowledge.stats",
+                {"repo_path": _validated(lambda: canonical_repo_path(repo_path))},
             ),
         )
 
@@ -200,9 +220,9 @@ def build_mcp(
         edge_limit: int = 100,
     ) -> InspectFileOutput:
         """Inspect a bounded set of indexed entities and edges for one source file."""
-        repo = canonical_repo_path(repo_path)
+        repo = _validated(lambda: canonical_repo_path(repo_path))
         assert repo is not None
-        source = contained_file_path(file_path, repo)
+        source = _validated(lambda: contained_file_path(file_path, repo))
         return cast(
             InspectFileOutput,
             await gateway.call(
@@ -221,9 +241,12 @@ def build_mcp(
         repo_path: str, file_paths: list[str]
     ) -> RegressionRiskOutput:
         """Estimate dependent and test blast radius for changed source files."""
-        repo = canonical_repo_path(repo_path)
+        repo = _validated(lambda: canonical_repo_path(repo_path))
         assert repo is not None
-        paths = [contained_file_path(path, repo) for path in file_paths]
+        paths = [
+            _validated(lambda path=path: contained_file_path(path, repo))
+            for path in file_paths
+        ]
         return cast(
             RegressionRiskOutput,
             await gateway.call(
@@ -240,7 +263,7 @@ def build_mcp(
             await gateway.call(
                 "lsp.references",
                 {
-                    "file_path": contained_file_path(file_path),
+                    "file_path": _validated(lambda: contained_file_path(file_path)),
                     "line": max(0, line),
                 },
             ),

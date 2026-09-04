@@ -5,12 +5,12 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter, deque
-from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import override
 
-from mcp.server.fastmcp import FastMCP
-from mcp.types import ContentBlock
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
+from mcp.types import CallToolResult, InputRequiredResult
 
 DEFAULT_EVENT_CAPACITY = 2_000
 
@@ -61,8 +61,8 @@ class ToolRecorder:
         }
 
 
-class ObservedFastMCP(FastMCP):
-    """FastMCP host whose telemetry cannot break tool execution."""
+class ObservedMCPServer(MCPServer[None]):
+    """MCP host whose telemetry cannot break tool execution."""
 
     def __init__(self, name: str, *, recorder: ToolRecorder) -> None:
         super().__init__(name)
@@ -70,12 +70,15 @@ class ObservedFastMCP(FastMCP):
 
     @override
     async def call_tool(
-        self, name: str, arguments: dict[str, object]
-    ) -> Sequence[ContentBlock] | dict[str, object]:
+        self,
+        name: str,
+        arguments: dict[str, object],
+        context: Context[None, object] | None = None,
+    ) -> CallToolResult | InputRequiredResult:
         started_at_unix_ms = int(time.time() * 1_000)
         started_at = time.perf_counter()
         try:
-            result = await super().call_tool(name, arguments)
+            result = await super().call_tool(name, arguments, context)
         except Exception as error:
             self._record_fail_open(
                 ToolEvent(
