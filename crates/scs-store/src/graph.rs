@@ -925,6 +925,15 @@ impl KnowledgeGraph {
             .into_keys()
             .collect();
         self.delete_ingestion_records_batch(repo_path, &paths)?;
+        self.lock()?
+            .apply_batch(&WriteBatch {
+                catalog_deletes: vec![CatalogKey {
+                    namespace: REPOSITORY_NAMESPACE.into(),
+                    key: repo_path.into(),
+                }],
+                ..WriteBatch::default()
+            })
+            .map_err(tsg_error)?;
         Ok(DeleteRepoResult {
             files_removed,
             nodes_removed: count(nodes_removed)?,
@@ -1234,5 +1243,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(catalog_exists, 1);
+    }
+
+    #[test]
+    fn deleting_repository_removes_graph_vectors_and_catalog_state() {
+        let (_directory, graph) = graph();
+        let repository = graph.get_or_create_repo("/repo").unwrap();
+        let metadata = HashMap::from([(
+            "file_path".to_string(),
+            serde_json::json!("src/lib.rs"),
+        )]);
+        graph
+            .upsert_node(
+                "file",
+                NodeType::File,
+                "src/lib.rs",
+                "",
+                Some(&metadata),
+                Some(&[1.0, 0.0]),
+                Some(repository.id),
+            )
+            .unwrap();
+        graph
+            .upsert_ingested_file("file", "/repo", "src/lib.rs", "rust", "digest", 12)
+            .unwrap();
+
+        let result = graph.delete_repo("/repo").unwrap();
+
+        assert_eq!(result.files_removed, 1);
+        assert_eq!(result.nodes_removed, 1);
+        assert_eq!(result.embeddings_removed, 1);
+        assert!(graph.get_node("file").unwrap().is_none());
+        assert!(graph.get_all_ingested_files("/repo").unwrap().is_empty());
+        assert!(!graph.get_ingestion_stats().unwrap().contains_key("/repo"));
     }
 }
