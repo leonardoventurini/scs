@@ -50,7 +50,7 @@ class _NativePayload(TypedDict):
 
 
 class NativeParser:
-    """Delegate syntax extraction to ``_scs_native`` without product coupling."""
+    """Delegate syntax extraction to ``scs._scs_native``."""
 
     def __init__(self, module: _NativeParserModule | None = None) -> None:
         self._module: _NativeParserModule | None = module
@@ -58,7 +58,7 @@ class NativeParser:
     def _native(self) -> _NativeParserModule:
         if self._module is None:
             self._module = cast(
-                _NativeParserModule, importlib.import_module("_scs_native")
+                _NativeParserModule, importlib.import_module("scs._scs_native")
             )
         return self._module
 

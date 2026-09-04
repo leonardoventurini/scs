@@ -27,11 +27,21 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.10,<2"]
+build-backend = "maturin"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/scs"]
+[tool.maturin]
+manifest-path = "crates/scs-python/Cargo.toml"
+module-name = "scs._scs_native"
+python-source = "src"
+features = ["python"]
+include = [
+    { path = "LICENSE", format = ["sdist", "wheel"] },
+    { path = "README.md", format = "sdist" },
+    { path = "Cargo.lock", format = "sdist" },
+    { path = "Cargo.toml", format = "sdist" },
+    { path = "crates/**", format = "sdist" },
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

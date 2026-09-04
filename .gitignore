@@ -4,8 +4,10 @@ __pycache__/
 .pytest_cache/
 .coverage*
 *.pyc
+*.so
 target/
 dist/
+dist-test/
 *.db
 *.db-wal
 *.db-shm

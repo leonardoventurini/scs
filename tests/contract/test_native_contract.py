@@ -72,14 +72,14 @@ def _rust_functions(source: str) -> dict[str, str]:
 def test_native_module_is_named_scs() -> None:
     """The extension imports only through the private SCS runtime name."""
 
-    native = importlib.import_module("_scs_native")
-    assert native.__name__ == "_scs_native"
+    native = importlib.import_module("scs._scs_native")
+    assert native.__name__ == "scs._scs_native"
 
 
 def test_python_rust_enum_parity() -> None:
     """Rust and Python reject the same non-code graph vocabulary."""
 
-    native = importlib.import_module("_scs_native")
+    native = importlib.import_module("scs._scs_native")
     assert native.node_type_values() == [value.value for value in NodeType]
     assert native.relationship_type_values() == [value.value for value in RelationshipType]
 
@@ -87,7 +87,7 @@ def test_python_rust_enum_parity() -> None:
 def test_native_rejects_non_code_graph_discriminators(tmp_path: Path) -> None:
     """The public native boundary cannot persist retired graph domains."""
 
-    native = importlib.import_module("_scs_native")
+    native = importlib.import_module("scs._scs_native")
     graph = native.KnowledgeGraph(str(tmp_path / "index.db"), 4)
 
     try:
@@ -110,7 +110,7 @@ def test_native_rejects_non_code_graph_discriminators(tmp_path: Path) -> None:
 def test_native_dimension_error_preserves_prior_node_and_vector(tmp_path: Path) -> None:
     """Cross-language errors cannot partially overwrite durable graph state."""
 
-    native = importlib.import_module("_scs_native")
+    native = importlib.import_module("scs._scs_native")
     database = tmp_path / "index.db"
     graph = native.KnowledgeGraph(str(database), 4)
     graph.upsert_node(

@@ -1,4 +1,4 @@
-"""Typed Python adapter over the independently built ``_scs_native`` module."""
+"""Typed Python adapter over the packaged ``scs._scs_native`` module."""
 
 from __future__ import annotations
 
@@ -212,10 +212,10 @@ class NativeGraph:
 
     def _open_native(self) -> _NativeGraphHandle:
         try:
-            module = importlib.import_module("_scs_native")
+            module = importlib.import_module("scs._scs_native")
         except ImportError as exc:
             raise NativeModuleUnavailableError(
-                "_scs_native is not installed; build the standalone SCS native extension"
+                "scs._scs_native is not installed; build the SCS native extension"
             ) from exc
         native_module = cast(_NativeModule, cast(object, module))
         return native_module.KnowledgeGraph(
