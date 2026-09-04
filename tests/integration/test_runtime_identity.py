@@ -39,15 +39,12 @@ def test_identity_cleanup_preserves_newer_generation(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_daemon_restart_replaces_only_daemon_identity(tmp_path: Path) -> None:
     runtime = Path(tempfile.mkdtemp(prefix="scs-identity-", dir="/tmp"))
-    proxy_record = runtime / "proxy-service.json"
-    proxy_record.write_text('{"service":"scs-proxy","generation":"proxy-stable"}\n', encoding="utf-8")
     settings = SCSSettings(
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
         log_dir=tmp_path / "logs",
         embedding_dimension=2,
-        mcp_internal_port=0,
     )
     daemon_record = runtime / "daemon-service.json"
 
@@ -66,17 +63,12 @@ async def test_daemon_restart_replaces_only_daemon_identity(tmp_path: Path) -> N
         }
         await first.stop()
         assert not daemon_record.exists()
-        assert proxy_record.exists()
-
         second = SCSDaemon(settings)
         await second.start()
         try:
             second_identity = json.loads(daemon_record.read_text(encoding="utf-8"))
             assert second_identity["generation"] != first_identity["generation"]
-            assert json.loads(proxy_record.read_text(encoding="utf-8"))["generation"] == "proxy-stable"
         finally:
             await second.stop()
-
-        assert proxy_record.exists()
     finally:
         shutil.rmtree(runtime, ignore_errors=True)

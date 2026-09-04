@@ -71,7 +71,6 @@ async def test_index_search_inspection_and_lsp_preserve_source_bytes(
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
         log_dir=tmp_path / "logs",
-        mcp_internal_port=0,
     )
     daemon = SCSDaemon(settings)
     await daemon.start()

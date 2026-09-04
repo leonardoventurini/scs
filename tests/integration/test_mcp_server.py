@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import socket
 
 import pytest
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
 from mcp.server.fastmcp.exceptions import ToolError
 
-from scs.mcp.http import MCPHTTPServer
 from scs.mcp.inventory import MOVED_TO_SCS_TOOLS
 from scs.mcp.observability import ToolRecorder
 from scs.mcp.server import build_mcp
@@ -129,20 +125,6 @@ class RecordingGateway:
     ) -> dict[str, object]:
         self.calls.append((method, params))
         return ROUTE_OUTPUTS[method]
-
-
-@dataclass(slots=True)
-class StaticGateway:
-    """Return one exact SCSWire payload to exercise MCP output variants."""
-
-    response: dict[str, object]
-
-    async def call(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
-        assert method == "lsp.references"
-        del params
-        return self.response
 
 
 async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> None:
@@ -315,23 +297,13 @@ async def test_empty_repository_scope_is_rejected() -> None:
         )
 
 
-async def test_streamable_http_lists_exact_inventory_on_ephemeral_port() -> None:
-    server = MCPHTTPServer(build_mcp(RecordingGateway()), port=0)
-    await server.start()
-    host, port = server.address
-    try:
-        async with streamable_http_client(f"http://{host}:{port}/mcp") as streams:
-            read_stream, write_stream, _ = streams
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                tools = await session.list_tools()
-    finally:
-        await server.stop()
+async def test_mcp_application_lists_exact_inventory() -> None:
+    tools = await build_mcp(RecordingGateway()).list_tools()
 
-    assert {tool.name for tool in tools.tools} == MOVED_TO_SCS_TOOLS
-    assert len(tools.tools) == 10
-    assert all(tool.annotations is not None for tool in tools.tools)
-    for tool in tools.tools:
+    assert {tool.name for tool in tools} == MOVED_TO_SCS_TOOLS
+    assert len(tools) == 10
+    assert all(tool.annotations is not None for tool in tools)
+    for tool in tools:
         annotations = tool.annotations
         assert annotations is not None
         if tool.name in {"ingest_project", "ingest_files"}:
@@ -351,69 +323,12 @@ async def test_streamable_http_lists_exact_inventory_on_ephemeral_port() -> None
         if tool.name != "find_references":
             assert set(tool.outputSchema["properties"]) == EXPECTED_OUTPUT_FIELDS[tool.name]
         assert tool.outputSchema.get("additionalProperties") is not True
-    references = next(tool for tool in tools.tools if tool.name == "find_references")
+    references = next(tool for tool in tools if tool.name == "find_references")
     assert set(references.inputSchema["properties"]) == {"file_path", "line"}
     assert references.outputSchema is not None
     reference_result_schema = references.outputSchema["properties"]["result"]
     assert reference_result_schema.get("oneOf")
     assert reference_result_schema["discriminator"]["propertyName"] == "available"
-
-
-@pytest.mark.parametrize(
-    "response",
-    [
-        {
-            "available": True,
-            "source": "index",
-            "symbol": {"id": "symbol"},
-            "references": [{"id": "reference"}],
-        },
-        {
-            "available": False,
-            "source": "index",
-            "file_path": "/repo/missing.py",
-            "reason": "no indexed symbol exists at this position",
-            "language_server_configured": False,
-        },
-    ],
-)
-async def test_streamable_http_returns_both_reference_variants(
-    response: dict[str, object],
-    tmp_path,
-) -> None:
-    source = tmp_path / "module.py"
-    source.write_text("def referenced():\n    return 1\n", encoding="utf-8")
-    server = MCPHTTPServer(build_mcp(StaticGateway(response)), port=0)
-    await server.start()
-    host, port = server.address
-    try:
-        async with streamable_http_client(f"http://{host}:{port}/mcp") as streams:
-            read_stream, write_stream, _ = streams
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                result = await session.call_tool(
-                    "find_references", {"file_path": str(source), "line": 1}
-                )
-    finally:
-        await server.stop()
-
-    assert result.isError is False
-    assert result.structuredContent == {"result": response}
-
-
-async def test_http_server_fails_closed_when_port_is_occupied() -> None:
-    occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    occupied.bind(("127.0.0.1", 0))
-    occupied.listen()
-    port = occupied.getsockname()[1]
-    server = MCPHTTPServer(build_mcp(RecordingGateway()), port=port)
-
-    try:
-        with pytest.raises(RuntimeError, match="port is unavailable"):
-            await server.start()
-    finally:
-        occupied.close()
-
 
 async def test_observability_failure_is_fail_open() -> None:
     class BrokenRecorder(ToolRecorder):
