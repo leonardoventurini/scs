@@ -323,6 +323,17 @@ class SCSDaemon:
 
     async def _shutdown_after(self, delay: float, *, unattached: bool) -> None:
         await asyncio.sleep(delay)
+        jobs = self._jobs
+        if (
+            not unattached
+            and jobs is not None
+            and await asyncio.to_thread(jobs.has_active)
+        ):
+            # Keep the control plane observable while background work drains.
+            self._shutdown_task = asyncio.create_task(
+                self._shutdown_after(CLIENT_HANDOFF_SECONDS, unattached=False)
+            )
+            return
         if not unattached or not self._ever_attached:
             self.request_shutdown()
 

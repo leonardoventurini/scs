@@ -27,6 +27,7 @@ IngestionJobStatus = Literal[
 ]
 
 ACTIVE_QUEUE_STATUSES = ("queued", "retrying")
+ACTIVE_JOB_STATUSES = (*ACTIVE_QUEUE_STATUSES, "running", "cancelling")
 SQLITE_DATABASE_FAMILY_SUFFIXES = ("", "-wal", "-shm")
 SQLITE_CORRUPTION_MESSAGE_FRAGMENTS = (
     "database disk image is malformed",
@@ -921,6 +922,20 @@ class IngestionJobStore:
                 ).fetchall(),
             )
         return [self._row_to_job(row) for row in rows]
+
+    def has_active(self) -> bool:
+        """Return whether durable work still requires a live daemon."""
+
+        placeholders = ", ".join("?" for _ in ACTIVE_JOB_STATUSES)
+        with closing(self._connect()) as conn, conn:
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    f"SELECT 1 FROM ingestion_jobs WHERE status IN ({placeholders}) LIMIT 1",
+                    ACTIVE_JOB_STATUSES,
+                ).fetchone(),
+            )
+        return row is not None
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30, isolation_level=None)

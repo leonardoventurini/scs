@@ -20,6 +20,20 @@ def test_queue_replays_stale_running_job(tmp_path: Path) -> None:
     assert store.claim_next(lease_owner="new") is not None
 
 
+def test_active_work_tracks_nonterminal_queue_states(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    queued = store.enqueue(repo_path="/repo", mode="full", reason="explicit")
+
+    assert store.has_active() is True
+    claimed = store.claim_next(lease_owner="worker")
+    assert claimed is not None
+    assert store.has_active() is True
+
+    store.complete(queued.id)
+
+    assert store.has_active() is False
+
+
 def test_queue_merges_incremental_paths(tmp_path: Path) -> None:
     store = IngestionJobStore(tmp_path / "jobs.db")
     first = store.enqueue(

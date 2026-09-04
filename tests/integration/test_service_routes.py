@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from scs.config import SCSSettings
+from scs.indexing.jobs import IngestionJobStore
 from scs.main import SCSDaemon
 from scs.providers.base import ProviderMetadata, ProviderUnavailableError
 from scs.wire.client import SCSClient, SCSConnection
@@ -298,3 +300,44 @@ async def test_final_attached_client_requests_daemon_shutdown(tmp_path: Path) ->
     await connection.close()
     await asyncio.wait_for(daemon.wait_for_shutdown_request(), timeout=2)
     await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_final_client_defers_shutdown_until_durable_jobs_are_idle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long indexing remains observable after its submitting client exits."""
+
+    class ActiveThenIdleJobs:
+        def __init__(self) -> None:
+            self.checks = 0
+
+        def has_active(self) -> bool:
+            self.checks += 1
+            return self.checks == 1
+
+    runtime = Path(tempfile.mkdtemp(prefix="scs-active-job-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+    )
+    monkeypatch.setattr("scs.main.CLIENT_HANDOFF_SECONDS", 0.01)
+    daemon = SCSDaemon(settings)
+    await daemon.start()
+    jobs = ActiveThenIdleJobs()
+    daemon._jobs = cast(IngestionJobStore, jobs)
+    connection = SCSConnection(runtime / "scs.sock")
+    await connection.connect()
+
+    try:
+        await connection.close()
+        await asyncio.wait_for(daemon.wait_for_shutdown_request(), timeout=1)
+
+        assert jobs.checks >= 2
+        assert (runtime / "scs.sock").exists()
+    finally:
+        await daemon.stop()
