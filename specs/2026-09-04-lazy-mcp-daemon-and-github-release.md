@@ -142,4 +142,4 @@ socket/identity artifacts, never `SCS_HOME` or logs.
 - [x] Implement pinned GitHub CI and release workflows.
 - [x] Update public and operational documentation.
 - [x] Run full verification and record the architecture decision.
-- [ ] Push both code and release configuration and validate GitHub CI.
+- [x] Push both code and release configuration and validate GitHub CI.

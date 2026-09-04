@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-09-04
+
 - feat: route all SCS graph and embedding persistence through TSG 0.2
 - feat: replace launchd and TCP MCP services with lazy per-harness stdio bridges
 - feat: package SCS as one native wheel with a verified cross-platform installer
