@@ -17,7 +17,7 @@ use crate::vector_index::VectorIndex;
 use crate::PoolResultExt;
 
 /// Per-repo ingestion statistics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IngestionStats {
     pub file_count: i64,
     pub last_indexed: String,
@@ -30,7 +30,7 @@ pub struct IngestionStats {
 /// atomically persist every record in a completed batch through
 /// [`acknowledge_ingested_files_batch`]. A stored hash is therefore the
 /// durable checkpoint that makes the file eligible to skip on retry.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct IngestedFileRecord {
     pub file_id: String,
     pub repo_path: String,

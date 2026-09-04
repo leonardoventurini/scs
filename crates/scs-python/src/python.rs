@@ -681,8 +681,7 @@ impl PyKnowledgeGraph {
         let nodes: Vec<scs_store::batch::BatchNode> =
             serde_json::from_str(nodes_json).map_err(json_err)?;
 
-        let pool = self.inner.pool();
-        py.allow_threads(|| scs_store::batch::batch_upsert_nodes(pool, &nodes))
+        py.allow_threads(|| self.inner.batch_upsert_nodes(&nodes))
             .map_err(scs_err)
     }
 
@@ -694,8 +693,7 @@ impl PyKnowledgeGraph {
         let pairs: Vec<(String, Vec<f32>)> =
             serde_json::from_str(embeddings_json).map_err(json_err)?;
 
-        let vector_index = self.inner.vector_index();
-        py.allow_threads(|| scs_store::batch::batch_upsert_embeddings(vector_index, &pairs))
+        py.allow_threads(|| self.inner.batch_upsert_embeddings(&pairs))
             .map_err(scs_err)
     }
 
@@ -727,8 +725,7 @@ impl PyKnowledgeGraph {
         let edges: Vec<scs_store::batch::BatchEdge> =
             serde_json::from_str(edges_json).map_err(json_err)?;
 
-        let pool = self.inner.pool();
-        py.allow_threads(|| scs_store::batch::batch_upsert_edges(pool, &edges))
+        py.allow_threads(|| self.inner.batch_upsert_edges(&edges))
             .map_err(scs_err)
     }
 
@@ -741,11 +738,8 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<Option<String>> {
-        let pool = self.inner.pool();
-        py.allow_threads(|| {
-            scs_store::ingestion_files::get_ingested_file_hash(pool, repo_path, rel_path)
-        })
-        .map_err(scs_err)
+        py.allow_threads(|| self.inner.get_ingested_file_hash(repo_path, rel_path))
+            .map_err(scs_err)
     }
 
     /// Record or update a file's ingestion metadata.
@@ -760,10 +754,8 @@ impl PyKnowledgeGraph {
         content_hash: &str,
         byte_size: i64,
     ) -> PyResult<()> {
-        let pool = self.inner.pool();
         py.allow_threads(|| {
-            scs_store::ingestion_files::upsert_ingested_file(
-                pool,
+            self.inner.upsert_ingested_file(
                 file_id,
                 repo_path,
                 rel_path,
@@ -787,18 +779,14 @@ impl PyKnowledgeGraph {
     ) -> PyResult<usize> {
         let records: Vec<scs_store::ingestion_files::IngestedFileRecord> =
             serde_json::from_str(records_json).map_err(json_err)?;
-        let pool = self.inner.pool();
-        py.allow_threads(|| {
-            scs_store::ingestion_files::acknowledge_ingested_files_batch(pool, &records)
-        })
-        .map_err(scs_err)
+        py.allow_threads(|| self.inner.acknowledge_ingested_files_batch(&records))
+            .map_err(scs_err)
     }
 
     /// Get all ingested file paths and hashes for a repo. Returns JSON object string.
     fn get_all_ingested_files(&self, py: Python<'_>, repo_path: &str) -> PyResult<PyObject> {
-        let pool = self.inner.pool();
         let files = py
-            .allow_threads(|| scs_store::ingestion_files::get_all_ingested_files(pool, repo_path))
+            .allow_threads(|| self.inner.get_all_ingested_files(repo_path))
             .map_err(scs_err)?;
 
         to_json_pyobject(py, &files)
@@ -809,9 +797,8 @@ impl PyKnowledgeGraph {
     /// GIL released during the query so stats polling doesn't block during
     /// heavy background embedding generation.
     fn get_ingestion_stats(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let pool = self.inner.pool();
         let stats = py
-            .allow_threads(|| scs_store::ingestion_files::get_ingestion_stats(pool))
+            .allow_threads(|| self.inner.get_ingestion_stats())
             .map_err(scs_err)?;
 
         // Convert IngestionStats to a JSON-friendly format matching Python's API.
@@ -844,17 +831,8 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<()> {
-        let pool = self.inner.pool();
-        let vector_index = self.inner.vector_index();
-        py.allow_threads(|| {
-            scs_store::ingestion_files::delete_ingested_file(
-                pool,
-                vector_index,
-                repo_path,
-                rel_path,
-            )
-        })
-        .map_err(scs_err)
+        py.allow_threads(|| self.inner.delete_ingested_file(repo_path, rel_path))
+            .map_err(scs_err)
     }
 
     /// Remove only the ingested_files tracking record, not the nodes.
@@ -867,11 +845,8 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<()> {
-        let pool = self.inner.pool();
-        py.allow_threads(|| {
-            scs_store::ingestion_files::delete_ingestion_record(pool, repo_path, rel_path)
-        })
-        .map_err(scs_err)
+        py.allow_threads(|| self.inner.delete_ingestion_record(repo_path, rel_path))
+            .map_err(scs_err)
     }
 
     /// Transactionally remove the ingestion records for a completed deletion batch.
@@ -885,9 +860,9 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_paths: Vec<String>,
     ) -> PyResult<usize> {
-        let pool = self.inner.pool();
         py.allow_threads(|| {
-            scs_store::ingestion_files::delete_ingestion_records_batch(pool, repo_path, &rel_paths)
+            self.inner
+                .delete_ingestion_records_batch(repo_path, &rel_paths)
         })
         .map_err(scs_err)
     }
@@ -902,17 +877,8 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<usize> {
-        let pool = self.inner.pool();
-        let vector_index = self.inner.vector_index();
-        py.allow_threads(|| {
-            scs_store::ingestion_files::remove_file_graph_and_vector(
-                pool,
-                vector_index,
-                repo_path,
-                rel_path,
-            )
-        })
-        .map_err(scs_err)
+        py.allow_threads(|| self.inner.remove_file_graph_and_vector(repo_path, rel_path))
+            .map_err(scs_err)
     }
 
     /// Collect all node IDs that were ingested from a specific source file.
@@ -926,11 +892,8 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<Vec<String>> {
-        let pool = self.inner.pool();
-        py.allow_threads(|| {
-            scs_store::ingestion_files::get_node_ids_for_file(pool, repo_path, rel_path)
-        })
-        .map_err(scs_err)
+        py.allow_threads(|| self.inner.get_node_ids_for_file(repo_path, rel_path))
+            .map_err(scs_err)
     }
 
     /// Return every source file path currently represented by nodes for a repo.
@@ -938,8 +901,7 @@ impl PyKnowledgeGraph {
     /// Reads from graph nodes rather than ingestion tracking so callers can
     /// find orphaned file-scoped nodes after `clear_ingestion_hashes`.
     fn get_file_paths_for_repo(&self, py: Python<'_>, repo_path: &str) -> PyResult<Vec<String>> {
-        let pool = self.inner.pool();
-        py.allow_threads(|| scs_store::ingestion_files::get_file_paths_for_repo(pool, repo_path))
+        py.allow_threads(|| self.inner.get_file_paths_for_repo(repo_path))
             .map_err(scs_err)
     }
 
@@ -949,10 +911,8 @@ impl PyKnowledgeGraph {
     /// Returns a JSON object with `files_removed`, `nodes_removed`, and
     /// `embeddings_removed` counts so the UI can confirm the operation scope.
     fn delete_repo(&self, py: Python<'_>, repo_path: &str) -> PyResult<PyObject> {
-        let pool = self.inner.pool();
-        let vi = self.inner.vector_index();
         let result = py
-            .allow_threads(|| scs_store::ingestion_files::delete_repo(pool, vi, repo_path))
+            .allow_threads(|| self.inner.delete_repo(repo_path))
             .map_err(scs_err)?;
         to_json_pyobject(py, &result)
     }
