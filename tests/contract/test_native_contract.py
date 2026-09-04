@@ -162,7 +162,7 @@ def test_rust_ffi_storage_and_parser_calls_release_the_gil() -> None:
             marker in body
             for marker in ("self.inner.", "scs_store::", "RustKnowledgeGraph::", "parser.parse(")
         )
-        if calls_native_work and "allow_threads" not in body:
+        if calls_native_work and "detach" not in body:
             violations.append(name)
 
     assert violations == []

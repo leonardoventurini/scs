@@ -16,10 +16,10 @@ repository = "https://github.com/leonardoventurini/scs"
 
 [workspace.dependencies]
 # Internal crates
-scs-core = { path = "crates/scs-core" }
-scs-store = { path = "crates/scs-store" }
-scs-parser = { path = "crates/scs-parser" }
-tsg = { git = "https://github.com/leonardoventurini/tsg.git", tag = "v0.2.0" }
+scs-core = { version = "0.1.0", path = "crates/scs-core" }
+scs-store = { version = "0.1.0", path = "crates/scs-store" }
+scs-parser = { version = "0.1.0", path = "crates/scs-parser" }
+tsg = { version = "0.2.0", git = "https://github.com/leonardoventurini/tsg.git", tag = "v0.2.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -55,7 +55,7 @@ tree-sitter-bash = "0.25"
 tree-sitter-css = "0.25"
 
 # FFI
-pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 
 # Testing
 tempfile = "3"

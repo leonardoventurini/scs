@@ -6,6 +6,8 @@
 - feat: replace launchd and TCP MCP services with lazy per-harness stdio bridges
 - feat: package SCS as one native wheel with a verified cross-platform installer
 - ci: add stable GitHub Releases with checksums, SBOMs, and attestations
+- security: upgrade PyO3 to 0.29.2 and refresh yanked WebAssembly transitive locks
+- ci: install the pinned task runner and enforce a clean RustSec audit
 
 ## 2026-08-27
 

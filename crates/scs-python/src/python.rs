@@ -68,11 +68,11 @@ fn py_to_json(obj: &Bound<'_, pyo3::types::PyAny>) -> serde_json::Value {
             Err(_) => serde_json::Value::Null,
         }
     } else if obj.is_instance_of::<PyList>() {
-        let list = obj.downcast::<PyList>().unwrap();
+        let list = obj.cast::<PyList>().unwrap();
         let arr: Vec<serde_json::Value> = list.iter().map(|item| py_to_json(&item)).collect();
         serde_json::Value::Array(arr)
     } else if obj.is_instance_of::<PyDict>() {
-        let dict = obj.downcast::<PyDict>().unwrap();
+        let dict = obj.cast::<PyDict>().unwrap();
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             if let Ok(key) = k.extract::<String>() {
@@ -138,11 +138,11 @@ fn parse_traversal_direction(s: &str) -> TraversalDirection {
     }
 }
 
-/// Serialize a value to a JSON string and wrap it in a `PyObject`.
+/// Serialize a value to a JSON string and wrap it in a Python object.
 ///
 /// Uses `IntoPyObject` (PyO3 0.23+) instead of the deprecated `into_py`.
 #[cfg(feature = "python")]
-fn to_json_pyobject<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
+fn to_json_pyobject<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<Py<PyAny>> {
     let json = serde_json::to_string(value).map_err(json_err)?;
     Ok(json.into_pyobject(py)?.into_any().unbind())
 }
@@ -185,7 +185,7 @@ impl PyKnowledgeGraph {
         };
 
         let graph = py
-            .allow_threads(|| RustKnowledgeGraph::open(config))
+            .detach(|| RustKnowledgeGraph::open(config))
             .map_err(scs_err)?;
         Ok(Self { inner: graph })
     }
@@ -198,7 +198,7 @@ impl PyKnowledgeGraph {
     /// Used by the ingestion pipeline to obtain the FK for new nodes.
     fn get_or_create_repo(&self, py: Python<'_>, path: &str) -> PyResult<i64> {
         let repo = py
-            .allow_threads(|| self.inner.get_or_create_repo(path))
+            .detach(|| self.inner.get_or_create_repo(path))
             .map_err(scs_err)?;
         Ok(repo.id)
     }
@@ -208,7 +208,7 @@ impl PyKnowledgeGraph {
     /// Read-only — doesn't create a new repo record. Used by search
     /// methods to resolve a user-provided path to a `repo_id` filter.
     fn resolve_repo_id(&self, py: Python<'_>, path: &str) -> PyResult<Option<i64>> {
-        py.allow_threads(|| self.inner.resolve_repo_id(path))
+        py.detach(|| self.inner.resolve_repo_id(path))
             .map_err(scs_err)
     }
 
@@ -222,7 +222,7 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         qualified_name: &str,
     ) -> PyResult<Option<String>> {
-        py.allow_threads(|| {
+        py.detach(|| {
             self.inner
                 .resolve_node_id_by_qualified_name(repo_path, qualified_name)
         })
@@ -234,7 +234,7 @@ impl PyKnowledgeGraph {
     /// Reverse of `resolve_repo_id` — used to surface repo paths in the
     /// frontend from the integer FK stored on nodes.
     fn resolve_repo_path(&self, py: Python<'_>, repo_id: i64) -> PyResult<Option<String>> {
-        py.allow_threads(|| self.inner.resolve_repo_path(repo_id))
+        py.detach(|| self.inner.resolve_repo_path(repo_id))
             .map_err(scs_err)
     }
 
@@ -243,9 +243,9 @@ impl PyKnowledgeGraph {
     /// Used by the git history ingester to resolve MODIFIES edges without
     /// relying on hash-based ID generation (which historically mismatched
     /// the code pipeline's scheme). A single query replaces N per-file lookups.
-    fn get_file_node_map(&self, py: Python<'_>, repo_id: i64) -> PyResult<PyObject> {
+    fn get_file_node_map(&self, py: Python<'_>, repo_id: i64) -> PyResult<Py<PyAny>> {
         let map = py
-            .allow_threads(|| self.inner.get_file_node_map(repo_id))
+            .detach(|| self.inner.get_file_node_map(repo_id))
             .map_err(scs_err)?;
         let json = serde_json::to_string(&map).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization error: {e}"))
@@ -268,7 +268,7 @@ impl PyKnowledgeGraph {
         metadata: Option<&Bound<'_, PyDict>>,
         embedding: Option<Vec<f32>>,
         repo_id: Option<i64>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let nt: NodeType = node_type.parse().map_err(|_| {
             pyo3::exceptions::PyValueError::new_err(format!("invalid node type: {node_type}"))
         })?;
@@ -277,7 +277,7 @@ impl PyKnowledgeGraph {
         let emb_ref = embedding.as_deref();
 
         let node = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner
                     .upsert_node(node_id, nt, name, content, meta.as_ref(), emb_ref, repo_id)
             })
@@ -289,9 +289,9 @@ impl PyKnowledgeGraph {
     /// Get a node by ID. Returns JSON string or None.
     ///
     /// GIL released during the query.
-    fn get_node(&self, py: Python<'_>, node_id: &str) -> PyResult<Option<PyObject>> {
+    fn get_node(&self, py: Python<'_>, node_id: &str) -> PyResult<Option<Py<PyAny>>> {
         let node = py
-            .allow_threads(|| self.inner.get_node(node_id))
+            .detach(|| self.inner.get_node(node_id))
             .map_err(scs_err)?;
         match node {
             Some(n) => Ok(Some(to_json_pyobject(py, &n)?)),
@@ -301,7 +301,7 @@ impl PyKnowledgeGraph {
 
     /// Delete a node and its edges/embedding. Returns whether it existed.
     fn delete_node(&self, py: Python<'_>, node_id: &str) -> PyResult<bool> {
-        py.allow_threads(|| self.inner.delete_node(node_id))
+        py.detach(|| self.inner.delete_node(node_id))
             .map_err(scs_err)
     }
 
@@ -319,7 +319,7 @@ impl PyKnowledgeGraph {
         let nt: NodeType = node_type.parse().map_err(|_| {
             pyo3::exceptions::PyValueError::new_err(format!("unknown node type: {node_type}"))
         })?;
-        py.allow_threads(|| {
+        py.detach(|| {
             self.inner
                 .delete_nodes_by_metadata(&nt, metadata_key, metadata_value)
         })
@@ -338,10 +338,10 @@ impl PyKnowledgeGraph {
         limit: i64,
         offset: i64,
         repo_id: Option<i64>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let nt: Option<NodeType> = node_type.and_then(|t| t.parse().ok());
         let nodes = py
-            .allow_threads(|| self.inner.list_nodes(nt, limit, offset, repo_id))
+            .detach(|| self.inner.list_nodes(nt, limit, offset, repo_id))
             .map_err(scs_err)?;
         to_json_pyobject(py, &nodes)
     }
@@ -359,7 +359,7 @@ impl PyKnowledgeGraph {
         repo_id: Option<i64>,
     ) -> PyResult<i64> {
         let nt: Option<NodeType> = node_type.and_then(|t| t.parse().ok());
-        py.allow_threads(|| self.inner.count_nodes(nt, repo_id))
+        py.detach(|| self.inner.count_nodes(nt, repo_id))
             .map_err(scs_err)
     }
 
@@ -379,15 +379,14 @@ impl PyKnowledgeGraph {
     #[pyo3(signature = (repo_id=None))]
     fn count_nodes_by_type(&self, py: Python<'_>, repo_id: Option<i64>) -> PyResult<String> {
         let counts = py
-            .allow_threads(|| self.inner.count_nodes_by_type(repo_id))
+            .detach(|| self.inner.count_nodes_by_type(repo_id))
             .map_err(scs_err)?;
         serde_json::to_string(&counts).map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Count embedding vectors stored in the graph.
     fn count_embeddings(&self, py: Python<'_>) -> PyResult<i64> {
-        py.allow_threads(|| self.inner.count_embeddings())
-            .map_err(scs_err)
+        py.detach(|| self.inner.count_embeddings()).map_err(scs_err)
     }
 
     /// Return recent storage operation observability events and summaries.
@@ -399,20 +398,20 @@ impl PyKnowledgeGraph {
         backend: Option<&str>,
         min_duration_ms: Option<f64>,
         status: Option<&str>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let filter = scs_store::observability::QuerySnapshotFilter {
             limit: Some(limit),
             backend: backend.and_then(|value| value.parse().ok()),
             min_duration_ms,
             status: status.and_then(|value| value.parse().ok()),
         };
-        let snapshot = py.allow_threads(|| scs_store::observability::snapshot(filter));
+        let snapshot = py.detach(|| scs_store::observability::snapshot(filter));
         to_json_pyobject(py, &snapshot)
     }
 
     /// Clear retained storage operation observability events.
     fn clear_query_observability(&self, py: Python<'_>) -> PyResult<()> {
-        py.allow_threads(scs_store::observability::clear);
+        py.detach(scs_store::observability::clear);
         Ok(())
     }
 
@@ -429,10 +428,10 @@ impl PyKnowledgeGraph {
         limit: i64,
         offset: i64,
         repo_id: Option<i64>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let nt: Option<NodeType> = node_type.and_then(|t| t.parse().ok());
         let nodes = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner
                     .list_nodes_without_embeddings(nt, limit, offset, repo_id)
             })
@@ -451,7 +450,7 @@ impl PyKnowledgeGraph {
         repo_id: Option<i64>,
     ) -> PyResult<i64> {
         let nt: Option<NodeType> = node_type.and_then(|t| t.parse().ok());
-        py.allow_threads(|| self.inner.count_nodes_without_embeddings(nt, repo_id))
+        py.detach(|| self.inner.count_nodes_without_embeddings(nt, repo_id))
             .map_err(scs_err)
     }
 
@@ -465,10 +464,10 @@ impl PyKnowledgeGraph {
         node_type: Option<&str>,
         limit: i64,
         repo_id: Option<i64>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let nt: Option<NodeType> = node_type.and_then(|t| t.parse().ok());
         let nodes = py
-            .allow_threads(|| self.inner.search_by_name(name, nt, limit, repo_id))
+            .detach(|| self.inner.search_by_name(name, nt, limit, repo_id))
             .map_err(scs_err)?;
         to_json_pyobject(py, &nodes)
     }
@@ -487,7 +486,7 @@ impl PyKnowledgeGraph {
         relationship: &str,
         weight: f64,
         metadata: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let relationship: RelationshipType = relationship.parse().map_err(|_| {
             pyo3::exceptions::PyValueError::new_err(format!(
                 "invalid relationship type: {relationship}"
@@ -496,7 +495,7 @@ impl PyKnowledgeGraph {
         let relationship = relationship.to_string();
         let meta = metadata.map(pydict_to_hashmap);
         let edge = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner
                     .upsert_edge(source_id, target_id, &relationship, weight, meta.as_ref())
             })
@@ -513,11 +512,11 @@ impl PyKnowledgeGraph {
         node_id: &str,
         relationship: Option<&str>,
         direction: &str,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let dir = parse_edge_direction(direction);
 
         let edges = py
-            .allow_threads(|| self.inner.get_edges(node_id, relationship, dir))
+            .detach(|| self.inner.get_edges(node_id, relationship, dir))
             .map_err(scs_err)?;
 
         to_json_pyobject(py, &edges)
@@ -534,11 +533,11 @@ impl PyKnowledgeGraph {
         py: Python<'_>,
         node_ids: Vec<String>,
         direction: &str,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let dir = parse_edge_direction(direction);
 
         let result = py
-            .allow_threads(|| self.inner.batch_get_edges(&node_ids, dir))
+            .detach(|| self.inner.batch_get_edges(&node_ids, dir))
             .map_err(scs_err)?;
 
         to_json_pyobject(py, &result)
@@ -546,7 +545,7 @@ impl PyKnowledgeGraph {
 
     /// Delete an edge by ID. Returns whether it existed.
     fn delete_edge(&self, py: Python<'_>, edge_id: &str) -> PyResult<bool> {
-        py.allow_threads(|| self.inner.delete_edge(edge_id))
+        py.detach(|| self.inner.delete_edge(edge_id))
             .map_err(scs_err)
     }
 
@@ -562,11 +561,11 @@ impl PyKnowledgeGraph {
         node_type: Option<&str>,
         limit: i64,
         repo_id: Option<i64>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let nt: Option<NodeType> = node_type.and_then(|t| t.parse().ok());
         // Release the GIL because ANN work scales with the active index.
         let results = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner
                     .search_by_vector(&query_embedding, nt, limit, repo_id)
             })
@@ -586,11 +585,11 @@ impl PyKnowledgeGraph {
         relationship: Option<&str>,
         direction: &str,
         limit: i64,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let dir = parse_edge_direction(direction);
 
         let nodes = py
-            .allow_threads(|| self.inner.get_neighbors(node_id, relationship, dir, limit))
+            .detach(|| self.inner.get_neighbors(node_id, relationship, dir, limit))
             .map_err(scs_err)?;
 
         to_json_pyobject(py, &nodes)
@@ -605,14 +604,14 @@ impl PyKnowledgeGraph {
         max_depth: i32,
         relationship: Option<&str>,
         direction: &str,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let dir = parse_traversal_direction(direction);
         // Release the GIL: recursive traversal can visit many nodes across
         // multiple SQL queries (depth * fan-out). MCP graph_context and
         // get_related calls hold this for 50–500ms on large graphs, blocking
         // the dictation thread pool.
         let results = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner
                     .traverse(start_node_id, max_depth, relationship, dir)
             })
@@ -636,7 +635,7 @@ impl PyKnowledgeGraph {
         hop_limit: i32,
         relationship: Option<&str>,
         repo_id: Option<i64>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let nt: Option<NodeType> = node_type.and_then(|t| t.parse().ok());
 
         // Release the GIL: graph_rag_query combines vector search with
@@ -644,7 +643,7 @@ impl PyKnowledgeGraph {
         // in the MCP plugin. Can run 200ms–2s on large graphs while holding the
         // GIL, completely blocking the dictation personalization step.
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.graph_rag_query(
                     &query_embedding,
                     nt,
@@ -665,9 +664,9 @@ impl PyKnowledgeGraph {
     ///
     /// Replaces N individual `get_node` calls with one SQL IN-clause query,
     /// eliminating per-node FFI round-trips in performance-critical handlers.
-    fn batch_get_nodes(&self, py: Python<'_>, node_ids: Vec<String>) -> PyResult<PyObject> {
+    fn batch_get_nodes(&self, py: Python<'_>, node_ids: Vec<String>) -> PyResult<Py<PyAny>> {
         let nodes = py
-            .allow_threads(|| self.inner.batch_get_nodes(&node_ids))
+            .detach(|| self.inner.batch_get_nodes(&node_ids))
             .map_err(scs_err)?;
         to_json_pyobject(py, &nodes)
     }
@@ -681,7 +680,7 @@ impl PyKnowledgeGraph {
         let nodes: Vec<scs_store::batch::BatchNode> =
             serde_json::from_str(nodes_json).map_err(json_err)?;
 
-        py.allow_threads(|| self.inner.batch_upsert_nodes(&nodes))
+        py.detach(|| self.inner.batch_upsert_nodes(&nodes))
             .map_err(scs_err)
     }
 
@@ -693,7 +692,7 @@ impl PyKnowledgeGraph {
         let pairs: Vec<(String, Vec<f32>)> =
             serde_json::from_str(embeddings_json).map_err(json_err)?;
 
-        py.allow_threads(|| self.inner.batch_upsert_embeddings(&pairs))
+        py.detach(|| self.inner.batch_upsert_embeddings(&pairs))
             .map_err(scs_err)
     }
 
@@ -701,19 +700,19 @@ impl PyKnowledgeGraph {
     ///
     /// The GIL is released because a dirty flush rewrites the full sidecar.
     fn flush_vector_index(&self, py: Python<'_>) -> PyResult<bool> {
-        py.allow_threads(|| self.inner.flush_vector_index())
+        py.detach(|| self.inner.flush_vector_index())
             .map_err(scs_err)
     }
 
     /// Reopen the durable sidecar and confirm all requested vectors survived.
     fn reopened_vectors_contain(&self, py: Python<'_>, node_ids: Vec<String>) -> PyResult<bool> {
-        py.allow_threads(|| self.inner.reopened_vectors_contain(&node_ids))
+        py.detach(|| self.inner.reopened_vectors_contain(&node_ids))
             .map_err(scs_err)
     }
 
     /// Reopen the durable sidecar and confirm all requested vectors are absent.
     fn reopened_vectors_absent(&self, py: Python<'_>, node_ids: Vec<String>) -> PyResult<bool> {
-        py.allow_threads(|| self.inner.reopened_vectors_absent(&node_ids))
+        py.detach(|| self.inner.reopened_vectors_absent(&node_ids))
             .map_err(scs_err)
     }
 
@@ -725,7 +724,7 @@ impl PyKnowledgeGraph {
         let edges: Vec<scs_store::batch::BatchEdge> =
             serde_json::from_str(edges_json).map_err(json_err)?;
 
-        py.allow_threads(|| self.inner.batch_upsert_edges(&edges))
+        py.detach(|| self.inner.batch_upsert_edges(&edges))
             .map_err(scs_err)
     }
 
@@ -738,7 +737,7 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<Option<String>> {
-        py.allow_threads(|| self.inner.get_ingested_file_hash(repo_path, rel_path))
+        py.detach(|| self.inner.get_ingested_file_hash(repo_path, rel_path))
             .map_err(scs_err)
     }
 
@@ -754,7 +753,7 @@ impl PyKnowledgeGraph {
         content_hash: &str,
         byte_size: i64,
     ) -> PyResult<()> {
-        py.allow_threads(|| {
+        py.detach(|| {
             self.inner.upsert_ingested_file(
                 file_id,
                 repo_path,
@@ -779,14 +778,14 @@ impl PyKnowledgeGraph {
     ) -> PyResult<usize> {
         let records: Vec<scs_store::ingestion_files::IngestedFileRecord> =
             serde_json::from_str(records_json).map_err(json_err)?;
-        py.allow_threads(|| self.inner.acknowledge_ingested_files_batch(&records))
+        py.detach(|| self.inner.acknowledge_ingested_files_batch(&records))
             .map_err(scs_err)
     }
 
     /// Get all ingested file paths and hashes for a repo. Returns JSON object string.
-    fn get_all_ingested_files(&self, py: Python<'_>, repo_path: &str) -> PyResult<PyObject> {
+    fn get_all_ingested_files(&self, py: Python<'_>, repo_path: &str) -> PyResult<Py<PyAny>> {
         let files = py
-            .allow_threads(|| self.inner.get_all_ingested_files(repo_path))
+            .detach(|| self.inner.get_all_ingested_files(repo_path))
             .map_err(scs_err)?;
 
         to_json_pyobject(py, &files)
@@ -796,9 +795,9 @@ impl PyKnowledgeGraph {
     ///
     /// GIL released during the query so stats polling doesn't block during
     /// heavy background embedding generation.
-    fn get_ingestion_stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn get_ingestion_stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let stats = py
-            .allow_threads(|| self.inner.get_ingestion_stats())
+            .detach(|| self.inner.get_ingestion_stats())
             .map_err(scs_err)?;
 
         // Convert IngestionStats to a JSON-friendly format matching Python's API.
@@ -830,7 +829,7 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<()> {
-        py.allow_threads(|| self.inner.delete_ingested_file(repo_path, rel_path))
+        py.detach(|| self.inner.delete_ingested_file(repo_path, rel_path))
             .map_err(scs_err)
     }
 
@@ -844,7 +843,7 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<()> {
-        py.allow_threads(|| self.inner.delete_ingestion_record(repo_path, rel_path))
+        py.detach(|| self.inner.delete_ingestion_record(repo_path, rel_path))
             .map_err(scs_err)
     }
 
@@ -859,7 +858,7 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_paths: Vec<String>,
     ) -> PyResult<usize> {
-        py.allow_threads(|| {
+        py.detach(|| {
             self.inner
                 .delete_ingestion_records_batch(repo_path, &rel_paths)
         })
@@ -876,7 +875,7 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<usize> {
-        py.allow_threads(|| self.inner.remove_file_graph_and_vector(repo_path, rel_path))
+        py.detach(|| self.inner.remove_file_graph_and_vector(repo_path, rel_path))
             .map_err(scs_err)
     }
 
@@ -891,7 +890,7 @@ impl PyKnowledgeGraph {
         repo_path: &str,
         rel_path: &str,
     ) -> PyResult<Vec<String>> {
-        py.allow_threads(|| self.inner.get_node_ids_for_file(repo_path, rel_path))
+        py.detach(|| self.inner.get_node_ids_for_file(repo_path, rel_path))
             .map_err(scs_err)
     }
 
@@ -900,7 +899,7 @@ impl PyKnowledgeGraph {
     /// Reads from graph nodes rather than ingestion tracking so callers can
     /// find orphaned file-scoped nodes after `clear_ingestion_hashes`.
     fn get_file_paths_for_repo(&self, py: Python<'_>, repo_path: &str) -> PyResult<Vec<String>> {
-        py.allow_threads(|| self.inner.get_file_paths_for_repo(repo_path))
+        py.detach(|| self.inner.get_file_paths_for_repo(repo_path))
             .map_err(scs_err)
     }
 
@@ -909,9 +908,9 @@ impl PyKnowledgeGraph {
     /// Atomic bulk operation for the "Drop Repo Index" UI action.
     /// Returns a JSON object with `files_removed`, `nodes_removed`, and
     /// `embeddings_removed` counts so the UI can confirm the operation scope.
-    fn delete_repo(&self, py: Python<'_>, repo_path: &str) -> PyResult<PyObject> {
+    fn delete_repo(&self, py: Python<'_>, repo_path: &str) -> PyResult<Py<PyAny>> {
         let result = py
-            .allow_threads(|| self.inner.delete_repo(repo_path))
+            .detach(|| self.inner.delete_repo(repo_path))
             .map_err(scs_err)?;
         to_json_pyobject(py, &result)
     }
@@ -924,8 +923,8 @@ impl PyKnowledgeGraph {
     /// Returns a JSON object with `size_before` and `size_after` (bytes)
     /// so the UI can report how much space was reclaimed.
     /// GIL released — VACUUM can be slow on large databases.
-    fn vacuum(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let result = py.allow_threads(|| self.inner.vacuum()).map_err(scs_err)?;
+    fn vacuum(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let result = py.detach(|| self.inner.vacuum()).map_err(scs_err)?;
         to_json_pyobject(py, &result)
     }
 
@@ -934,7 +933,7 @@ impl PyKnowledgeGraph {
     /// Releases the GIL — safe for asyncio.to_thread callers.
     /// Returns the number of nodes that were deleted.
     fn truncate(&self, py: Python<'_>) -> PyResult<usize> {
-        py.allow_threads(|| self.inner.truncate()).map_err(scs_err)
+        py.detach(|| self.inner.truncate()).map_err(scs_err)
     }
 
     /// Clear all ingestion hash records so the next ingest re-processes every file.
@@ -942,7 +941,7 @@ impl PyKnowledgeGraph {
     /// Releases the GIL — safe for asyncio.to_thread callers.
     /// Returns the number of records cleared.
     fn clear_ingestion_hashes(&self, py: Python<'_>) -> PyResult<usize> {
-        py.allow_threads(|| self.inner.clear_ingestion_hashes())
+        py.detach(|| self.inner.clear_ingestion_hashes())
             .map_err(scs_err)
     }
 
@@ -951,8 +950,7 @@ impl PyKnowledgeGraph {
     /// Used when the embedding model changes but the dimension stays the same.
     /// Releases the GIL — safe for asyncio.to_thread callers.
     fn clear_embeddings(&self, py: Python<'_>) -> PyResult<()> {
-        py.allow_threads(|| self.inner.clear_embeddings())
-            .map_err(scs_err)
+        py.detach(|| self.inner.clear_embeddings()).map_err(scs_err)
     }
 }
 
@@ -968,7 +966,7 @@ impl PyKnowledgeGraph {
 /// threads are not blocked.
 #[cfg(feature = "python")]
 #[pyfunction]
-fn parse_file(py: Python<'_>, source: &str, file_path: &str) -> PyResult<Option<PyObject>> {
+fn parse_file(py: Python<'_>, source: &str, file_path: &str) -> PyResult<Option<Py<PyAny>>> {
     use scs_parser::parser::registry::get_parser;
 
     // Extract file extension.
@@ -982,7 +980,7 @@ fn parse_file(py: Python<'_>, source: &str, file_path: &str) -> PyResult<Option<
     // Release GIL during tree-sitter work.
     let source_owned = source.to_string();
     let file_path_owned = file_path.to_string();
-    let (entities, edges) = py.allow_threads(move || parser.parse(&source_owned, &file_path_owned));
+    let (entities, edges) = py.detach(move || parser.parse(&source_owned, &file_path_owned));
 
     let result = serde_json::json!({
         "entities": entities,

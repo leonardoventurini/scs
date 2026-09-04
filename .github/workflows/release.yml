@@ -26,6 +26,8 @@ jobs:
           python-version: "3.14"
       - name: Install Rust 1.98
         run: rustup toolchain install 1.98 --profile minimal --component clippy,rustfmt
+      - name: Install just 1.58.0
+        run: cargo install just --locked --version 1.58.0
       - name: Require release commit on main
         run: |
           git fetch origin main
