@@ -1,4 +1,4 @@
-set shell := ["zsh", "-cu"]
+set shell := ["sh", "-cu"]
 
 setup:
     uv sync --all-groups
