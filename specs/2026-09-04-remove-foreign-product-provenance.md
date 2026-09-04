@@ -69,9 +69,9 @@ the rewrite is proven incomplete or corrupt.
 - [x] Obsolete cross-repository scripts and records removed.
 - [x] Current-tree zero-reference audit passes.
 - [x] Targeted tests and `just verify` pass.
-- [ ] Every branch and tag is rewritten and force-pushed.
-- [ ] Fresh-clone current-tree and reachable-object audits pass.
-- [ ] Recovery bundle removed after successful remote validation.
+- [x] Every branch and tag is rewritten and force-pushed.
+- [x] Fresh-clone current-tree and reachable-object audits pass.
+- [x] Recovery bundle removed after successful remote validation.
 
 ## Verification
 
@@ -81,3 +81,15 @@ the rewrite is proven incomplete or corrupt.
 - Run path/config, empty-startup, isolation, and MCP contract tests first.
 - Run `just verify` before rewriting and again from a fresh clone afterward.
 - Compare local and remote branch/tag object IDs after the force-push.
+
+## Executed evidence
+
+- Rewrote 93 commits and force-updated `main`, `v0.1.0`, `v0.1.1`, and
+  `v0.1.2` on GitHub.
+- Current-tree, filename, reachable-object-path, commit-message, and per-revision
+  content scans all returned zero prohibited-name matches.
+- A fresh public clone resolved rewritten head `5941873`, repeated all history
+  audits successfully, and passed strict typing, Ruff, 199 Python tests with
+  83.99% coverage, and 98 Rust tests.
+- Removed the temporary replacement rules, fresh clone, and recovery bundle
+  only after remote validation passed.
