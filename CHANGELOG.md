@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- feat: route all SCS graph and embedding persistence through TSG 0.2
+- feat: replace launchd and TCP MCP services with lazy per-harness stdio bridges
+- feat: package SCS as one native wheel with a verified cross-platform installer
+- ci: add stable GitHub Releases with checksums, SBOMs, and attestations
+
 ## 2026-08-27
 
 - feat: use local OMLX for semantic code embeddings

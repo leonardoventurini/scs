@@ -8,6 +8,32 @@ SCS starts with an empty index. It does not migrate, inspect, or recreate any
 legacy External product graph data. Repositories are added only through an explicit CLI,
 MCP, or client request.
 
+## Install
+
+Stable releases support Apple Silicon macOS and x86-64 Linux with CPython
+3.14. Download the versioned installer and checksum manifest from the same
+[GitHub Release](https://github.com/leonardoventurini/scs/releases), verify the
+script, then run it:
+
+```bash
+VERSION=0.1.0
+curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/scs-installer-${VERSION}.sh"
+curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/SHA256SUMS"
+shasum -a 256 -c SHA256SUMS --ignore-missing
+sh "scs-installer-${VERSION}.sh"
+```
+
+On Linux, use `sha256sum -c SHA256SUMS --ignore-missing`. The installer pins
+the release, verifies its wheel and constraints, provisions a checksum-verified
+`uv` binary when necessary, and installs SCS without `sudo`. Current macOS
+artifacts are not Apple-signed or notarized; checksums and GitHub build
+provenance provide release integrity.
+
+Configure each MCP harness to run `/Users/you/.local/bin/scs mcp` (use the
+corresponding home path on Linux). Each harness owns a small stdio bridge. The
+first bridge starts the shared daemon, concurrent bridges reuse it, and closing
+the final bridge shuts it down cleanly.
+
 ## Storage architecture
 
 SCS uses [TSG](https://github.com/leonardoventurini/tsg) as its sole durable
@@ -43,9 +69,8 @@ Persistent configuration lives at `~/.scs/config.toml`. Explicit Python
 settings take precedence over environment variables, environment variables
 take precedence over TOML, and TOML takes precedence over defaults. The
 standard `OPENAI_API_KEY` environment variable overrides `openai_api_key` in
-the file. For a background launchd service, storing the key in the owner-only
-configuration file is more reliable than relying on an interactive shell
-environment.
+the file. Storing the key in the owner-only configuration file makes it
+available to lazily spawned daemon processes without placing it in MCP config.
 
 The unconfigured default is:
 
@@ -129,16 +154,15 @@ of occupying the model's tool catalog.
 
 ## Runtime ownership
 
-- `com.mentagen.scs.proxy` owns public MCP at `127.0.0.1:28463`, `mcp.json`,
-  and `proxy-service.json`.
-- `com.mentagen.scs.daemon` owns private MCP at `127.0.0.1:28465`, `scs.sock`,
-  and `daemon-service.json`.
+MCP uses stdio between each harness and its bridge, then SCSWire over one
+owner-only Unix socket between bridges and the daemon. No TCP port or platform
+service manager is required. A bootstrap lock serializes simultaneous first
+clients; the daemon independently holds the storage writer lock. Each bridge
+connection is its lease, so abrupt termination cannot leave an orphan lease.
 
-Runtime artifacts live under `~/Library/Application Support/SCS/`. Each
-service record contains its PID, start time, generation, artifact digest, and
-protocol range. Atomic publication and generation-checked cleanup let either
-process restart without deleting the survivor's artifacts. Persistent indexes
-live only under `SCS_HOME`; logs default to `~/Library/Logs/SCS/`.
+Runtime artifacts live under `~/Library/Application Support/SCS/` on macOS and
+`$XDG_RUNTIME_DIR/scs` on Linux, falling back to
+`~/.local/state/scs/runtime`. Persistent indexes live only under `SCS_HOME`.
 
 ## Development
 
@@ -147,29 +171,24 @@ just setup
 just verify
 ```
 
-`just setup` installs Python dependencies, builds the private `_scs_native`
+`just setup` installs Python dependencies, builds the private `scs._scs_native`
 extension, and installs the repository's pre-commit hook. The daemon can then
 be run directly with `scs serve`, while explicit repository enrollment uses
 `scs index <repo>` or `scs reindex <repo>`.
 
-Install and operate the independent user services with:
+Operate the lazy daemon explicitly when diagnosing it:
 
 ```bash
-scs service install
-scs service start
-scs service status
-scs service restart
-scs service stop
-scs service uninstall
+scs daemon start
+scs daemon status
+scs daemon restart
+scs daemon stop
+scs doctor
 ```
 
-`scs status` and `scs doctor` always emit JSON. A stopped daemon produces an
-explicit `daemon.available: false` payload and a nonzero exit code, while
-`scs status` still reports launchd registration state.
-
-Uninstall removes only service registrations and runtime ownership. It
-preserves `SCS_HOME` and every SCS-owned index. SCS never reads External product's legacy
-index and never enrolls repositories merely because External product knows about them.
+`scs status` is non-mutating. Commands that require the daemon start it lazily
+and hold a temporary lease. `uv tool uninstall scs` removes installed code but
+preserves `SCS_HOME`, configuration, indexes, and logs.
 
 ## Verification
 
@@ -177,8 +196,7 @@ index and never enrolls repositories merely because External product knows about
 branch coverage, and the Rust workspace. `just coverage` reports uncovered
 Python lines and enforces the committed risk-based floor. The pre-commit hook
 runs the same whole-source type gate.
-`cd proxy && uv run --all-groups pytest -v` verifies the separately packaged
-public proxy. Isolation gates cover exact MCP inventory, bounded frames,
-generation-safe cleanup, stale/live socket ownership, legacy sentinel
-preservation, External product-import denial, repository source fingerprints, and
-committed RSS/index/query budgets.
+Isolation gates cover exact stdio MCP inventory, multi-bridge daemon
+convergence, bounded frames, generation-safe cleanup, stale/live socket
+ownership, legacy sentinel preservation, External product-import denial, repository
+source fingerprints, and committed RSS/index/query budgets.

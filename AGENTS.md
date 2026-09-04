@@ -8,11 +8,10 @@ and the agent-facing MCP endpoint.
 
 - SCS has no UI, webview, dashboard, tray app, or settings screen.
 - SCS reads repository source but never mutates it.
-- Persistent state lives only under `SCS_HOME`; runtime sockets and discovery
-  live under `~/Library/Application Support/SCS`.
-- The proxy exclusively owns `mcp.json` and `proxy-service.json`; the daemon
-  exclusively owns `scs.sock` and `daemon-service.json`. Cleanup must match
-  service and generation and never touch the sibling process's artifacts.
+- Persistent state lives only under `SCS_HOME`; runtime sockets and identity
+  records use the platform runtime directory.
+- Per-harness MCP stdio bridges share one lazily spawned SCSWire daemon. Each
+  bridge connection is a lease; the final disconnect triggers clean shutdown.
 - SCS never reads, imports, copies, or derives state from External product `brain.db` or
   its sidecars. A new installation starts with an empty index.
 - External product is an optional client. SCS must build, test, start, index, search, and
@@ -24,7 +23,6 @@ and the agent-facing MCP endpoint.
   providers, CLI, and lifecycle management.
 - `crates/` — Rust code-only types, tree-sitter parsers, the SCS-to-TSG storage
   adapter, and `_scs_native` PyO3 bindings.
-- `proxy/` — always-on public MCP proxy owned by SCS.
 - `tests/contract/`, `tests/integration/`, `tests/isolation/` — public boundary
   and independence gates.
 
@@ -44,6 +42,8 @@ and the agent-facing MCP endpoint.
 - Long indexing work is durable/background work and reports typed progress.
 - A failed parse never records a successful ingestion hash.
 - Only one daemon writes an SCS data root.
+- Concurrent bridges must converge on one daemon generation without TCP ports
+  or platform service managers.
 - Unknown SCSWire fields are ignored; unsupported protocol ranges fail with a
   typed compatibility error.
 - SCSWire never unlinks a successfully connected live socket. Only a same-UID,
@@ -57,8 +57,7 @@ and the agent-facing MCP endpoint.
 - Use `uv` for Python dependency changes and `cargo` for Rust dependencies.
 - Every behavior change receives tests.
 - Run targeted tests first, then `just verify` before committing.
-- Run `cd proxy && uv run --all-groups pytest -v` for proxy changes. Preserve
-  `tests/performance/` ceilings unless measured evidence and an accepted
-  decision revise them.
+- Preserve `tests/performance/` ceilings unless measured evidence and an
+  accepted decision revise them.
 - Use semantic commits and path-limited staging. Never commit secrets or local
   runtime data.

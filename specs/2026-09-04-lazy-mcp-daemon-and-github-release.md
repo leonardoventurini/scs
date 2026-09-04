@@ -133,13 +133,13 @@ socket/identity artifacts, never `SCS_HOME` or logs.
 
 ## Executable checklist
 
-- [ ] Implement connection-owned daemon leases and safe final-client shutdown.
-- [ ] Implement race-safe lazy daemon bootstrap and lifecycle CLI.
-- [ ] Serve MCP over per-harness stdio through SCSWire.
-- [ ] Remove launchd and HTTP proxy runtime architecture.
-- [ ] Produce one checkout-independent mixed SCS wheel.
-- [ ] Implement and test the versioned installer.
-- [ ] Implement pinned GitHub CI and release workflows.
-- [ ] Update public and operational documentation.
-- [ ] Run full verification and record the architecture decision.
+- [x] Implement connection-owned daemon leases and safe final-client shutdown.
+- [x] Implement race-safe lazy daemon bootstrap and lifecycle CLI.
+- [x] Serve MCP over per-harness stdio through SCSWire.
+- [x] Remove launchd and HTTP proxy runtime architecture.
+- [x] Produce one checkout-independent mixed SCS wheel.
+- [x] Implement and test the versioned installer.
+- [x] Implement pinned GitHub CI and release workflows.
+- [x] Update public and operational documentation.
+- [x] Run full verification and record the architecture decision.
 - [ ] Push both code and release configuration and validate GitHub CI.

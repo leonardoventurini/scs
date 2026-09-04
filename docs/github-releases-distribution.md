@@ -1,597 +1,133 @@
-# Distributing SCS through GitHub Releases
+# GitHub Releases distribution
 
-## Purpose
+SCS ships directly from public GitHub Releases. It is not published to PyPI or
+another package registry. A release tag builds the complete Python/Rust product
+for Apple Silicon macOS and x86-64 Linux.
 
-This document defines how to distribute SCS from GitHub Releases without
-publishing SCS itself to PyPI, Homebrew, GitHub Packages, or another package
-registry. The initial supported product is a versioned installer for macOS on
-Apple Silicon. It installs the SCS daemon, MCP proxy, and native extension into
-an isolated user-level environment and registers the existing paired launchd
-services.
+## Release contents
 
-Repository: `leonardoventurini/scs`
+Every `vX.Y.Z` release contains:
 
-Project root: `/Users/leonardo/Repositories/mentagen/scs`
+- one CPython 3.14 wheel for each supported platform;
+- a source distribution;
+- `scs-X.Y.Z-constraints.txt` with the exact locked runtime solution;
+- `scs-installer-X.Y.Z.sh` bound to that release;
+- an SPDX JSON software bill of materials;
+- `SHA256SUMS` covering all assets;
+- GitHub build-provenance attestations.
 
-This is an installer-first distribution model. Users should not need to clone
-the repository, install Rust, invoke Maturin, or understand Python packaging.
+Published versions and assets are immutable. A correction receives a new patch
+version. The tag, Python metadata, Rust workspace, runtime version, wheel, and
+installer must agree; `scripts/check-release-version.py` blocks mismatches.
 
-## Recommended release model
+## Supported hosts
 
-Each Git tag produces an immutable GitHub Release containing:
+| Host | Architecture | Python ABI | Service model |
+| --- | --- | --- | --- |
+| macOS 11+ | Apple Silicon | CPython 3.14 | lazy shared daemon |
+| Linux with glibc 2.28+ | x86-64 | CPython 3.14 | lazy shared daemon |
 
-1. A platform wheel containing all SCS-owned Python and native code.
-2. A versioned installer script that downloads and installs that wheel.
-3. A source distribution for license compliance and reproducibility.
-4. SHA-256 checksums for every downloadable asset.
-5. An SPDX or CycloneDX software bill of materials.
-6. GitHub build-provenance attestations.
-7. Release notes and compatibility information.
-8. A fully pinned runtime constraints file used for installation.
+Intel macOS, Linux ARM, musl Linux, Windows, and offline installation are not
+yet supported. macOS artifacts are currently unsigned and not notarized. Users
+must verify the checksum; GitHub attestations bind artifacts to the workflow.
 
-For the first release, the supported matrix should be intentionally narrow:
+## Installation
 
-| Dimension | Initial contract |
-| --- | --- |
-| Operating system | macOS |
-| Architecture | Apple Silicon (`arm64`) |
-| Python ABI | CPython 3.14 |
-| Installation scope | Current user; no `sudo` |
-| Service manager | Per-user launchd domain |
-| Package host | GitHub Releases |
-| Embedding provider | OpenAI by default; external loopback OMLX or local MLX by configuration |
-| Persistent data | Existing `SCS_HOME`; preserved across upgrades |
-
-Intel macOS, Linux, Windows, a graphical installer, and offline installation
-are separate compatibility commitments. They should not be implied by the
-first release.
-
-## Current implementation baseline
-
-The repository already implements the provider behavior that the installer
-must preserve:
-
-- settings load from `~/.scs/config.toml`
-- explicit values override environment, which overrides TOML and defaults
-- fresh configuration defaults to OpenAI `text-embedding-3-large` at 3,072
-  dimensions
-- `OPENAI_API_KEY` overrides the TOML `openai_api_key`
-- a TOML file containing a key must have mode `0600`
-- OMLX selects local defaults at 4,096 dimensions, ignores OpenAI keys, and is
-  restricted to loopback HTTP
-- provider, model, or dimension changes quarantine incompatible vectors, and
-  subsequent indexing regenerates missing embeddings
-
-These are shipping application contracts, not installer proposals. Packaging,
-installer automation, migration prompts, release workflows, signing, and
-notarization remain rollout work described below.
-
-## What “no package registry” means
-
-SCS itself will be downloaded exclusively from GitHub Releases. The installer
-can install a wheel directly from a local file or GitHub URL; `uv tool install`
-supports installing a specific wheel and creates an isolated persistent tool
-environment.
-
-The recommended first installer may still resolve third-party dependencies
-from PyPI. This is not publishing SCS to PyPI, but it does mean installation
-requires access to both GitHub and the dependency registry.
-
-A fully GitHub-only or offline installer is materially different. It must ship
-all transitive dependency wheels, a compatible Python runtime, and potentially
-`uv` itself. That produces a much larger platform-specific bundle and adds a
-dependency-vendoring and security-update obligation. It should be considered a
-later distribution tier, not an implicit property of the first installer.
-
-## Required package architecture
-
-### One complete SCS wheel
-
-The current checkout has separate Python and native build concerns. A release
-must instead produce one public artifact named `scs` containing:
-
-- `src/scs`
-- `proxy/src/scs_mcp_proxy`
-- `_scs_native` compiled for the declared macOS and CPython target
-- the `scs` console entry point
-- license and required package metadata
-
-Maturin should own the mixed Rust/Python build. The wheel must work without the
-source checkout after it has been built. Publishing a Python-only `scs` wheel
-and a separately coordinated `scs-native` wheel would allow partial installs
-and should be avoided.
-
-The release version must have one source of truth shared by:
-
-- the Git tag, such as `v0.1.0`
-- Python package metadata
-- Rust workspace/package metadata
-- `scs version` output
-- wheel and source-distribution filenames
-- release notes
-- service identity records
-
-### Expected artifact names
-
-Exact wheel tags will be generated by the build tooling, but a release should
-have a predictable asset inventory similar to:
-
-```text
-scs-0.1.0-cp314-cp314-macosx_14_0_arm64.whl
-scs-0.1.0.tar.gz
-scs-installer-0.1.0.sh
-scs-0.1.0.spdx.json
-scs-0.1.0-constraints.txt
-SHA256SUMS
-```
-
-Do not use a generic, mutable `scs-latest.whl` asset. The installer may resolve
-the latest stable release, but the downloaded artifact must remain versioned.
-
-## Installer design
-
-### User experience
-
-The documented convenience command may be:
+Download the versioned installer and `SHA256SUMS` from the same release. Verify
+before execution:
 
 ```bash
-curl -fsSLO https://github.com/leonardoventurini/scs/releases/download/v0.1.0/scs-installer-0.1.0.sh
-curl -fsSLO https://github.com/leonardoventurini/scs/releases/download/v0.1.0/SHA256SUMS
+VERSION=0.1.0
+curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/scs-installer-${VERSION}.sh"
+curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/SHA256SUMS"
 shasum -a 256 -c SHA256SUMS --ignore-missing
-sh scs-installer-0.1.0.sh
+sh "scs-installer-${VERSION}.sh"
 ```
 
-The checksum file must also be downloaded from the same versioned release.
-For convenience, the release page can show a one-line installation command,
-but security-conscious documentation should prefer download, verify, then
-execute over piping a mutable network response directly into a shell.
+Linux uses `sha256sum` in place of `shasum -a 256`. The installer:
 
-The installer should accept:
+1. validates the OS, architecture, and prerequisite utilities before mutation;
+2. downloads only exact-version assets over TLS;
+3. verifies the wheel and constraints against `SHA256SUMS`;
+4. uses an existing `uv`, or downloads pinned `uv` 0.12.9 and verifies its
+   upstream checksum;
+5. stops a running prior daemon without touching data;
+6. installs the local wheel under exact constraints with CPython 3.14;
+7. verifies the installed runtime version;
+8. prints the MCP harness command.
 
-```text
---version VERSION        Install an exact release; default to the script version.
---home PATH              Configure SCS_HOME without moving existing data implicitly.
---provider NAME          Select the supported embedding provider.
---omlx-base-url URL      Configure the loopback OMLX endpoint.
---openai-api-key-file PATH
-                           Read a key from a caller-protected file without exposing it in argv.
---accept-embedding-rebuild
-                           Confirm invalidation and potentially billable regeneration.
---no-start               Install services but do not start them.
---check                  Validate prerequisites without changing the system.
---unattended             Disable prompts and require complete explicit configuration.
+The installer accepts `--version VERSION` for the source-tree copy and
+`--check` for a mutation-free prerequisite check. A release installer embeds
+its version and requires no argument. It accepts no credentials in argv and
+does not use `sudo`.
+
+## Runtime lifecycle
+
+Configure each harness to execute `scs mcp`. The process speaks MCP over stdio,
+lazily starts the shared daemon, acquires a connection-owned lease, and routes
+tools through SCSWire. Multiple bridges converge on the same daemon generation.
+When the final bridge disconnects, the daemon reaches its durable shutdown
+boundary, flushes TSG, removes its owned socket and identity, and exits.
+
+There are no launchd/systemd definitions or TCP MCP ports. Diagnostic commands:
+
+```bash
+scs status
+scs doctor
+scs daemon start
+scs daemon status
+scs daemon restart
+scs daemon stop
 ```
 
-The release-bound installer should install its own exact version by default.
-An exact release selection prevents a reviewed installer from silently
-installing a later SCS artifact. Reproducibility additionally depends on the
-verified constraints file described below.
-
-The installer must never accept an API key as a command-line value. Interactive
-installation may read it with terminal echo disabled. Automation should use an
-existing `OPENAI_API_KEY`, a pre-provisioned owner-only `~/.scs/config.toml`, or
-`--openai-api-key-file`; the installer must clear temporary secret variables
-and must not copy a key into logs, process arguments, release metadata, or
-launchd plists.
-
-### Installer workflow
-
-The installer should perform these stages in order:
-
-1. **Validate the host.** Require macOS, `arm64`, the supported minimum macOS
-   version, HTTPS-capable `curl`, and user-level launchd availability. Fail
-   before mutation on unsupported hosts.
-2. **Resolve the release.** Use the exact embedded version or an explicit
-   `--version`. If a separate “latest” bootstrap is later provided, resolve
-   GitHub's latest stable release and then pin the returned tag.
-3. **Create a private temporary directory.** Download only the expected wheel,
-   constraints file, checksum manifest, and optional attestation material into
-   it.
-4. **Verify integrity.** Require every downloaded release payload's SHA-256
-   digest to match `SHA256SUMS`. When GitHub CLI is available, optionally
-   verify build provenance with `gh attestation verify`.
-5. **Provision `uv`.** Prefer an existing compatible `uv`. If missing, either
-   stop with a documented installation command or install a pinned, verified
-   `uv` release. Do not silently execute an unpinned bootstrap script.
-6. **Install the wheel.** Run `uv tool install --python 3.14 --constraints
-   <verified-constraints> --force <local-wheel>`. `uv` may provision the
-   requested Python runtime and creates an isolated tool environment. Every
-   resolved runtime dependency must match the release constraints; an exact
-   SCS wheel alone does not make dependency resolution reproducible.
-7. **Resolve the installed launcher.** Obtain the absolute installed `scs`
-   executable and verify `scs version` reports the requested version.
-8. **Run compatibility preflight.** Inspect every registered project-store
-   schema without opening it through a mutating graph constructor. Abort before
-   starting a new binary against an unsupported store.
-9. **Reconcile configuration and vector identity.** Fresh installations default
-   to OpenAI `text-embedding-3-large` at 3,072 dimensions. Existing
-   `~/.scs/config.toml` values are preserved unless the user explicitly changes
-   them. Compare the active and requested provider/model/dimension before
-   writing configuration. If they differ for a populated index, explain that
-   vectors will be quarantined and regenerated, identify whether OpenAI usage
-   may be billable, and require interactive confirmation or
-   `--accept-embedding-rebuild`. Unattended installation fails closed without
-   that flag.
-10. **Persist service configuration.** Atomically write validated settings to
-    `~/.scs/config.toml` with mode `0600`. Preserve unknown forward-compatible
-    keys and never place an API key in a launchd plist or command line.
-11. **Install launchd services.** Invoke `scs service install`; never duplicate
-    plist generation logic in the shell installer.
-12. **Start and verify.** Invoke the supported service start operation, wait for
-    readiness within a bounded startup period, then run `scs status` and
-    `scs doctor`.
-13. **Report the result.** Print the installed version, launcher, data root,
-    service status, provider readiness, log paths, and exact uninstall command.
-
-All paths passed to destructive or replacement operations must be resolved and
-validated. The installer must never delete `SCS_HOME`, indexes, credentials, or
-logs during install, upgrade, rollback, or package removal.
-
-### Installer implementation rules
-
-- Use POSIX-compatible shell where practical and enable strict failure
-  handling.
-- Never require `sudo` for the initial user-level product.
-- Never infer a repository checkout path.
-- Never embed developer-machine paths in an artifact.
-- Never log secrets, authorization headers, or notarization credentials.
-- Download over HTTPS and reject redirects to unexpected schemes.
-- Use a private temporary directory and remove it on normal exit or failure.
-- Make repeated installation of the same version idempotent.
-- Keep persistent configuration separate from the `uv` tool environment.
-- Preserve an existing provider selection during ordinary reinstall or upgrade.
-- Require explicit acknowledgement before a provider identity change starts a
-  semantic rebuild.
-- Stop services before replacing the installed tool, then restore them only
-  after compatibility and readiness checks pass.
+`status` is read-only. Other operational commands start the daemon lazily and
+hold a temporary lease while executing.
 
 ## Upgrade, rollback, and uninstall
 
-### Upgrade
+Running a newer versioned installer performs an in-place `uv tool` replacement.
+It stops the prior daemon first and preserves `SCS_HOME`, project stores,
+configuration, durable jobs, and logs.
 
-An upgrade is an installation of a newer exact GitHub Release:
+Rollback installs an earlier compatible release in the same way. If a future
+release changes a persistent schema incompatibly, follow that release's data
+rollback note before starting an older binary. The TSG cutover's retained
+`*.pre-tsg.backup` files remain an independent recovery path.
 
-1. Read the currently installed version and effective configuration.
-2. Download and verify the selected new release.
-3. Run a read-only compatibility preflight against every SCS project store.
-4. Compute the current and post-upgrade provider identity. Preserve it by
-   default. If an explicit change would invalidate populated vectors, require
-   rebuild acknowledgement before stopping services.
-5. Stop both services at their normal lifecycle boundary.
-6. Snapshot `SCS_HOME` if the new release advances a persisted schema. Record
-   any existing vector sidecars that the provider migration will quarantine.
-7. Replace the isolated tool using the new local wheel and its verified pinned
-   constraints.
-8. Reinstall service definitions so their absolute launcher and release
-   identity are current.
-9. Start the services and run readiness and semantic-provider checks. When a
-   rebuild was accepted, expose its durable progress and do not claim semantic
-   readiness until coverage is complete.
-
-The installer must not implement “upgrade to latest” by default when executing
-an old versioned installer. Users select a new release explicitly or download
-the new release's installer.
-
-### Rollback
-
-Rollback is safe only when the previous release understands the current store
-schema. If the newer release advanced the schema, restore the verified
-pre-upgrade `SCS_HOME` snapshot before starting the older release.
-
-The operational sequence is:
-
-```text
-stop services
-install the prior versioned wheel
-restore data snapshot only when schema compatibility requires it
-reinstall service definitions
-start and verify
-```
-
-### Uninstall
-
-Uninstall should be explicit and non-destructive by default:
-
-1. Stop and remove the two per-user launchd services using SCS's lifecycle
-   command.
-2. Remove the `uv` tool installation.
-3. Preserve `SCS_HOME`, logs, and configuration.
-4. Print their locations and provide a separate, strongly confirmed data-purge
-   operation if one is ever implemented.
-
-## GitHub Actions release workflow
-
-### Trigger and permissions
-
-Build only from an already-created version tag matching the release policy,
-for example `v*.*.*`. The workflow should validate that the tag, package
-metadata, and runtime version are identical.
-
-Use least-privilege permissions. A release workflow that uploads assets and
-generates GitHub attestations normally needs:
-
-```yaml
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
-```
-
-`contents: write` permits release creation and asset upload. GitHub's artifact
-attestation workflow requires `id-token: write` and `attestations: write` in
-addition to repository read access.
-
-Pin every third-party action to a full commit SHA. Do not use floating major
-tags for a workflow that receives signing credentials.
-
-### Pipeline stages
-
-The release workflow should:
-
-1. Check out the exact tag and confirm it is reachable from the protected
-   release branch.
-2. Run `just verify` and the proxy-specific test suite.
-3. Build the wheel and source distribution with the committed Maturin command.
-4. Export the exact production dependency solution from `uv.lock` into the
-   versioned constraints file and reject uncommitted lockfile drift.
-5. Run `twine check` and inspect archive contents.
-6. Reject artifacts missing `scs`, `scs_mcp_proxy`, `_scs_native`, metadata,
-   license files, or Rust path-crate sources.
-7. Inspect native linkage with `otool -L`; reject developer-machine and build
-   directory dependencies.
-8. Install the wheel with the exported constraints into a clean temporary `uv`
-   tool environment with the checkout excluded from import paths.
-9. Run `scs --help`, `scs version`, native import, status, foreground daemon,
-   MCP proxy, indexing, lexical search, and semantic readiness fixtures.
-10. Sign the native executable content and final installer package when Apple
-   Developer ID distribution is enabled.
-11. Submit supported macOS deliverables to Apple's notary service using
-    `notarytool`, wait for acceptance, and staple the ticket where the chosen
-    artifact format supports it.
-12. Generate the SBOM and `SHA256SUMS` only after the final signed/notarized
-    bytes exist.
-13. Generate GitHub artifact attestations for every final downloadable binary
-    asset.
-14. Create a draft GitHub Release, upload all assets, and run a clean-machine
-    installation test against the draft assets.
-15. Publish the release only after all hard gates pass.
-
-GitHub workflow artifacts are useful for passing build output between jobs,
-but they are not the end-user distribution surface. Final artifacts belong on
-the versioned GitHub Release.
-
-### Release creation
-
-Automation may use the GitHub CLI or a pinned release action. A representative
-manual recovery command is:
+Uninstall code with:
 
 ```bash
-gh release create v0.1.0 \
-  dist/scs-0.1.0-cp314-cp314-macosx_14_0_arm64.whl \
-  dist/scs-0.1.0.tar.gz \
-  dist/scs-installer-0.1.0.sh \
-  dist/scs-0.1.0.spdx.json \
-  dist/scs-0.1.0-constraints.txt \
-  dist/SHA256SUMS \
-  --verify-tag \
-  --draft \
-  --notes-file release-notes.md
+scs daemon stop
+uv tool uninstall scs
 ```
 
-`--verify-tag` prevents an accidental release from an implicit tag created at
-the wrong commit. Draft creation allows final asset validation before public
-publication. Repository release immutability should be enabled once the
-pipeline is proven; published tags and assets then cannot be replaced in
-place, and GitHub creates a release attestation binding the tag, commit, and
-assets. Drafts remain the validation boundary before publication. A bad
-published release receives a new version rather than modified binaries.
+This intentionally preserves user data and logs. There is no automatic purge
+command.
 
-## Signing, notarization, and provenance
+## Maintainer release procedure
 
-### GitHub provenance
+1. Update the Python, Rust workspace, and runtime versions together.
+2. Move relevant `CHANGELOG.md` entries under the release version.
+3. Run `scripts/check-release-version.py vX.Y.Z` and `just verify`.
+4. Commit and push `main`; require CI success on macOS and Linux.
+5. Create and push an annotated `vX.Y.Z` tag reachable from `main`.
+6. The release workflow repeats the quality gate, builds and smoke-tests both
+   wheels without checkout imports, inspects native linkage, creates source and
+   constraints assets, generates the installer/SBOM/checksums, attests them,
+   and publishes the stable release.
+7. Verify an installation from the release page on disposable hosts.
 
-For a public repository, GitHub Actions can create build-provenance
-attestations for release artifacts. Users with GitHub CLI can verify an asset:
+The workflow uses least-privilege job permissions. Only the final publish job
+receives `contents: write`, `id-token: write`, and `attestations: write`. Every
+third-party action is pinned to a full commit SHA.
 
-```bash
-gh attestation verify scs-0.1.0-cp314-cp314-macosx_14_0_arm64.whl \
-  --repo leonardoventurini/scs
-```
-
-Checksums protect against transfer corruption and accidental substitution;
-attestations bind an artifact to the repository and workflow that built it.
-Both are useful, but neither replaces macOS Developer ID signing for the
-Gatekeeper user experience.
-
-### Apple signing and notarization
-
-For a polished external macOS distribution, obtain appropriate Developer ID
-certificates. A future flat `.pkg` installer uses a Developer ID Installer
-certificate, while executable content is signed with the appropriate Developer
-ID Application identity. Apple recommends notarizing software distributed
-outside the Mac App Store and supports automation with `notarytool`.
-
-The first shell-installer release can be shipped before a `.pkg` exists, but
-the native extension and any bundled executable should still receive explicit
-code-signing and Gatekeeper validation. A signed and notarized `.pkg` is the
-recommended second-stage installer when SCS needs a conventional double-click
-installation experience.
-
-Store signing and notarization material in a protected GitHub environment, not
-ordinary source or build artifacts. Typical secrets include an encrypted
-certificate, its import password, and App Store Connect/notary credentials.
-Restrict production release jobs with environment review rules where
-available. GitHub advises avoiding structured secret blobs because reliable
-log redaction is harder.
-
-## Provider and model handling
-
-OMLX remains an optional external runtime. The SCS installer should not
-bundle model weights or silently install an unrelated background service.
-
-Fresh installations use OpenAI `text-embedding-3-large` with its native 3,072
-dimensions. The installer must clearly disclose that OpenAI embedding requests
-send parser-owned entity text to an external API and can incur usage charges.
-It must verify credential presence without making an unconfirmed billable test
-request. Existing OMLX installations remain on their configured local model
-and 4,096-dimensional identity during ordinary upgrade.
-
-`scs doctor` must distinguish:
-
-- daemon/proxy readiness
-- structural index readiness
-- configured provider and endpoint reachability
-- OpenAI credential presence without revealing the credential
-- configured model availability
-- embedding dimension compatibility
-- semantic index coverage
-- semantic rebuild state and progress
-
-The daemon may start in an explicitly degraded structural-only state when the
-configured provider is unavailable. The installer must not report semantic
-readiness merely because the launchd processes are running.
-
-If OMLX itself later has a supported GitHub-distributed installer, SCS may link
-to or orchestrate it only after defining ownership, version compatibility,
-upgrade order, and failure recovery. It should remain a separate artifact and
-service boundary.
-
-## Required repository changes
-
-The implementation is naturally divided into reviewable units:
-
-### 1. Unify packaging
-
-- Move the public build to Maturin.
-- Include both Python packages and `_scs_native` in one wheel.
-- Establish one release-version source.
-- Align Python, Rust, macOS, and ABI metadata.
-- Add `LICENSE`, package classifiers, project URLs, and artifact exclusions.
-
-Acceptance: a clean build produces one valid wheel and one source distribution
-with the complete runtime.
-
-### 2. Add isolated artifact tests
-
-- Add a release build script.
-- Add wheel/sdist content inspection.
-- Add a clean-install smoke test using temporary tool and data roots.
-- Explicitly deny source-checkout imports during the smoke test.
-
-Acceptance: the installed CLI, daemon, proxy, and native graph run without
-Cargo, Maturin, or an editable checkout.
-
-### 3. Harden lifecycle and compatibility
-
-- Add machine-readable `scs version` output.
-- Add read-only compatibility inspection for all project stores.
-- Persist effective service configuration outside the package environment.
-- Record the absolute installed launcher and release identity.
-- Define supported upgrade and downgrade behavior.
-
-Acceptance: an actual tool-environment upgrade preserves configuration and
-data, while incompatible stores are rejected before mutation.
-
-### 4. Implement the installer
-
-- Add a versioned installer template and deterministic rendering step.
-- Validate platform and architecture.
-- Download exact assets and verify checksums.
-- Install through a local wheel using `uv tool install`.
-- Invoke SCS-owned lifecycle commands.
-- Add `--check`, `--no-start`, and unattended modes.
-- Add installer integration tests against a local mock release server or
-  pre-populated artifact directory.
-- Cover fresh OpenAI setup, missing-key degraded mode, preserved OMLX upgrades,
-  refused unattended migrations, and accepted provider rebuilds.
-
-Acceptance: a clean macOS account can install, start, verify, reinstall, and
-uninstall SCS without cloning the repository or using `sudo`.
-
-### 5. Automate GitHub Releases
-
-- Add the protected tag workflow.
-- Pin action dependencies.
-- Generate checksums, SBOM, and attestations.
-- Add signing/notarization when credentials are available.
-- Upload to a draft release and smoke-test the draft assets.
-- Publish only after verification.
-
-Acceptance: a prerelease tag produces a complete, traceable, installable draft
-release without publishing SCS to a package registry.
-
-### 6. Document operations
-
-- Add installation and verification instructions to the main README.
-- Add provider setup and degraded-mode guidance.
-- Document upgrade, rollback, backup, logs, uninstall, and data preservation.
-- Add a changelog and release-note template.
-- Document supported and unsupported platforms explicitly.
-
-Acceptance: an evaluator can complete the supported lifecycle using only the
-GitHub Release page and public documentation.
-
-## Verification matrix
-
-| Gate | Evidence | Failure policy |
-| --- | --- | --- |
-| Source quality | `just verify` and proxy tests | Block release |
-| Version identity | tag, wheel, Rust, CLI, notes match | Block release |
-| Artifact completeness | archive inspection and native import | Block release |
-| Clean install | isolated `uv tool` environment | Block release |
-| Checkout independence | source paths denied during smoke test | Block release |
-| Native compatibility | ABI/platform tags and `otool -L` | Block release |
-| Integrity | SHA-256 verification | Block release |
-| Provenance | GitHub attestation verification | Block release |
-| macOS trust | code-sign/notarization assessment | Block stable release once promised |
-| Service lifecycle | install/start/status/doctor/stop/uninstall | Block release |
-| Upgrade safety | prior-version upgrade fixture | Block stable release |
-| Data preservation | disposable `SCS_HOME` survives upgrade/uninstall | Block release |
-| Provider reporting | ready and unavailable OpenAI/OMLX fixtures | Block release |
-| Provider migration | consent, quarantine, regeneration, and rollback fixtures | Block release |
-| Dependency reproducibility | clean install resolves exactly to signed constraints | Block release |
-
-## Rollout sequence
-
-1. Produce an unsigned internal wheel and validate packaging composition.
-2. Produce an internal installer that installs from a local artifact directory.
-3. Create a GitHub prerelease such as `v0.1.0-rc.1` with draft assets.
-4. Test installation in a clean macOS user account or disposable Apple Silicon
-   VM.
-5. Test upgrade from `rc.1` to `rc.2` with a populated disposable `SCS_HOME`.
-6. Test both a preserved OMLX upgrade and an explicitly accepted OMLX-to-OpenAI
-   rebuild, including interruption and resumption.
-7. Add production signing and notarization, or explicitly document their
-   absence while the release remains prerelease-only.
-8. Enable immutable releases and publish the first stable release only after
-   the full verification matrix passes.
-9. Retain the immediately previous compatible release and its recovery
-   instructions.
+The release assumes both SCS and its immutable Git dependency TSG are publicly
+readable. Until that is true, clean GitHub-hosted runners cannot resolve TSG and
+release publication must remain blocked.
 
 ## Incident response
 
-If a published installer or wheel is defective:
-
-1. Do not replace assets under the same published version.
-2. Mark or communicate the release as affected and stop recommending it.
-3. Stop SCS services before changing installed code.
-4. Install the last compatible versioned release.
-5. Restore a data snapshot only if a schema-advancing release requires it.
-6. Publish a new patch version with corrected, newly attested assets.
-7. Revoke signing or GitHub credentials immediately if compromise is suspected.
-
-Release recovery must never delete user indexes as a packaging shortcut.
-
-## External references
-
-- [GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)
-- [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
-- [GitHub workflow artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts)
-- [GitHub CLI release creation](https://cli.github.com/manual/gh_release_create)
-- [GitHub Actions secrets](https://docs.github.com/en/actions/reference/security/secrets)
-- [uv tool installation](https://docs.astral.sh/uv/guides/tools/)
-- [uv installation options](https://docs.astral.sh/uv/getting-started/installation/)
-- [Apple notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
-- [Apple Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates)
-- [OpenAI `text-embedding-3-large`](https://developers.openai.com/api/docs/models/text-embedding-3-large)
-- [OpenAI API authentication](https://platform.openai.com/docs/api-reference/authentication)
+Do not replace a published asset. Stop recommending the affected version,
+install the last compatible release, restore data only if its release notes
+require that step, and publish a corrected patch release. Revoke GitHub or
+signing credentials immediately if compromise is suspected.
