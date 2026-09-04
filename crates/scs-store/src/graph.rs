@@ -1113,6 +1113,15 @@ fn validate_relationship(value: &str) -> SCSResult<()> {
         .map_err(|_| SCSError::Config(format!("unsupported relationship: {value}")))
 }
 fn tsg_error(error: tsg::Error) -> SCSError {
+    if let tsg::Error::InvalidInput(message) = &error {
+        if let Some(dimensions) = message.strip_prefix("embedding dimension mismatch: expected ") {
+            if let Some((expected, actual)) = dimensions.split_once(", received ") {
+                if let (Ok(expected), Ok(actual)) = (expected.parse(), actual.parse()) {
+                    return SCSError::DimensionMismatch { expected, actual };
+                }
+            }
+        }
+    }
     SCSError::Storage(error.to_string())
 }
 fn file_size(path: &Path) -> u64 {
