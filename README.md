@@ -29,10 +29,33 @@ the release, verifies its wheel and constraints, provisions a checksum-verified
 artifacts are not Apple-signed or notarized; checksums and GitHub build
 provenance provide release integrity.
 
-Configure each MCP harness to run `/Users/you/.local/bin/scs mcp` (use the
-corresponding home path on Linux). Each harness owns a small stdio bridge. The
-first bridge starts the shared daemon, concurrent bridges reuse it, and closing
-the final bridge shuts it down cleanly.
+Re-run the same procedure to upgrade or reinstall SCS. The installer replaces
+the `uv` tool atomically, stops an older daemon first, and preserves `SCS_HOME`,
+including configuration and indexes.
+
+### Configure Codex
+
+Add the installed executable as a local stdio MCP server:
+
+```bash
+codex mcp add scs -- "$HOME/.local/bin/scs" mcp
+codex mcp get scs
+```
+
+If `scs` is already configured with the former local HTTP URL, run
+`codex mcp remove scs` before adding it again. Restart open Codex clients after
+changing MCP configuration. The equivalent manual entry in
+`~/.codex/config.toml` is:
+
+```toml
+[mcp_servers.scs]
+command = "/Users/you/.local/bin/scs"
+args = ["mcp"]
+```
+
+Use `/home/you/.local/bin/scs` on Linux. Each Codex session owns a small stdio
+bridge. The first bridge starts the shared daemon, concurrent bridges reuse it,
+and closing the final bridge shuts it down cleanly.
 
 ## Storage architecture
 

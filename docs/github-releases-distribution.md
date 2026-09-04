@@ -83,6 +83,30 @@ scs daemon stop
 `status` is read-only. Other operational commands start the daemon lazily and
 hold a temporary lease while executing.
 
+### Codex
+
+Codex CLI, the IDE extension, and the ChatGPT desktop app share the MCP
+configuration stored in `~/.codex/config.toml`. Register the installed SCS
+stdio command with:
+
+```bash
+codex mcp add scs -- "$HOME/.local/bin/scs" mcp
+codex mcp get scs
+```
+
+If an earlier `scs` entry points to a local HTTP URL, remove it first with
+`codex mcp remove scs`. Restart open Codex clients after changing the entry.
+The equivalent manual configuration is:
+
+```toml
+[mcp_servers.scs]
+command = "/Users/you/.local/bin/scs"
+args = ["mcp"]
+```
+
+Use the corresponding absolute home path on Linux. Shell variables are not
+expanded inside the TOML `command` value.
+
 ## Upgrade, rollback, and uninstall
 
 Running a newer versioned installer performs an in-place `uv tool` replacement.
@@ -121,9 +145,8 @@ The workflow uses least-privilege job permissions. Only the final publish job
 receives `contents: write`, `id-token: write`, and `attestations: write`. Every
 third-party action is pinned to a full commit SHA.
 
-The release assumes both SCS and its immutable Git dependency TSG are publicly
-readable. Until that is true, clean GitHub-hosted runners cannot resolve TSG and
-release publication must remain blocked.
+Both SCS and its immutable Git dependency TSG must remain publicly readable so
+clean GitHub-hosted runners and source consumers can resolve the release.
 
 ## Incident response
 
