@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 scs = "scs.cli:main"
+scs-mcp = "scs.mcp.stdio:main"
 
 [dependency-groups]
 dev = [

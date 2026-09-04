@@ -1,46 +1,73 @@
-"""Live MCP-to-SCSWire-to-daemon convergence over Streamable HTTP."""
+"""Live stdio-MCP-to-SCSWire lazy-daemon convergence."""
 
 from __future__ import annotations
 
-import tempfile
+import asyncio
+import json
+import os
 import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
-from scs.config import SCSSettings
-from scs.main import SCSDaemon
 from scs.mcp.inventory import MOVED_TO_SCS_TOOLS
 
 
 @pytest.mark.asyncio
-async def test_live_mcp_stats_cross_the_public_service_boundary(tmp_path: Path) -> None:
-    runtime = Path(tempfile.mkdtemp(prefix="scs-mcp-e2e-", dir="/tmp"))
-    settings = SCSSettings(
-        home=tmp_path / "home",
-        model_cache=tmp_path / "models",
-        runtime_dir=runtime,
-        log_dir=tmp_path / "logs",
-        mcp_internal_port=0,
+async def test_two_stdio_bridges_share_daemon_until_final_disconnect(
+    tmp_path: Path,
+) -> None:
+    runtime = Path(tempfile.mkdtemp(prefix="scs-mcp-", dir="/tmp"))
+    environment = {
+        **os.environ,
+        "SCS_HOME": str(tmp_path / "home"),
+        "SCS_RUNTIME_DIR": str(runtime),
+        "SCS_LOG_DIR": str(tmp_path / "logs"),
+        "SCS_MODEL_CACHE": str(tmp_path / "models"),
+        "SCS_EMBEDDING_DIMENSION": "2",
+    }
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "scs.cli", "mcp"],
+        env=environment,
+        cwd=tmp_path,
     )
-    daemon = SCSDaemon(settings)
-    await daemon.start()
-    host, port = daemon.mcp_address
-    try:
-        async with streamable_http_client(f"http://{host}:{port}/mcp") as streams:
-            read_stream, write_stream, _session_id = streams
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                tools = await session.list_tools()
-                result = await session.call_tool("get_graph_stats", {})
-    finally:
-        await daemon.stop()
-        shutil.rmtree(runtime, ignore_errors=True)
 
-    assert result.isError is False
-    assert result.structuredContent is not None
-    assert result.structuredContent["status"] == "empty"
-    assert result.structuredContent["total_nodes"] == 0
-    assert {tool.name for tool in tools.tools} == MOVED_TO_SCS_TOOLS
+    try:
+        async with stdio_client(parameters) as first_streams:
+            async with ClientSession(*first_streams) as first:
+                await first.initialize()
+                first_tools = await first.list_tools()
+                identity_path = runtime / "daemon-service.json"
+                first_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+
+                async with stdio_client(parameters) as second_streams:
+                    async with ClientSession(*second_streams) as second:
+                        await second.initialize()
+                        result = await second.call_tool("get_graph_stats", {})
+                        second_identity = json.loads(
+                            identity_path.read_text(encoding="utf-8")
+                        )
+                        assert (
+                            second_identity["generation"]
+                            == first_identity["generation"]
+                        )
+                        assert result.isError is False
+
+                result = await first.call_tool("get_graph_stats", {})
+                assert result.isError is False
+                assert {tool.name for tool in first_tools.tools} == MOVED_TO_SCS_TOOLS
+
+        for _ in range(100):
+            if not identity_path.exists():
+                break
+            await asyncio.sleep(0.05)
+
+        assert not identity_path.exists()
+        assert not (runtime / "scs.sock").exists()
+    finally:
+        shutil.rmtree(runtime, ignore_errors=True)

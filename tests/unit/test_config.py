@@ -25,20 +25,7 @@ def test_defaults_are_scs_owned(
     assert "External product" not in str(settings.paths.home)
     assert settings.paths.database.name == "index.db"
     assert not settings.paths.home.exists()
-    assert settings.mcp_internal_host == "127.0.0.1"
-    assert settings.mcp_internal_port == 28465
-
-
-def test_internal_mcp_endpoint_is_typed_from_environment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("SCS_MCP_INTERNAL_HOST", "localhost")
-    monkeypatch.setenv("SCS_MCP_INTERNAL_PORT", "0")
-
-    settings = SCSSettings()
-
-    assert settings.mcp_internal_host == "localhost"
-    assert settings.mcp_internal_port == 0
+    assert settings.paths.runtime.name == "SCS"
 
 
 def test_text_ingestion_limits_have_typed_environment_overrides(

@@ -10,10 +10,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import cast
 
+from scs import __version__
 from scs.config import SCSSettings
+from scs.daemon import DaemonController
 from scs.main import serve
-from scs.service import ServiceManager
-from scs.wire.client import SCSClient
+from scs.mcp.stdio import serve_stdio
+from scs.wire.client import SCSConnection
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,9 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("serve", help="run the SCS daemon in the foreground")
-    subcommands.add_parser("proxy", help="run the stable MCP proxy in the foreground")
+    subcommands.add_parser("mcp", help="run a lazy per-harness MCP stdio bridge")
     subcommands.add_parser("doctor", help="validate storage and daemon health")
-    subcommands.add_parser("status", help="show daemon and launchd state")
+    subcommands.add_parser("status", help="show daemon state")
+    subcommands.add_parser("version", help="show the installed SCS version")
 
     index = subcommands.add_parser("index", help="explicitly index a repository")
     index.add_argument("repo_path", type=Path)
@@ -35,10 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reindex.add_argument("repo_path", type=Path)
 
-    service = subcommands.add_parser("service", help="manage SCS user services")
-    service.add_argument(
-        "action",
-        choices=("install", "start", "stop", "restart", "status", "uninstall"),
+    daemon = subcommands.add_parser("daemon", help="manage the shared lazy daemon")
+    daemon.add_argument(
+        "action", choices=("start", "stop", "restart", "status")
     )
     return parser
 
@@ -47,8 +49,9 @@ async def _call_daemon(
     method: str, params: dict[str, object] | None = None
 ) -> dict[str, object]:
     settings = SCSSettings()
-    client = SCSClient(settings.paths.runtime / "scs.sock")
-    return await client.call(method, params)
+    await DaemonController(settings).ensure_started()
+    async with SCSConnection(settings.paths.runtime / "scs.sock") as connection:
+        return await connection.call(method, params)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -60,30 +63,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command == "serve":
         asyncio.run(serve())
         return 0
-    if command == "proxy":
-        from scs_mcp_proxy.main import main as run_proxy
-
-        return run_proxy(())
-    if command == "service":
-        manager = ServiceManager()
-        action = values.get("action")
-        if action == "install":
-            result = manager.install()
-        elif action == "start":
-            result = manager.start()
-        elif action == "stop":
-            result = manager.stop()
-        elif action == "restart":
-            result = manager.restart()
-        elif action == "status":
-            result = manager.status()
-        elif action == "uninstall":
-            result = manager.uninstall()
-        else:
-            raise AssertionError(f"unhandled service action: {action}")
-        if result is not None:
-            print(json.dumps(asdict(result), sort_keys=True))
+    if command == "mcp":
+        asyncio.run(serve_stdio())
         return 0
+    if command == "version":
+        print(__version__)
+        return 0
+    if command == "daemon":
+        controller = DaemonController()
+        action = values.get("action")
+        if action == "start":
+            result = asyncio.run(controller.ensure_started())
+        elif action == "stop":
+            stopped = asyncio.run(controller.stop())
+            result = asyncio.run(controller.status())
+            print(json.dumps({"stopped": stopped, **asdict(result)}, sort_keys=True))
+            return 0
+        elif action == "restart":
+            asyncio.run(controller.stop())
+            result = asyncio.run(controller.ensure_started())
+        elif action == "status":
+            result = asyncio.run(controller.status())
+        else:
+            raise AssertionError(f"unhandled daemon action: {action}")
+        print(json.dumps(asdict(result), sort_keys=True))
+        return 0 if result.ready else 1
     if command == "doctor":
         settings = SCSSettings()
         try:
@@ -135,26 +139,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0 if result.get("ready") is True else 1
     if command == "status":
-        service_status = ServiceManager().status()
-        try:
-            daemon_result = asyncio.run(_call_daemon("system.health"))
-            daemon_status = {"available": True, **daemon_result}
-            exit_code = 0 if daemon_result.get("ready") is True else 1
-        except Exception as error:
-            daemon_status = {
-                "available": False,
-                "ready": False,
-                "error": type(error).__name__,
-                "message": str(error),
-            }
-            exit_code = 1
-        print(
-            json.dumps(
-                {"launchd": asdict(service_status), "daemon": daemon_status},
-                sort_keys=True,
-            )
-        )
-        return exit_code
+        daemon_status = asyncio.run(DaemonController().status())
+        print(json.dumps({"daemon": asdict(daemon_status)}, sort_keys=True))
+        return 0 if daemon_status.ready else 1
     if command in {"index", "reindex"}:
         repo_path = values.get("repo_path")
         if not isinstance(repo_path, Path):

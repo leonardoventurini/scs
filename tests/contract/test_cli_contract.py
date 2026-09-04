@@ -14,43 +14,48 @@ from scs.cli import build_parser, main
 def test_operational_commands_are_parseable() -> None:
     parser = build_parser()
     assert parser.parse_args(["serve"]).command == "serve"
+    assert parser.parse_args(["mcp"]).command == "mcp"
     assert parser.parse_args(["doctor"]).command == "doctor"
     assert parser.parse_args(["status"]).command == "status"
+    assert parser.parse_args(["version"]).command == "version"
     assert parser.parse_args(["index", "."]).command == "index"
     assert parser.parse_args(["reindex", "."]).command == "reindex"
-    for action in ("install", "start", "stop", "restart", "status", "uninstall"):
-        assert parser.parse_args(["service", action]).action == action
+    for action in ("start", "stop", "restart", "status"):
+        assert parser.parse_args(["daemon", action]).action == action
 
 
-def test_proxy_entrypoint_is_installed_with_root_scs_package() -> None:
-    from scs_mcp_proxy.main import main as proxy_main
+def test_mcp_entrypoint_is_installed_with_root_scs_package() -> None:
+    from scs.mcp.stdio import main as mcp_main
 
-    assert callable(proxy_main)
+    assert callable(mcp_main)
 
 
-def test_proxy_command_runs_installed_proxy_entrypoint(
+def test_mcp_command_runs_installed_stdio_bridge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, ...]] = []
+    calls: list[bool] = []
 
-    def fake_proxy_main(arguments: tuple[str, ...] = ()) -> int:
-        calls.append(tuple(arguments))
-        return 17
+    async def fake_serve_stdio() -> None:
+        calls.append(True)
 
-    monkeypatch.setattr("scs_mcp_proxy.main.main", fake_proxy_main)
+    monkeypatch.setattr("scs.cli.serve_stdio", fake_serve_stdio)
 
-    assert main(["proxy"]) == 17
-    assert calls == [()]
+    assert main(["mcp"]) == 0
+    assert calls == [True]
 
 
 @dataclass(frozen=True)
 class _ServiceStatus:
-    proxy_loaded: bool = True
-    daemon_loaded: bool = True
+    available: bool = False
+    ready: bool = False
+    pid: int | None = None
+    generation: str | None = None
+    version: str | None = None
+    error: str | None = "FileNotFoundError"
 
 
-class _ServiceManager:
-    def status(self) -> _ServiceStatus:
+class _DaemonController:
+    async def status(self) -> _ServiceStatus:
         return _ServiceStatus()
 
 
@@ -79,7 +84,7 @@ def test_operational_commands_report_daemon_unavailable_as_json(
 
     monkeypatch.setattr("scs.cli._call_daemon", unavailable)
     monkeypatch.setattr("scs.cli.SCSSettings", lambda: _Settings(tmp_path / "home"))
-    monkeypatch.setattr("scs.cli.ServiceManager", _ServiceManager)
+    monkeypatch.setattr("scs.cli.DaemonController", _DaemonController)
 
     assert main([command]) == 1
     payload = json.loads(capsys.readouterr().out)
@@ -88,4 +93,4 @@ def test_operational_commands_report_daemon_unavailable_as_json(
     assert payload["daemon"]["ready"] is False
     assert payload["daemon"]["error"] == "FileNotFoundError"
     if command == "status":
-        assert payload["launchd"] == {"proxy_loaded": True, "daemon_loaded": True}
+        assert payload["daemon"]["available"] is False

@@ -18,7 +18,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-from scs.paths import SCSPaths
+from scs.paths import SCSPaths, default_log_directory, default_runtime_directory
 
 DEFAULT_EMBEDDING_PROVIDER = "openai"
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-large"
@@ -43,10 +43,10 @@ class SCSSettings(BaseSettings):
         default_factory=lambda: Path.home() / ".cache" / "scs" / "models"
     )
     runtime_dir: Path = Field(
-        default_factory=lambda: Path.home() / "Library" / "Application Support" / "SCS"
+        default_factory=default_runtime_directory
     )
     log_dir: Path = Field(
-        default_factory=lambda: Path.home() / "Library" / "Logs" / "SCS"
+        default_factory=default_log_directory
     )
     embedding_provider: Literal["openai", "omlx", "mlx"] = DEFAULT_EMBEDDING_PROVIDER
     embedding_model: str = DEFAULT_OPENAI_EMBEDDING_MODEL
@@ -59,8 +59,6 @@ class SCSSettings(BaseSettings):
         validation_alias=AliasChoices("OPENAI_API_KEY", "openai_api_key"),
     )
     omlx_base_url: str = DEFAULT_OMLX_BASE_URL
-    mcp_internal_host: str = DEFAULT_MCP_INTERNAL_HOST
-    mcp_internal_port: int = Field(default=DEFAULT_MCP_INTERNAL_PORT, ge=0, le=65535)
     index_text_fallback: bool = True
     index_max_file_bytes: int = Field(default=1_048_576, ge=1)
     index_text_sample_bytes: int = Field(default=8_192, ge=1)

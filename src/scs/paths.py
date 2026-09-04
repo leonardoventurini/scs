@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,25 @@ LEGACY_EXTERNAL_PRODUCT_MARKERS: frozenset[str] = frozenset(
         "brain.usearch",
     }
 )
+
+
+def default_runtime_directory() -> Path:
+    """Return a private platform-appropriate runtime directory."""
+
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "SCS"
+    configured = os.environ.get("XDG_RUNTIME_DIR")
+    if configured:
+        return Path(configured) / "scs"
+    return Path.home() / ".local" / "state" / "scs" / "runtime"
+
+
+def default_log_directory() -> Path:
+    """Return the platform-appropriate persistent log directory."""
+
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "SCS"
+    return Path.home() / ".local" / "state" / "scs" / "logs"
 
 
 class UnsafeStorageRootError(RuntimeError):
@@ -121,10 +141,9 @@ class SCSPaths:
             provider_metadata=safe_home / "provider.json",
             model_cache=_resolved(model_cache or (Path.home() / ".cache" / "scs" / "models")),
             runtime=_resolved(
-                runtime
-                or (Path.home() / "Library" / "Application Support" / "SCS")
+                runtime or default_runtime_directory()
             ),
-            logs=_resolved(logs or (Path.home() / "Library" / "Logs" / "SCS")),
+            logs=_resolved(logs or default_log_directory()),
         )
 
     def ensure(self) -> None:

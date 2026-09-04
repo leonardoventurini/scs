@@ -342,6 +342,13 @@ class SCSDaemon:
         async def client_attach(_params: dict[str, object]) -> dict[str, object]:
             return {"generation": self._generation, "attached": True}
 
+        @self._router.method("system.shutdown")
+        async def system_shutdown(params: dict[str, object]) -> dict[str, object]:
+            if params.get("generation") != self._generation:
+                raise ValueError("daemon generation changed before shutdown")
+            self.request_shutdown()
+            return {"accepted": True, "generation": self._generation}
+
         @self._router.method("repositories.status")
         async def repository_statuses(params: dict[str, object]) -> dict[str, object]:
             raw_paths = params.get("repo_paths", [])
