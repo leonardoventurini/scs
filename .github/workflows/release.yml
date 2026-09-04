@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+          enable-cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install Rust 1.98
+        run: rustup toolchain install 1.98 --profile minimal --component clippy,rustfmt
+      - name: Require release commit on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+      - id: version
+        name: Validate version identity
+        run: echo "version=$(python3 scripts/check-release-version.py '${{ github.ref_name }}')" >> "$GITHUB_OUTPUT"
+      - name: Run release quality gate
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+        run: |
+          uv sync --all-groups --frozen
+          just verify
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            compatibility: ""
+            expected: scs-${{ needs.validate.outputs.version }}-cp314-cp314-macosx_11_0_arm64.whl
+          - os: ubuntu-24.04
+            compatibility: manylinux_2_28
+            expected: scs-${{ needs.validate.outputs.version }}-cp314-cp314-manylinux_2_28_x86_64.whl
+    runs-on: ${{ matrix.os }}
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+          enable-cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install Rust 1.98
+        run: rustup toolchain install 1.98 --profile minimal
+      - name: Build wheel
+        shell: bash
+        run: |
+          arguments=(--release --locked --out dist)
+          if [[ -n '${{ matrix.compatibility }}' ]]; then
+            arguments+=(--compatibility '${{ matrix.compatibility }}')
+          fi
+          uvx --from 'maturin==1.15.0' maturin build "${arguments[@]}"
+          test -f 'dist/${{ matrix.expected }}'
+      - name: Inspect native linkage
+        shell: bash
+        run: |
+          python3 -m zipfile -e 'dist/${{ matrix.expected }}' wheel-unpacked
+          native=$(find wheel-unpacked -type f \( -name '*.so' -o -name '*.dylib' \) -print -quit)
+          test -n "$native"
+          if [[ '${{ runner.os }}' == macOS ]]; then
+            ! otool -L "$native" | grep -E '/Users/|/private/|/tmp/'
+          else
+            ! ldd "$native" | grep -E '/home/runner|/tmp/'
+          fi
+      - name: Smoke-test checkout-independent wheel
+        shell: bash
+        run: |
+          root=$(mktemp -d)
+          export UV_TOOL_DIR="$root/tools" UV_TOOL_BIN_DIR="$root/bin"
+          uv tool install --python 3.14 --force 'dist/${{ matrix.expected }}'
+          cd "$root"
+          env -u PYTHONPATH "$UV_TOOL_BIN_DIR/scs" version | grep -Fx '${{ needs.validate.outputs.version }}'
+          env -u PYTHONPATH "$UV_TOOL_BIN_DIR/scs" --help >/dev/null
+          env -u PYTHONPATH "$UV_TOOL_DIR/scs/bin/python" -c 'import scs, scs._scs_native'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheel-${{ runner.os }}-${{ runner.arch }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  source:
+    needs: validate
+    runs-on: ubuntu-24.04
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+      - name: Build source distribution and constraints
+        run: |
+          uvx --from 'maturin==1.15.0' maturin sdist --out dist
+          uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt \
+            --output-file "dist/scs-${{ needs.validate.outputs.version }}-constraints.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-and-constraints
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [validate, build, source]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Generate release-bound installer
+        run: |
+          sed 's/SCS_INSTALLER_VERSION="@SCS_VERSION@"/SCS_INSTALLER_VERSION="${{ needs.validate.outputs.version }}"/' scripts/install.sh \
+            > "release-assets/scs-installer-${{ needs.validate.outputs.version }}.sh"
+          chmod 755 "release-assets/scs-installer-${{ needs.validate.outputs.version }}.sh"
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: release-assets
+          format: spdx-json
+          output-file: release-assets/scs-${{ needs.validate.outputs.version }}.spdx.json
+          upload-artifact: false
+      - name: Generate checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/*.whl
+            release-assets/*.tar.gz
+            release-assets/*.sh
+            release-assets/*.txt
+            release-assets/*.json
+            release-assets/SHA256SUMS
+      - name: Publish immutable-version assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' release-assets/* \
+            --verify-tag \
+            --title 'SCS ${{ needs.validate.outputs.version }}' \
+            --generate-notes
