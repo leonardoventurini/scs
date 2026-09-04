@@ -46,5 +46,5 @@ SCS release.
 - feat: publish generation-scoped proxy and daemon ownership records
 - fix: preserve live foreign sockets during stale-owner detection
 - fix: emit machine-readable unavailable status when the daemon is stopped
-- test: enforce empty-index, External product independence, source read-only, bounded
+- test: enforce empty-index, runtime isolation, source read-only, bounded
   transport, restart ownership, RSS, indexing, and query convergence gates

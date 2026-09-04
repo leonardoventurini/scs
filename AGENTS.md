@@ -12,10 +12,10 @@ and the agent-facing MCP endpoint.
   records use the platform runtime directory.
 - Per-harness MCP stdio bridges share one lazily spawned SCSWire daemon. Each
   bridge connection is a lease; the final disconnect triggers clean shutdown.
-- SCS never reads, imports, copies, or derives state from External product `brain.db` or
-  its sidecars. A new installation starts with an empty index.
-- External product is an optional client. SCS must build, test, start, index, search, and
-  restart with no External product checkout or process available.
+- A new installation starts with an empty index and reads no external product
+  state.
+- SCS must build, test, start, index, search, and restart as a standalone
+  product.
 
 ## Architecture
 

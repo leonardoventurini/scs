@@ -30,7 +30,7 @@ primitives. Python, wire, MCP, and CLI behavior remain compatible.
 - A legacy SCS index is never mutated into the new schema. On first incompatible
   open, move it to a unique rollback backup and create a fresh TSG store.
 - A fresh or restarted SCS root stays empty until an explicit index request.
-- Do not read or derive state from External product.
+- Do not read or derive state from external applications.
 
 ## Contracts
 

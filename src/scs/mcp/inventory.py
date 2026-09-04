@@ -1,6 +1,6 @@
-"""Accepted disposition of every tool from the former External product MCP endpoint."""
+"""Exact model-facing SCS MCP tool inventory."""
 
-MOVED_TO_SCS_TOOLS = frozenset(
+MCP_TOOL_NAMES = frozenset(
     {
         "search_code",
         "get_related",
@@ -14,45 +14,3 @@ MOVED_TO_SCS_TOOLS = frozenset(
         "find_references",
     }
 )
-
-RETIRED_TOOLS = frozenset(
-    {
-        "patch_knowledge_graph",
-        "build_knowledge_graph",
-        "get_graph_build_status",
-        "inspect_graph_namespace",
-        "delete_graph_namespace",
-        "update_node",
-        "delete_nodes",
-        "sync_vocabulary",
-        "get_vocabulary",
-        "edit_file",
-        "style_token_audit",
-        "render_html_snapshot",
-        "recording_session_list",
-        "recording_session_get",
-        "recording_asset_list",
-        "recording_asset_get",
-        "recording_asset_probe",
-        "recording_asset_quarantine",
-        "ingest_git_history",
-        "inspect_graph_quality",
-        "sample_nodes",
-        "test_coverage_map",
-        "consistency_check",
-        "contract_check",
-        "get_symbols_overview",
-        "find_symbol",
-        "get_symbol_info",
-        "search_knowledge",
-        "get_node_detail",
-        "scs_diagnostics_snapshot",
-        "scs_mcp_health",
-        "scs_recent_failures",
-        "scs_index_health",
-        "scs_dev_doctor",
-        "scs_test_recommendations",
-    }
-)
-
-FORMER_EXTERNAL_PRODUCT_TOOL_COUNT = 45

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from scs.mcp.inventory import MOVED_TO_SCS_TOOLS
+from scs.mcp.inventory import MCP_TOOL_NAMES
 from scs.mcp.observability import ToolRecorder
 from scs.mcp.server import build_mcp
 
@@ -236,7 +236,7 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
         await mcp.call_tool(name, arguments)
         assert gateway.calls[-1] == expected
 
-    assert {name for name, _, _ in cases} == MOVED_TO_SCS_TOOLS
+    assert {name for name, _, _ in cases} == MCP_TOOL_NAMES
 
 
 async def test_search_dispatches_through_public_service_gateway(tmp_path) -> None:
@@ -302,7 +302,7 @@ async def test_empty_repository_scope_is_rejected() -> None:
 async def test_mcp_application_lists_exact_inventory() -> None:
     tools = await build_mcp(RecordingGateway()).list_tools()
 
-    assert {tool.name for tool in tools} == MOVED_TO_SCS_TOOLS
+    assert {tool.name for tool in tools} == MCP_TOOL_NAMES
     assert len(tools) == 10
     assert all(tool.annotations is not None for tool in tools)
     for tool in tools:

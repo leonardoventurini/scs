@@ -1,11 +1,9 @@
-"""SCS starts empty and never derives state from legacy External product storage."""
+"""SCS starts empty and indexes only after an explicit request."""
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 from typing import cast
@@ -33,16 +31,6 @@ class _ImmediateEmbeddings:
         return [0.0, 1.0]
 
 
-def _fingerprint(path: Path) -> tuple[int, int, int, str]:
-    metadata = path.stat()
-    return (
-        metadata.st_ino,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        hashlib.sha256(path.read_bytes()).hexdigest(),
-    )
-
-
 @pytest.mark.asyncio
 async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
     tmp_path: Path,
@@ -52,36 +40,6 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
         "scs.main.OpenAICompatibleEmbeddingProvider",
         lambda **_kwargs: _ImmediateEmbeddings(),
     )
-    legacy = tmp_path / "legacy-external-product"
-    legacy.mkdir()
-    sentinels = tuple(
-        legacy / name
-        for name in (
-            "brain.db",
-            "brain.db-wal",
-            "brain.db-shm",
-            "brain.usearch",
-            "repositories.json",
-        )
-    )
-    for index, sentinel in enumerate(sentinels):
-        sentinel.write_bytes(f"legacy-{index}".encode())
-    before = {sentinel: _fingerprint(sentinel) for sentinel in sentinels}
-    monkeypatch.setenv("EXTERNAL_PRODUCT_HOME", str(legacy))
-    sentinel_paths = {str(path.resolve()) for path in sentinels}
-    audit_active = True
-
-    def deny_legacy_access(event: str, arguments: tuple[object, ...]) -> None:
-        if not audit_active or event not in {"open", "sqlite3.connect"} or not arguments:
-            return
-        attempted = arguments[0]
-        if isinstance(attempted, (str, bytes, Path)):
-            candidate = str(Path(attempted).resolve())
-            if candidate in sentinel_paths:
-                raise AssertionError(f"SCS attempted to open legacy sentinel: {candidate}")
-
-    sys.addaudithook(deny_legacy_access)
-
     scs_home = tmp_path / "fresh-scs"
     runtime = Path(tempfile.mkdtemp(prefix="scs-test-", dir="/tmp"))
     settings = SCSSettings(
@@ -134,8 +92,6 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
     finally:
         await daemon.stop()
         shutil.rmtree(runtime, ignore_errors=True)
-        audit_active = False
 
-    assert {sentinel: _fingerprint(sentinel) for sentinel in sentinels} == before
     assert (scs_home / "catalog.db").exists()
     assert len(list((scs_home / "projects").glob("*/generations/*/index.db"))) == 1

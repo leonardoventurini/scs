@@ -8,8 +8,7 @@ SCS has five ownership layers:
 4. Streamable HTTP MCP for coding agents.
 5. A stable public MCP proxy that survives daemon replacement.
 
-External product is downstream of SCSWire and is never part of the SCS runtime. MCP tools
-call SCS services directly rather than routing through External product.
+MCP tools call SCS services directly through the typed service gateway.
 
 ## Process and artifact boundaries
 
@@ -28,7 +27,7 @@ classifies a verified SCS service without risking a live foreign listener.
 ## Data and source boundary
 
 There is no legacy migration or automatic repository enrollment. `SCS_HOME`
-starts empty and rejects aliases or ancestry shared with External product legacy storage.
+starts empty and creates state only beneath its configured storage root.
 Repository files are read-only inputs; parsing, Git provenance, search,
 inspection, composites, and LSP reads persist only in SCS-owned storage.
 
@@ -40,9 +39,8 @@ bounded chunks.
 
 Committed regression ceilings are 300 MiB pre-embedding daemon RSS, two-second
 warmed query p95, and ten seconds for the 100-file structural index fixture.
-Live cutover must additionally measure External product dictation latency under concurrent
-SCS embedding load because SCS alone cannot manufacture that cross-process
-evidence truthfully.
+Cross-process performance claims require direct measurements from the affected
+processes; SCS benchmarks cover only resources and latency owned by SCS.
 
 The supported protocol range begins at version 1. Clients and daemons advertise
 minimum/maximum versions and capabilities. Unknown fields are ignored; a

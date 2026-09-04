@@ -64,11 +64,11 @@ the rewrite is proven incomplete or corrupt.
 
 ## Executable checklist
 
-- [ ] Recovery bundle and original refs recorded.
-- [ ] Runtime and test contracts are SCS-native.
-- [ ] Obsolete cross-repository scripts and records removed.
-- [ ] Current-tree zero-reference audit passes.
-- [ ] Targeted tests and `just verify` pass.
+- [x] Recovery bundle and original refs recorded.
+- [x] Runtime and test contracts are SCS-native.
+- [x] Obsolete cross-repository scripts and records removed.
+- [x] Current-tree zero-reference audit passes.
+- [x] Targeted tests and `just verify` pass.
 - [ ] Every branch and tag is rewritten and force-pushed.
 - [ ] Fresh-clone current-tree and reachable-object audits pass.
 - [ ] Recovery bundle removed after successful remote validation.

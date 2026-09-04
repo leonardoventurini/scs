@@ -14,7 +14,7 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from scs.mcp.inventory import MOVED_TO_SCS_TOOLS
+from scs.mcp.inventory import MCP_TOOL_NAMES
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_two_stdio_bridges_share_daemon_until_final_disconnect(
 
                 result = await first.call_tool("get_graph_stats", {})
                 assert result.is_error is False
-                assert {tool.name for tool in first_tools.tools} == MOVED_TO_SCS_TOOLS
+                assert {tool.name for tool in first_tools.tools} == MCP_TOOL_NAMES
 
         for _ in range(100):
             if not identity_path.exists():

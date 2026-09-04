@@ -1,4 +1,4 @@
-"""SCS-owned filesystem paths and legacy-data isolation guards."""
+"""SCS-owned filesystem paths."""
 
 from __future__ import annotations
 
@@ -6,16 +6,6 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-
-LEGACY_EXTERNAL_PRODUCT_MARKERS: frozenset[str] = frozenset(
-    {
-        "brain.db",
-        "brain.db-wal",
-        "brain.db-shm",
-        "brain.usearch",
-    }
-)
-
 
 def default_runtime_directory() -> Path:
     """Return a private platform-appropriate runtime directory."""
@@ -36,76 +26,16 @@ def default_log_directory() -> Path:
     return Path.home() / ".local" / "state" / "scs" / "logs"
 
 
-class UnsafeStorageRootError(RuntimeError):
-    """Raised before writes when an SCS root aliases legacy External product storage."""
-
-
 def _resolved(path: Path) -> Path:
     """Resolve aliases without requiring the final path to exist."""
 
     return path.expanduser().resolve(strict=False)
 
 
-def _contains_path(container: Path, candidate: Path) -> bool:
-    """Return whether ``candidate`` equals or is nested under ``container``."""
-
-    try:
-        candidate.relative_to(container)
-    except ValueError:
-        return False
-    return True
-
-
-def _configured_legacy_roots() -> tuple[Path, ...]:
-    """Return known legacy roots, resolving external-volume symlink aliases."""
-
-    roots = [Path.home() / ".external-product"]
-    configured = os.environ.get("EXTERNAL_PRODUCT_HOME")
-    if configured:
-        roots.append(Path(configured))
-    return tuple(dict.fromkeys(_resolved(root) for root in roots))
-
-
-def _assert_marker_state_readable(root: Path) -> None:
-    """Fail closed if a potentially relevant directory cannot be inspected."""
-
-    if not root.exists():
-        return
-    try:
-        with os.scandir(root) as entries:
-            names = {entry.name for entry in entries}
-    except OSError as exc:
-        raise UnsafeStorageRootError(
-            f"Cannot verify SCS storage safety at {root}: {exc}"
-        ) from exc
-    markers = sorted(names & LEGACY_EXTERNAL_PRODUCT_MARKERS)
-    if markers:
-        raise UnsafeStorageRootError(
-            f"SCS_HOME aliases legacy External product storage at {root}; found {', '.join(markers)}"
-        )
-
-
 def validate_scs_home(home: Path) -> Path:
-    """Validate and return a canonical SCS root without creating any files.
+    """Return the canonical SCS root without creating files."""
 
-    The guard rejects equality, ancestry, or descendants shared with a known
-    External product data root. It also inspects every existing ancestor for legacy
-    markers. Validation deliberately precedes all SCS directory creation.
-    """
-
-    canonical = _resolved(home)
-    legacy_roots = _configured_legacy_roots()
-    for legacy in legacy_roots:
-        if _contains_path(legacy, canonical) or _contains_path(canonical, legacy):
-            raise UnsafeStorageRootError(
-                f"SCS_HOME {canonical} overlaps legacy External product root {legacy}"
-            )
-
-    existing_ancestors = [candidate for candidate in (canonical, *canonical.parents) if candidate.exists()]
-    for candidate in existing_ancestors:
-        _assert_marker_state_readable(candidate)
-
-    return canonical
+    return _resolved(home)
 
 
 @dataclass(frozen=True, slots=True)

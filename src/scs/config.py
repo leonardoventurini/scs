@@ -30,7 +30,7 @@ DEFAULT_OMLX_BASE_URL = "http://127.0.0.1:10000/v1"
 
 
 class SCSSettings(BaseSettings):
-    """Environment-backed SCS settings with no External product configuration dependency."""
+    """Environment-backed SCS settings."""
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_prefix="SCS_", extra="ignore"

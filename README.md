@@ -1,11 +1,11 @@
 # SCS
 
-SCS is the headless Semantic Code System extracted from External product. It indexes
+SCS is a headless semantic code-intelligence service. It indexes
 source repositories into a structural and vector-backed code graph and exposes
 that intelligence through a local control socket and MCP.
 
 SCS starts with an empty index. It does not migrate, inspect, or recreate any
-legacy External product graph data. Repositories are added only through an explicit CLI,
+data from other applications. Repositories are added only through an explicit CLI,
 MCP, or client request.
 
 ## Quick start
@@ -238,5 +238,5 @@ Python lines and enforces the committed risk-based floor. The pre-commit hook
 runs the same whole-source type gate.
 Isolation gates cover exact stdio MCP inventory, multi-bridge daemon
 convergence, bounded frames, generation-safe cleanup, stale/live socket
-ownership, legacy sentinel preservation, External product-import denial, repository
+ownership, empty-startup behavior, runtime isolation, repository
 source fingerprints, and committed RSS/index/query budgets.

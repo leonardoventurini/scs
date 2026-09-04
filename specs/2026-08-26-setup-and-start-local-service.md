@@ -24,7 +24,7 @@ SCS data.
 - The proxy is installed and started before the daemon, as enforced by
   `ServiceManager.start`.
 - Persistent state is retained only in `SCS_HOME`; the service operation must
-  not index source or access legacy External product data.
+  not index source or access external application data.
 - Success means both launchd agents are loaded and `scs doctor` reports a
   ready daemon. No code change is expected, so no decision record is needed.
 

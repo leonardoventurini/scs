@@ -5,9 +5,8 @@ Status: Accepted
 
 ## Context
 
-SCS inherited 27 model-facing tools during its extraction from External product. They
-were classified by product ownership, not selected from evidence about agent
-tasks. Several names reached the same route, several diagnostics duplicated
+SCS exposed 27 model-facing tools that had not been selected from evidence
+about agent tasks. Several names reached the same route, several diagnostics duplicated
 CLI or internal operations, and some composite analyses overstated what their
 implementations established. The full discovery payload occupied 12,137
 serialized characters before a client added any other MCP server.
