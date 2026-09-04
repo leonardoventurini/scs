@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 rust-version = "1.98"
 license = "MIT"
@@ -16,9 +16,9 @@ repository = "https://github.com/leonardoventurini/scs"
 
 [workspace.dependencies]
 # Internal crates
-scs-core = { version = "0.1.2", path = "crates/scs-core" }
-scs-store = { version = "0.1.2", path = "crates/scs-store" }
-scs-parser = { version = "0.1.2", path = "crates/scs-parser" }
+scs-core = { version = "0.1.3", path = "crates/scs-core" }
+scs-store = { version = "0.1.3", path = "crates/scs-store" }
+scs-parser = { version = "0.1.3", path = "crates/scs-parser" }
 tsg = { version = "0.2.0", git = "https://github.com/leonardoventurini/tsg.git", tag = "v0.2.0" }
 
 # Serialization

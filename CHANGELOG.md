@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.3 - 2026-09-04
+
+- refactor: remove foreign-product provenance and compatibility assumptions
+- docs: describe SCS exclusively through standalone product contracts
+
 ## 0.1.2 - 2026-09-04
 
 - fix: keep the daemon observable until durable background jobs are terminal
