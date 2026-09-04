@@ -22,11 +22,11 @@ def test_current_release_versions_are_identical() -> None:
     module = _module()
     root = Path(__file__).parents[2]
 
-    assert module.validate("v0.1.1", root) == "0.1.1"
+    assert module.validate("v0.1.2", root) == "0.1.2"
     assert module.project_versions(root) == {
-        "python": "0.1.1",
-        "rust": "0.1.1",
-        "runtime": "0.1.1",
+        "python": "0.1.2",
+        "rust": "0.1.2",
+        "runtime": "0.1.2",
     }
 
 

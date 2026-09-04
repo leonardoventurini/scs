@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-09-04
+
+- fix: keep the daemon observable until durable background jobs are terminal
+
 ## 0.1.1 - 2026-09-04
 
 - feat: route all SCS graph and embedding persistence through TSG 0.2
