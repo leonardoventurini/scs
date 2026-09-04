@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,7 +26,14 @@ def test_defaults_are_scs_owned(
     assert "External product" not in str(settings.paths.home)
     assert settings.paths.database.name == "index.db"
     assert not settings.paths.home.exists()
-    assert settings.paths.runtime.name == "SCS"
+    if sys.platform == "darwin":
+        expected_runtime = tmp_path / "user" / "Library" / "Application Support" / "SCS"
+    elif configured_runtime := os.environ.get("XDG_RUNTIME_DIR"):
+        expected_runtime = Path(configured_runtime) / "scs"
+    else:
+        expected_runtime = tmp_path / "user" / ".local" / "state" / "scs" / "runtime"
+
+    assert settings.paths.runtime == expected_runtime
 
 
 def test_text_ingestion_limits_have_typed_environment_overrides(
