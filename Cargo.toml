@@ -10,7 +10,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.83"
+rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/techstertech/scs"
 
@@ -19,17 +19,18 @@ repository = "https://github.com/techstertech/scs"
 scs-core = { path = "crates/scs-core" }
 scs-store = { path = "crates/scs-store" }
 scs-parser = { path = "crates/scs-parser" }
+tsg = { git = "https://github.com/leonardoventurini/tsg.git", tag = "v0.2.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled", "column_decltype"] }
+rusqlite = { version = "0.40", features = ["bundled", "column_decltype"] }
 
 # Pooling
 r2d2 = "0.8"
-r2d2_sqlite = "0.25"
+r2d2_sqlite = "0.35"
 
 # Error handling
 thiserror = "2"
@@ -46,7 +47,7 @@ hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 
 # HNSW vector index for embedding search
-usearch = "2.16"
+usearch = "2.26"
 
 # Logging
 log = "0.4"

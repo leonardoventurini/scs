@@ -1374,13 +1374,13 @@ impl KnowledgeGraph {
     /// the logical size from SQLite's perspective, and works even when the
     /// database path is `:memory:` or a temp file.
     fn db_file_size(conn: &rusqlite::Connection) -> u64 {
-        let page_count: u64 = conn
+        let page_count: i64 = conn
             .pragma_query_value(None, "page_count", |row| row.get(0))
             .unwrap_or(0);
-        let page_size: u64 = conn
+        let page_size: i64 = conn
             .pragma_query_value(None, "page_size", |row| row.get(0))
             .unwrap_or(4096);
-        page_count * page_size
+        u64::try_from(page_count.saturating_mul(page_size)).unwrap_or(0)
     }
 
     /// Clear all data from the knowledge graph while preserving the schema.
@@ -1395,7 +1395,7 @@ impl KnowledgeGraph {
         let tx = conn.unchecked_transaction()?;
 
         // Count nodes before deletion for the return value.
-        let node_count: usize = tx
+        let node_count: i64 = tx
             .query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get(0))
             .unwrap_or(0);
 
@@ -1414,7 +1414,9 @@ impl KnowledgeGraph {
         tx.commit()?;
 
         log::info!("Truncated knowledge graph: removed {} nodes", node_count);
-        Ok(node_count)
+        usize::try_from(node_count).map_err(|_| {
+            scs_core::error::SCSError::Storage("stored node count is invalid".to_string())
+        })
     }
 
     /// Clear all ingestion hash records so the next ingest re-processes every file.
@@ -1426,12 +1428,14 @@ impl KnowledgeGraph {
     /// Returns the number of records cleared.
     pub fn clear_ingestion_hashes(&self) -> SCSResult<usize> {
         let conn = self.pool.get().pool_err()?;
-        let count: usize = conn
+        let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM ingested_files", [], |row| row.get(0))
             .unwrap_or(0);
         conn.execute("DELETE FROM ingested_files", [])?;
         log::info!("Cleared {} ingestion hash records", count);
-        Ok(count)
+        usize::try_from(count).map_err(|_| {
+            scs_core::error::SCSError::Storage("stored ingestion count is invalid".to_string())
+        })
     }
 
     /// Clear all embedding vectors from the USearch index without touching
