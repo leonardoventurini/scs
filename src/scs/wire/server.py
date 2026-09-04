@@ -8,6 +8,7 @@ import os
 import stat
 import uuid
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import cast
 
 from pydantic import ValidationError
@@ -26,6 +27,9 @@ from scs.wire.router import Router
 SOCKET_MODE = 0o600
 RUNTIME_DIRECTORY_MODE = 0o700
 OWNERSHIP_PROBE_TIMEOUT_SECONDS = 0.5
+CLIENT_ATTACH_METHOD = "system.client.attach"
+
+ClientCountCallback = Callable[[int], Awaitable[None]]
 
 
 class WireServer:
@@ -36,12 +40,15 @@ class WireServer:
         router: Router,
         *,
         socket_path: Path | None = None,
+        client_count_changed: ClientCountCallback | None = None,
     ) -> None:
         self._router: Router = router
         self._socket_path: Path | None = socket_path
         self._server: asyncio.AbstractServer | None = None
         self._socket_identity: tuple[int, int] | None = None
         self._client_tasks: set[asyncio.Task[object]] = set()
+        self._attached_clients: int = 0
+        self._client_count_changed: ClientCountCallback | None = client_count_changed
 
     @property
     def socket_path(self) -> Path:
@@ -120,6 +127,7 @@ class WireServer:
         writer: asyncio.StreamWriter,
     ) -> None:
         task = asyncio.current_task()
+        attached = False
         if task is not None:
             self._client_tasks.add(task)
         try:
@@ -130,6 +138,15 @@ class WireServer:
                     break
                 response = await self.dispatch_envelope(envelope)
                 await write_frame(writer, response)
+                if (
+                    not attached
+                    and envelope.get("method") == CLIENT_ATTACH_METHOD
+                    and response.get("kind") == "response"
+                ):
+                    attached = True
+                    self._attached_clients += 1
+                    if self._client_count_changed is not None:
+                        await self._client_count_changed(self._attached_clients)
         except ConnectionError, asyncio.IncompleteReadError:
             pass
         finally:
@@ -138,6 +155,10 @@ class WireServer:
                 await writer.wait_closed()
             if task is not None:
                 self._client_tasks.discard(task)
+            if attached:
+                self._attached_clients -= 1
+                if self._client_count_changed is not None:
+                    await self._client_count_changed(self._attached_clients)
 
     async def _prepare_socket_path(self, path: Path) -> None:
         try:

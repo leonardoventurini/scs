@@ -66,3 +66,74 @@ class SCSClient:
             writer.close()
             with contextlib.suppress(ConnectionError):
                 await writer.wait_closed()
+
+
+class SCSConnection:
+    """Persistent SCSWire connection used as a daemon client lease."""
+
+    def __init__(self, socket_path: Path) -> None:
+        self._socket_path: Path = socket_path
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._lock: asyncio.Lock = asyncio.Lock()
+
+    async def connect(self) -> dict[str, object]:
+        """Connect and attach this socket as one live daemon client."""
+
+        if self._writer is not None:
+            raise RuntimeError("SCSWire connection is already open")
+        self._reader, self._writer = await asyncio.open_unix_connection(
+            self._socket_path
+        )
+        try:
+            return await self.call("system.client.attach")
+        except BaseException:
+            await self.close()
+            raise
+
+    async def call(
+        self,
+        method: str,
+        params: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Make one serialized request without releasing the client lease."""
+
+        reader = self._reader
+        writer = self._writer
+        if reader is None or writer is None:
+            raise RuntimeError("SCSWire connection is not open")
+        async with self._lock:
+            request = WireRequest(
+                id=uuid.uuid4().hex,
+                method=method,
+                params=params or {},
+            )
+            await write_frame(writer, request.model_dump(mode="json"))
+            envelope = await read_frame(reader)
+            if envelope.get("kind") == "error":
+                response = WireErrorResponse.model_validate(envelope)
+                raise SCSWireError(
+                    f"{response.error.code.value}: {response.error.message}"
+                )
+            response = WireResponse.model_validate(envelope)
+            if response.id != request.id:
+                raise SCSWireError("SCSWire response id does not match request")
+            return response.result
+
+    async def close(self) -> None:
+        """Close the socket; the daemon observes this as lease release."""
+
+        writer, self._writer = self._writer, None
+        self._reader = None
+        if writer is None:
+            return
+        writer.close()
+        with contextlib.suppress(ConnectionError):
+            await writer.wait_closed()
+
+    async def __aenter__(self) -> "SCSConnection":
+        await self.connect()
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        await self.close()

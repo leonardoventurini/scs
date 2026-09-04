@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from scs.wire.client import SCSClient
+from scs.wire.client import SCSConnection
 
 
 class ServiceGateway(Protocol):
@@ -22,9 +22,18 @@ class SCSWireGateway:
     """Adapt the public SCSWire client to the MCP service gateway."""
 
     def __init__(self, socket_path: Path, *, timeout_seconds: float = 20.0) -> None:
-        self._client: SCSClient = SCSClient(
-            socket_path, timeout_seconds=timeout_seconds
-        )
+        del timeout_seconds
+        self._connection: SCSConnection = SCSConnection(socket_path)
+
+    async def connect(self) -> dict[str, object]:
+        """Open the bridge-owned daemon lease."""
+
+        return await self._connection.connect()
+
+    async def close(self) -> None:
+        """Release the bridge-owned daemon lease."""
+
+        await self._connection.close()
 
     async def call(
         self,
@@ -33,4 +42,4 @@ class SCSWireGateway:
     ) -> dict[str, object]:
         """Forward one finite operation through SCSWire."""
 
-        return await self._client.call(method, params)
+        return await self._connection.call(method, params)

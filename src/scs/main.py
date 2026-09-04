@@ -20,9 +20,6 @@ from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
 from scs.identity import IdentityPublisher
-from scs.mcp.gateway import SCSWireGateway
-from scs.mcp.http import MCPHTTPServer
-from scs.mcp.server import build_mcp
 from scs.providers.base import EmbeddingProvider
 from scs.providers.mlx import MLXEmbeddingProvider
 from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
@@ -32,6 +29,9 @@ from scs.storage import ProjectStoreRegistry, StoreBinding, StoreGeneration, Sto
 from scs.wire.events import EventBroker
 from scs.wire.router import Router
 from scs.wire.server import WireServer
+
+CLIENT_HANDOFF_SECONDS = 0.5
+UNATTACHED_STARTUP_GRACE_SECONDS = 10.0
 
 
 def _metadata_integer(values: Mapping[str, object], key: str) -> int:
@@ -63,7 +63,6 @@ class SCSDaemon:
         self._generation: str = uuid.uuid4().hex
         self._router: Router = Router()
         self._server: WireServer | None = None
-        self._mcp_server: MCPHTTPServer | None = None
         self._identity: IdentityPublisher | None = None
         self._lock: ProcessLock | None = None
         self._jobs: IngestionJobStore | None = None
@@ -74,6 +73,9 @@ class SCSDaemon:
         self._watchers: dict[str, RepositoryWatcher] = {}
         self._events: EventBroker = EventBroker()
         self._started: bool = False
+        self._shutdown_requested: asyncio.Event = asyncio.Event()
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._ever_attached: bool = False
         self._services: SCSServiceRoutes = SCSServiceRoutes(
             graph=self._require_graph,
             jobs=self._require_jobs,
@@ -82,15 +84,6 @@ class SCSDaemon:
             binding_for_repository=self._binding_for_repository,
         )
         self._register_methods()
-
-    @property
-    def mcp_address(self) -> tuple[str, int]:
-        """Return the bound internal MCP address for health checks and tests."""
-
-        server = self._mcp_server
-        if server is None:
-            raise RuntimeError("SCS MCP server is not started")
-        return server.address
 
     async def start(self) -> None:
         """Validate isolation, acquire ownership, and begin accepting requests."""
@@ -103,7 +96,6 @@ class SCSDaemon:
         process_lock.acquire()
         runner: IngestionJobRunner | None = None
         server: WireServer | None = None
-        mcp_server: MCPHTTPServer | None = None
         identity: IdentityPublisher | None = None
         try:
             embeddings: EmbeddingProvider
@@ -220,19 +212,17 @@ class SCSDaemon:
                 if stores.lookup_graph(record.canonical_root) is None:
                     continue
                 await self._ensure_watcher(record.canonical_root, jobs=jobs)
-            server = WireServer(self._router, socket_path=paths.runtime / "scs.sock")
-            await server.start()
-            mcp_server = MCPHTTPServer(
-                build_mcp(SCSWireGateway(server.socket_path)),
-                host=self.settings.mcp_internal_host,
-                port=self.settings.mcp_internal_port,
+            server = WireServer(
+                self._router,
+                socket_path=paths.runtime / "scs.sock",
+                client_count_changed=self._client_count_changed,
             )
+            await server.start()
             self._graph = None
             self._jobs = jobs
             self._runner = runner
             self._embeddings = embeddings
             self._server = server
-            await mcp_server.start()
             identity = IdentityPublisher(
                 paths.runtime / "daemon-service.json",
                 service="scs-daemon",
@@ -243,8 +233,6 @@ class SCSDaemon:
         except BaseException:
             if identity is not None:
                 identity.remove_owned()
-            if mcp_server is not None:
-                await mcp_server.stop()
             if server is not None:
                 await server.stop()
             watchers, self._watchers = tuple(self._watchers.values()), {}
@@ -260,7 +248,6 @@ class SCSDaemon:
             self._runner = None
             self._embeddings = None
             raise
-        self._mcp_server = mcp_server
         self._identity = identity
         self._lock = process_lock
         self._started = True
@@ -268,10 +255,9 @@ class SCSDaemon:
     async def stop(self) -> None:
         """Stop new requests before releasing the root-scoped ownership lock."""
 
-        mcp_server = self._mcp_server
-        self._mcp_server = None
-        if mcp_server is not None:
-            await mcp_server.stop()
+        shutdown_task, self._shutdown_task = self._shutdown_task, None
+        if shutdown_task is not None:
+            shutdown_task.cancel()
         server = self._server
         self._server = None
         if server is not None:
@@ -303,6 +289,43 @@ class SCSDaemon:
         self._embeddings = None
         self._started = False
 
+    async def wait_for_shutdown_request(self) -> None:
+        """Wait until signals or the final attached client request shutdown."""
+
+        await self._shutdown_requested.wait()
+
+    def request_shutdown(self) -> None:
+        """Request orderly daemon teardown."""
+
+        self._shutdown_requested.set()
+
+    def arm_startup_grace(self) -> None:
+        """Stop a lazily spawned daemon that never receives a client lease."""
+
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(
+                self._shutdown_after(UNATTACHED_STARTUP_GRACE_SECONDS, unattached=True)
+            )
+
+    async def _client_count_changed(self, count: int) -> None:
+        """Debounce zero-client shutdown across bridge handoffs."""
+
+        task, self._shutdown_task = self._shutdown_task, None
+        if task is not None:
+            task.cancel()
+        if count > 0:
+            self._ever_attached = True
+            return
+        if self._ever_attached:
+            self._shutdown_task = asyncio.create_task(
+                self._shutdown_after(CLIENT_HANDOFF_SECONDS, unattached=False)
+            )
+
+    async def _shutdown_after(self, delay: float, *, unattached: bool) -> None:
+        await asyncio.sleep(delay)
+        if not unattached or not self._ever_attached:
+            self.request_shutdown()
+
     def _register_methods(self) -> None:
         @self._router.method("system.health")
         async def health(_params: dict[str, object]) -> dict[str, object]:
@@ -314,6 +337,10 @@ class SCSDaemon:
                 "protocol_min": 1,
                 "protocol_max": 1,
             }
+
+        @self._router.method("system.client.attach")
+        async def client_attach(_params: dict[str, object]) -> dict[str, object]:
+            return {"generation": self._generation, "attached": True}
 
         @self._router.method("repositories.status")
         async def repository_statuses(params: dict[str, object]) -> dict[str, object]:
@@ -540,12 +567,12 @@ async def serve(settings: SCSSettings | None = None) -> None:
     """Run SCS until SIGINT or SIGTERM and always release owned artifacts."""
 
     daemon = SCSDaemon(settings)
-    stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for received_signal in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(received_signal, stopped.set)
+        loop.add_signal_handler(received_signal, daemon.request_shutdown)
     await daemon.start()
+    daemon.arm_startup_grace()
     try:
-        await stopped.wait()
+        await daemon.wait_for_shutdown_request()
     finally:
         await daemon.stop()

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from scs.wire.client import SCSClient
+from scs.wire.client import SCSClient, SCSConnection
 from scs.wire.router import Router
 from scs.wire.server import WireServer
 
@@ -143,3 +143,40 @@ async def test_live_foreign_socket_is_never_unlinked(
         foreign.close()
         await foreign.wait_closed()
         socket_path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_attached_client_connection_owns_a_live_lease(
+    short_runtime_path: Path,
+) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+    router = Router()
+    counts: list[int] = []
+
+    @router.method("system.client.attach")
+    async def attach(_params: dict[str, object]) -> dict[str, object]:
+        return {"attached": True}
+
+    server = WireServer(
+        router,
+        socket_path=socket_path,
+        client_count_changed=lambda count: _record_count(counts, count),
+    )
+    await server.start()
+    connection = SCSConnection(socket_path)
+    try:
+        assert await connection.connect() == {"attached": True}
+        assert counts == [1]
+    finally:
+        await connection.close()
+        for _ in range(20):
+            if counts == [1, 0]:
+                break
+            await asyncio.sleep(0.01)
+        await server.stop()
+
+    assert counts == [1, 0]
+
+
+async def _record_count(counts: list[int], count: int) -> None:
+    counts.append(count)
