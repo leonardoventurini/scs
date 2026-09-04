@@ -93,3 +93,12 @@ the rewrite is proven incomplete or corrupt.
   83.99% coverage, and 98 Rust tests.
 - Removed the temporary replacement rules, fresh clone, and recovery bundle
   only after remote validation passed.
+- Published `v0.1.3` from the rewritten history after green macOS, Linux, and
+  supply-chain gates. Both unpacked wheels, the unpacked source archive,
+  installer, constraints, SBOM, and checksum manifest passed the prohibited-name
+  content audit.
+- Replaced the local installation with `0.1.3`, preserved the existing index
+  and configuration, and verified all ten MCP tools against 2,542 indexed nodes.
+- Deleted the superseded `v0.1.1` and `v0.1.2` GitHub Releases because their
+  pre-rewrite wheel assets retained removed provenance. Their rewritten,
+  content-clean Git tags remain as historical version markers.
