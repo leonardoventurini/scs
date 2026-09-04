@@ -8,8 +8,10 @@ Project root: `/Users/leonardo/Repositories/mentagen/scs`
 
 The local machine has no installed SCS executable, retains 2.2 GB of prior SCS
 state, and configures Codex to use the retired loopback HTTP MCP endpoint. The
-published `v0.1.1` artifacts need validation through the same path documented
-for end users before the README can present a concise quick start.
+published artifacts need validation through the same path documented for end
+users before the README can present a concise quick start. The initial
+`v0.1.1` trial exposed a daemon-lifecycle defect, so the corrected `v0.1.2`
+artifact is the release under final validation.
 
 ## Evidence and uncertainty
 
@@ -26,7 +28,7 @@ for end users before the README can present a concise quick start.
 - Preserve `~/.scs/config.toml` byte-for-byte with owner-only permissions.
 - Remove all other existing SCS persistent state, logs, and runtime artifacts.
 - Replace the old Codex entry with the installed release's stdio command.
-- Install only from the public `v0.1.1` installer after checksum verification.
+- Install only from the public `v0.1.2` installer after checksum verification.
 - Explicitly index `/Users/leonardo/Repositories/mentagen/scs`; a fresh root
   must remain empty before that request.
 - Validate version, health, index completion, graph statistics, representative
@@ -68,14 +70,14 @@ HTTP entry only if the retired service is still intentionally available.
 
 ## Executable checklist
 
-- [ ] Preserve configuration bytes and mode; isolate all prior state.
-- [ ] Verify and install the public `v0.1.1` artifact.
-- [ ] Replace Codex HTTP configuration with stdio configuration.
-- [ ] Confirm fresh-root emptiness before explicit indexing.
-- [ ] Reindex this repository and verify graph/search behavior.
-- [ ] Exercise stdio MCP and lazy shared-daemon lifecycle behavior.
-- [ ] Remove isolated prior state only after successful validation.
-- [ ] Update, verify, commit, and push the streamlined quick start.
+- [x] Preserve configuration bytes and mode; isolate all prior state.
+- [x] Verify and install the public `v0.1.2` artifact.
+- [x] Replace Codex HTTP configuration with stdio configuration.
+- [x] Confirm fresh-root emptiness before explicit indexing.
+- [x] Reindex this repository and verify graph/search behavior.
+- [x] Exercise stdio MCP and lazy shared-daemon lifecycle behavior.
+- [x] Remove isolated prior state only after successful validation.
+- [x] Update, verify, commit, and push the streamlined quick start.
 
 ## Verification
 
@@ -87,3 +89,21 @@ HTTP entry only if the retired service is still intentionally available.
   representative tool.
 - Run repository tests affected by any defect fix, followed by `just verify`.
 - Confirm final Git/Codex/SCS state and GitHub CI after documentation changes.
+
+## Executed evidence
+
+- The retained configuration remained mode `600` with SHA-256
+  `6806927fe977d6d781d5ac455108ca5f316be1ec2afefb9bbecf0985c46c6f31`.
+- The public `v0.1.2` installer matched `SHA256SUMS`; the installed command
+  reported `0.1.2`, and Codex reported an enabled stdio entry using it.
+- Before explicit reindexing, no catalog, jobs database, or index file existed.
+- Reindex job `ingest_9da75da5f16d` completed all seven batches. The released
+  daemon retained the same live PID and generation after its submitting client
+  disconnected while the job was active.
+- MCP initialized through the installed command, exposed exactly ten tools,
+  reported 2,542 nodes and embeddings across 177 files, and returned relevant
+  semantic results. Two simultaneous bridges shared one daemon identity.
+- GitHub release workflow `33925529624` passed validation, both wheel builds
+  and installation smoke tests, checksums, attestation, and publication.
+- The isolated 2.2 GB legacy state and 88 MB `v0.1.1` trial state were deleted
+  only after all release-installed validation succeeded.

@@ -8,7 +8,7 @@ SCS starts with an empty index. It does not migrate, inspect, or recreate any
 legacy External product graph data. Repositories are added only through an explicit CLI,
 MCP, or client request.
 
-## Install
+## Quick start
 
 Stable releases support Apple Silicon macOS and x86-64 Linux with CPython
 3.14. Download the versioned installer and checksum manifest from the same
@@ -21,6 +21,7 @@ curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSI
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/SHA256SUMS"
 shasum -a 256 -c SHA256SUMS --ignore-missing
 sh "scs-installer-${VERSION}.sh"
+scs version
 ```
 
 On Linux, use `sha256sum -c SHA256SUMS --ignore-missing`. The installer pins
@@ -29,22 +30,34 @@ the release, verifies its wheel and constraints, provisions a checksum-verified
 artifacts are not Apple-signed or notarized; checksums and GitHub build
 provenance provide release integrity.
 
-Re-run the same procedure to upgrade or reinstall SCS. The installer replaces
-the `uv` tool atomically, stops an older daemon first, and preserves `SCS_HOME`,
-including configuration and indexes.
+Configure an embedding provider in `~/.scs/config.toml` before indexing. For
+OpenAI, the minimum configuration is:
 
-### Configure Codex
-
-Add the installed executable as a local stdio MCP server:
-
-```bash
-codex mcp add scs -- "$HOME/.local/bin/scs" mcp
-codex mcp get scs
+```toml
+embedding_provider = "openai"
+embedding_model = "text-embedding-3-large"
+embedding_dimension = 3072
+openai_api_key = "replace-with-your-key"
 ```
 
-If `scs` is already configured with the former local HTTP URL, run
-`codex mcp remove scs` before adding it again. Restart open Codex clients after
-changing MCP configuration. The equivalent manual entry in
+Keep that file owner-readable only (`chmod 600 ~/.scs/config.toml`). Local OMLX
+and in-process MLX examples are documented under
+[Embedding configuration](#embedding-configuration).
+
+Replace any old SCS entry, register the installed stdio MCP bridge with Codex,
+then explicitly index the current repository:
+
+```bash
+codex mcp remove scs 2>/dev/null || true
+codex mcp add scs -- "$HOME/.local/bin/scs" mcp
+codex mcp get scs
+scs index "$PWD"
+scs status
+```
+
+Indexing is durable background work. `scs status` reports progress, and Codex
+can call `get_graph_stats` once the index is ready. Restart open Codex clients
+after changing MCP configuration. The equivalent manual entry in
 `~/.codex/config.toml` is:
 
 ```toml
@@ -56,6 +69,10 @@ args = ["mcp"]
 Use `/home/you/.local/bin/scs` on Linux. Each Codex session owns a small stdio
 bridge. The first bridge starts the shared daemon, concurrent bridges reuse it,
 and closing the final bridge shuts it down cleanly.
+
+Re-run the versioned installation procedure to upgrade or reinstall SCS. The
+installer replaces the `uv` tool atomically, stops an older daemon first, and
+preserves `SCS_HOME`, including configuration and indexes.
 
 ## Storage architecture
 
