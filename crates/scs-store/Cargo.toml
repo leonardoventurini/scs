@@ -1,6 +1,6 @@
 [package]
 name = "scs-store"
-description = "SQLite + USearch storage layer for the SCS knowledge graph."
+description = "SCS compatibility adapter for the TSG graph and embedding engine."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

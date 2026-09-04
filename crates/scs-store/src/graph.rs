@@ -1249,10 +1249,7 @@ mod tests {
     fn deleting_repository_removes_graph_vectors_and_catalog_state() {
         let (_directory, graph) = graph();
         let repository = graph.get_or_create_repo("/repo").unwrap();
-        let metadata = HashMap::from([(
-            "file_path".to_string(),
-            serde_json::json!("src/lib.rs"),
-        )]);
+        let metadata = HashMap::from([("file_path".to_string(), serde_json::json!("src/lib.rs"))]);
         graph
             .upsert_node(
                 "file",

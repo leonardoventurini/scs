@@ -5,26 +5,25 @@
 
 use std::path::{Path, PathBuf};
 
-/// Derive the USearch index path from a database path.
+/// Derive the legacy USearch sidecar path from a database path.
 ///
-/// Replaces the `.db` extension with `.usearch`, keeping the index file
-/// co-located with the database for easy discovery and backup.
+/// SCS retains this path in its public configuration so a TSG cutover can
+/// preserve the old sidecar for rollback. TSG owns its active accelerator.
 fn derive_index_path(db_path: &Path) -> PathBuf {
     db_path.with_extension("usearch")
 }
 
 /// Configuration for a SCS knowledge graph instance.
 ///
-/// Controls database location, vector index location, embedding dimensions,
-/// and connection pool sizing. Defaults match the Python SCS implementation
-/// for backward compatibility.
+/// Controls the TSG database location and embedding dimensions. The legacy
+/// sidecar and pool settings remain for source compatibility and rollback.
 #[derive(Debug, Clone)]
 pub struct SCSConfig {
-    /// Path to the SQLite database file.
+    /// Path to the authoritative TSG database file.
     /// Default: `~/.scs/index.db`
     pub db_path: PathBuf,
 
-    /// Path to the USearch HNSW index file.
+    /// Path to the legacy USearch HNSW sidecar, retained for rollback backup.
     /// Default: same directory as `db_path`, named `index.usearch`.
     pub index_path: PathBuf,
 
@@ -33,8 +32,7 @@ pub struct SCSConfig {
     /// Default: 768 (Nomic Embed Text v1.5 output dimension).
     pub embedding_dim: usize,
 
-    /// Maximum number of connections in the r2d2 pool.
-    /// Default: 4 (sufficient for most single-app workloads).
+    /// Legacy connection-pool setting retained for API compatibility.
     pub pool_size: u32,
 }
 

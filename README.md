@@ -8,6 +8,29 @@ SCS starts with an empty index. It does not migrate, inspect, or recreate any
 legacy External product graph data. Repositories are added only through an explicit CLI,
 MCP, or client request.
 
+## Storage architecture
+
+SCS uses [TSG](https://github.com/leonardoventurini/tsg) as its sole durable
+graph and embedding engine. The Rust `scs-store` crate is a compatibility
+adapter: it maps SCS repository scopes, typed code nodes and relationships,
+ingestion checkpoints, metadata filters, traversal, and semantic search onto
+generic TSG primitives. The Python, SCSWire, MCP, and CLI contracts therefore
+remain SCS-owned without coupling TSG to code intelligence.
+
+The dependency is pinned to the immutable `v0.2.0` Git tag and its resolved
+commit in `Cargo.lock`; building SCS does not require a sibling TSG checkout.
+TSG keeps canonical graph, catalog, and embedding state transactionally in
+SQLite and treats its vector index as a rebuildable accelerator.
+
+An index created by the former SCS storage engine is not migrated in place.
+When that incompatible database is first opened, SCS moves the database, WAL,
+SHM, and legacy `.usearch` sidecar (when present) to unique
+`*.pre-tsg.backup` names, then creates an empty TSG index. Run
+`scs reindex <repo>` to rebuild derived state from repository source. For
+rollback, stop SCS, retain the new TSG files separately, restore the backed-up
+legacy filenames, and run the previous SCS binary. Backup removal is always an
+explicit operator action.
+
 Semantic embeddings are generated from parser-owned entity text. SCS defaults
 to the OpenAI embeddings API, while local OMLX and in-process MLX providers are
 available by explicit configuration. SCS does not send repository files to a

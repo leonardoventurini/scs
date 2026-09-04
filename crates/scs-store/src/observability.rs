@@ -1,8 +1,9 @@
 //! Bounded in-memory observability for knowledge storage operations.
 //!
-//! This module records recent logical SQLite and USearch operations without
-//! writing back into the database. It is intentionally process-local and
-//! bounded so observing slow queries cannot become another persistence path.
+//! Backend labels remain stable for existing clients while TSG owns the
+//! underlying SQLite and vector operations. Events are intentionally
+//! process-local and bounded so observing slow queries cannot become another
+//! persistence path.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;

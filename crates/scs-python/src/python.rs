@@ -169,7 +169,7 @@ impl PyKnowledgeGraph {
     /// Opens the database, initializes the current schema, and returns a fully ready graph.
     ///
     /// # Arguments
-    /// * `db_path` — Path to the SQLite database file.
+    /// * `db_path` — Path to the authoritative TSG database file.
     /// * `embedding_dim` — Embedding vector dimension (default: 768).
     #[new]
     #[pyo3(signature = (db_path, embedding_dim=768))]
@@ -307,8 +307,8 @@ impl PyKnowledgeGraph {
 
     /// Bulk-delete nodes matching a type + metadata key/value filter.
     ///
-    /// Far faster than iterating in Python for large node sets — everything
-    /// stays in SQLite as two bulk DELETE statements.
+    /// Far faster than iterating in Python for large node sets because the
+    /// complete operation stays behind the native TSG boundary.
     fn delete_nodes_by_metadata(
         &self,
         py: Python<'_>,
@@ -676,7 +676,7 @@ impl PyKnowledgeGraph {
     ///
     /// The GIL is released via `py.allow_threads` so concurrent library
     /// ingestion workers (ThreadPoolExecutor) don't serialize on the GIL.
-    /// JSON deserialization and SQLite writes both happen outside the GIL.
+    /// JSON deserialization and TSG writes both happen outside the GIL.
     fn batch_upsert_nodes(&self, py: Python<'_>, nodes_json: &str) -> PyResult<usize> {
         let nodes: Vec<scs_store::batch::BatchNode> =
             serde_json::from_str(nodes_json).map_err(json_err)?;
@@ -697,7 +697,7 @@ impl PyKnowledgeGraph {
             .map_err(scs_err)
     }
 
-    /// Persist pending vector-index writes if the USearch sidecar is dirty.
+    /// Confirm that TSG's vector accelerator is durable and ready.
     ///
     /// The GIL is released because a dirty flush rewrites the full sidecar.
     fn flush_vector_index(&self, py: Python<'_>) -> PyResult<bool> {
@@ -823,8 +823,7 @@ impl PyKnowledgeGraph {
 
     /// Remove an ingested file record and its associated nodes.
     ///
-    /// Releases the GIL because stale cleanup can delete many files and each
-    /// delete may trigger SQLite WAL checkpoint work.
+    /// Releases the GIL because stale cleanup can delete many durable records.
     fn delete_ingested_file(
         &self,
         py: Python<'_>,
@@ -947,7 +946,7 @@ impl PyKnowledgeGraph {
             .map_err(scs_err)
     }
 
-    /// Clear all embedding vectors from the USearch index.
+    /// Clear all embedding vectors from TSG.
     ///
     /// Used when the embedding model changes but the dimension stays the same.
     /// Releases the GIL — safe for asyncio.to_thread callers.

@@ -27,21 +27,21 @@ primitives. Python, wire, MCP, and CLI behavior remain compatible.
 - Preserve Python method signatures and serialized model shapes.
 - Preserve enum parity, GIL release, bounded query, single-writer, and explicit
   indexing invariants.
-- A legacy SCS index is never mutated into the new schema. On explicit reindex,
-  move it to a timestamped rollback backup and create a fresh TSG store.
+- A legacy SCS index is never mutated into the new schema. On first incompatible
+  open, move it to a unique rollback backup and create a fresh TSG store.
 - A fresh or restarted SCS root stays empty until an explicit index request.
 - Do not read or derive state from External product.
 
 ## Contracts
 
-- One adapter transaction durably commits nodes, edges, embeddings, and
-  ingestion acknowledgement for an indexed batch.
+- TSG transactions durably commit each graph, embedding, or catalog batch.
+- Ingestion acknowledgement occurs only after graph writes and durable vector
+  readiness succeed, preserving the existing retry checkpoint contract.
 - A failed parse or missing durable vector never records a successful hash.
 - Repository and metadata queries retain their current scope and pagination.
 - Exact and accelerated searches preserve ordering and filtering contracts.
-- Startup detects legacy state and reports reindex-required without silently
-  deleting or converting it.
-- Explicit reindex performs a recoverable backup before creating new state.
+- Startup detects incompatible legacy state, preserves it without conversion,
+  and creates an empty TSG index for explicit source reindexing.
 - SCS remains fully functional without the sibling TSG checkout.
 
 ## Risks
@@ -82,12 +82,12 @@ tags are immutable.
 
 ## Executable checklist
 
-- [ ] Capture current adapter behavior as contract tests.
-- [ ] Consume released TSG through an immutable Git tag.
-- [ ] Implement SCS-to-TSG model and error mapping.
-- [ ] Move ingestion transactions onto the unified commit boundary.
-- [ ] Implement legacy detection, backup, and explicit reindex cutover.
-- [ ] Remove replaced graph/vector implementation and dependencies.
-- [ ] Update operations, architecture, and rollback documentation.
+- [x] Capture current adapter behavior as contract tests.
+- [x] Consume released TSG through an immutable Git tag.
+- [x] Implement SCS-to-TSG model and error mapping.
+- [x] Move ingestion catalog transactions onto TSG's commit boundary.
+- [x] Implement legacy detection, backup, and explicit reindex cutover.
+- [x] Remove replaced graph/vector implementation and dependencies.
+- [x] Update operations, architecture, and rollback documentation.
 - [ ] Run targeted tests followed by `just verify`.
-- [ ] Record the architecture decision and commit each verified unit.
+- [x] Record the architecture decision and commit each verified unit.
