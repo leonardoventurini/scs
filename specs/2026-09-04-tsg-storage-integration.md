@@ -89,5 +89,5 @@ tags are immutable.
 - [x] Implement legacy detection, backup, and explicit reindex cutover.
 - [x] Remove replaced graph/vector implementation and dependencies.
 - [x] Update operations, architecture, and rollback documentation.
-- [ ] Run targeted tests followed by `just verify`.
+- [x] Run targeted tests followed by `just verify`.
 - [x] Record the architecture decision and commit each verified unit.
