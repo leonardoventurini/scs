@@ -47,10 +47,8 @@ jobs:
       matrix:
         include:
           - os: macos-15
-            compatibility: ""
             expected: scs-${{ needs.validate.outputs.version }}-cp314-cp314-macosx_11_0_arm64.whl
           - os: ubuntu-24.04
-            compatibility: manylinux_2_28
             expected: scs-${{ needs.validate.outputs.version }}-cp314-cp314-manylinux_2_28_x86_64.whl
     runs-on: ${{ matrix.os }}
     env:
@@ -67,15 +65,20 @@ jobs:
           python-version: "3.14"
       - name: Install Rust 1.98
         run: rustup toolchain install 1.98 --profile minimal
-      - name: Build wheel
-        shell: bash
-        run: |
-          arguments=(--release --locked --out dist)
-          if [[ -n '${{ matrix.compatibility }}' ]]; then
-            arguments+=(--compatibility '${{ matrix.compatibility }}')
-          fi
-          uvx --from 'maturin==1.15.0' maturin build "${arguments[@]}"
-          test -f 'dist/${{ matrix.expected }}'
+      - name: Build macOS wheel
+        if: runner.os == 'macOS'
+        run: uvx --from 'maturin==1.15.0' maturin build --release --locked --out dist
+      - name: Build manylinux wheel
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          maturin-version: v1.15.0
+          target: x86_64
+          manylinux: "2_28"
+          args: --release --locked --out dist -i python3.14
+          sccache: true
+      - name: Validate artifact identity
+        run: test -f 'dist/${{ matrix.expected }}'
       - name: Inspect native linkage
         shell: bash
         run: |

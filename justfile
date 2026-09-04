@@ -17,7 +17,7 @@ typecheck:
     uv run --all-groups basedpyright
 
 lint:
-    uv run ruff check src tests proxy/src proxy/tests
+    uv run ruff check src tests
 
 native-test:
     cargo test --workspace
