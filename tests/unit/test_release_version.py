@@ -8,6 +8,8 @@ from types import ModuleType
 
 import pytest
 
+from scs import __version__
+
 
 def _module() -> ModuleType:
     path = Path(__file__).parents[2] / "scripts" / "check-release-version.py"
@@ -22,11 +24,11 @@ def test_current_release_versions_are_identical() -> None:
     module = _module()
     root = Path(__file__).parents[2]
 
-    assert module.validate("v0.1.3", root) == "0.1.3"
+    assert module.validate(f"v{__version__}", root) == __version__
     assert module.project_versions(root) == {
-        "python": "0.1.3",
-        "rust": "0.1.3",
-        "runtime": "0.1.3",
+        "python": __version__,
+        "rust": __version__,
+        "runtime": __version__,
     }
 
 

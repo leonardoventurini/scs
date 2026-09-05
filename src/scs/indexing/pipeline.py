@@ -121,7 +121,7 @@ class _StructuralPlan:
     parsed: tuple[_ParsedFile, ...]
     nodes: list[dict[str, object]]
     node_ids: dict[str, str]
-    entity_node_ids: dict[tuple[str, str], str]
+    entity_node_ids: dict[tuple[str, int], str]
     replaced_ids: set[str]
     edges: list[dict[str, object]]
 
@@ -149,8 +149,19 @@ def _run(coroutine: Coroutine[object, object, T]) -> T:
     raise RuntimeError("IngestionPipeline must run off the event-loop thread")
 
 
-def _node_id(repo_path: str, rel_path: str, entity: ParsedEntity) -> str:
+def _node_id(
+    repo_path: str, rel_path: str, entity: ParsedEntity, occurrence: int = 0
+) -> str:
+    """Preserve legacy symbol IDs while distinguishing repeated occurrences.
+
+    Ordinals are local to a file/kind/qualified-name group, so unrelated symbols
+    and whitespace changes do not change identities. A separate prefix keeps
+    occurrence identities distinct from canonical absolute-repository identities.
+    """
+
     identity = f"{repo_path}:{rel_path}:{entity.kind.value}:{entity.qualified_name}"
+    if occurrence:
+        identity = f"occurrence:{occurrence}:{identity}"
     return hashlib.sha256(identity.encode()).hexdigest()[:32]
 
 
@@ -396,9 +407,9 @@ class IngestionPipeline:
                 break
             self._graph.flush_vector_index_sync()
             batch_node_ids = [
-                plan.entity_node_ids[(item.entry.rel_path, entity.qualified_name)]
+                plan.entity_node_ids[(item.entry.rel_path, position)]
                 for item in batch.files
-                for entity in item.entities
+                for position in range(len(item.entities))
             ]
             if (
                 self._embeddings is not None
@@ -539,13 +550,17 @@ class IngestionPipeline:
     ) -> _StructuralPlan:
         nodes: list[dict[str, object]] = []
         qualified_to_id: dict[str, str] = {}
-        entity_node_ids: dict[tuple[str, str], str] = {}
+        entity_node_ids: dict[tuple[str, int], str] = {}
         replaced_ids: set[str] = set()
         for item in parsed:
-            for entity in item.entities:
-                node_id = _node_id(repo_path, item.entry.rel_path, entity)
+            occurrences: dict[tuple[NodeType, str], int] = {}
+            for position, entity in enumerate(item.entities):
+                identity = (entity.kind, entity.qualified_name)
+                occurrence = occurrences.get(identity, 0)
+                occurrences[identity] = occurrence + 1
+                node_id = _node_id(repo_path, item.entry.rel_path, entity, occurrence)
                 qualified_to_id[entity.qualified_name] = node_id
-                entity_node_ids[(item.entry.rel_path, entity.qualified_name)] = node_id
+                entity_node_ids[(item.entry.rel_path, position)] = node_id
                 metadata: dict[str, object] = {
                     "file_path": item.entry.rel_path,
                     "language": item.entry.language,
@@ -717,7 +732,7 @@ class IngestionPipeline:
     def _embed_batch(
         self,
         batch: _IngestionBatch,
-        entity_node_ids: dict[tuple[str, str], str],
+        entity_node_ids: dict[tuple[str, int], str],
         result: IngestionResult,
     ) -> bool:
         if self._embeddings is None:
@@ -747,11 +762,15 @@ class IngestionPipeline:
             return False
         pairs = [
             (
-                entity_node_ids[(item.entry.rel_path, entity.qualified_name)],
+                entity_node_ids[(item.entry.rel_path, position)],
                 vector,
             )
-            for (item, entity), vector in zip(
-                ((item, entity) for item in batch.files for entity in item.entities),
+            for (item, position), vector in zip(
+                (
+                    (item, position)
+                    for item in batch.files
+                    for position in range(len(item.entities))
+                ),
                 vectors,
                 strict=True,
             )
