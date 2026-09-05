@@ -33,3 +33,17 @@ bounded synthetic comparison, not a promised end-to-end ingestion speedup.
 Install the published SCS wheel and verify the actual project through a fresh MCP
 connection. Preserve active durable recovery work. Rollback uses a prior compatible
 installer and restores the known full-rebuild performance penalty.
+
+## Executed rollout
+
+TSG 0.2.3 and SCS 0.1.8 published with all CI/release checks passing. The released
+macOS SCS wheel was checksum-verified and installed. Recovery completed, followed
+by a fresh MCP ingestion with zero changed/failed files. Independent MCP checks
+confirmed 3,010 files and matching 22,829 nodes/embeddings/vectors, distinct source
+aliases, and relevant semantic board-tool searches. A live post-upgrade sample
+processed 980 inputs across 103.284 seconds with 98.81 seconds of model time,
+removing the previous long gaps between model requests.
+
+Daemon lifecycle timeouts during large recovery remain an observed limitation;
+this change does not claim to fix them. Detailed recovery and rollback evidence is
+in `specs/2026-09-05-distinct-entity-occurrences.md`.

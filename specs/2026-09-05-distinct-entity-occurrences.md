@@ -38,8 +38,8 @@ Do not invent precise call-target relationships as part of this fix.
 - [x] Bump SCS to an unused patch version and update release metadata/lockfiles.
 - [x] Record the decision and verified results; commit with hooks enabled.
 - [x] Push main, await CI, tag and publish the immutable GitHub release.
-- [ ] Verify checksums, install the released artifact, and restart the daemon.
-- [ ] Ingest Mentagen and verify graph/search readiness through MCP.
+- [x] Verify checksums, install the released artifact, and restart the daemon.
+- [x] Ingest Mentagen and verify graph/search readiness through MCP.
 
 ## Release, risks, and recovery
 
@@ -262,10 +262,10 @@ supports adding/removing vectors and saving the index:
 https://unum-cloud.github.io/USearch/rust/index.html
 
 - [x] Verify and commit the upstream mutation fix and decision record.
-- [ ] Publish a new immutable TSG release and update SCS's pinned consumer.
+- [x] Publish a new immutable TSG release and update SCS's pinned consumer.
 - [x] Run SCS's affected native/indexing tests and full verification.
-- [ ] Publish/install the resulting SCS patch, preserving current recovery work.
-- [ ] Verify completed Mentagen ingestion and fresh MCP search/alias checks.
+- [x] Publish/install the resulting SCS patch, preserving current recovery work.
+- [x] Verify completed Mentagen ingestion and fresh MCP search/alias checks.
 
 The active 0.1.6 force job remains running during development. Installation must
 respect durable job/file checkpoints; avoid discarding completed model work.
@@ -284,3 +284,92 @@ to 1.038 seconds across sixteen 32-vector commits. Sidecar serialization remains
 During verification, concurrent Mentagen source edits caused recovery job
 `ingest_6e6dfbae19df` to merge at batch 57 into `ingest_68cdf82c6e07`, retaining
 completed durable checkpoints. Final completion must follow the merged job.
+
+The merged force job subsequently exhausted its three bounded attempts because
+`decisions/2026-09-05-video-audio-enhancement.md` changed relative to its frozen
+snapshot. It failed safely before further structural writes; 1,772 acknowledged
+files and their vectors remain stored. The original structural graph had already
+been rebuilt in one complete pass. After installing 0.1.8, use normal incremental
+ingestion of current sources to finish changed or missing embeddings without
+repeating already valid model work. Do not claim the frozen force job completed.
+This changes the verification rollout, not the storage or source-edit contract.
+
+## SCS 0.1.8 published installation and live throughput
+
+TSG [v0.2.3](https://github.com/leonardoventurini/tsg/releases/tag/v0.2.3)
+published after CI 33990040206 and release 33990185824 passed. The downloaded
+crate SHA256 is `309c52d3349260150ad0fbfbce4a8b873d04ba0b815845a18ab53d0a8b28ee0e`.
+SCS [v0.1.8](https://github.com/leonardoventurini/scs/releases/tag/v0.1.8)
+published from `431ce2ffee385e25c0f7af369e2f63a55873dada` after
+[CI 33990398416](https://github.com/leonardoventurini/scs/actions/runs/33990398416)
+and [release 33990885178](https://github.com/leonardoventurini/scs/actions/runs/33990885178)
+passed. Both platform wheels passed checkout-independent installation smoke tests.
+All six downloaded artifact checksums match. The installed macOS wheel SHA256 is
+`7afff93e7ff426ab145d1acf928b4c5332d19aacc95fcd01dad1525fcdfba426`; installer SHA256
+is `52bc7797a4165de9d8f06b026cca4de8d80a4bcc9a7868d2bc5de8826e123093`.
+SCS 0.1.7 remained published but was superseded before installation by 0.1.8.
+
+The installer preserved SCS_HOME/configuration. Installed CLI and Python module
+report 0.1.8 from the uv tool's site-packages. The old 0.1.6 process did not exit
+after generation-scoped graceful shutdown plus SIGTERM and a 30-second wait,
+because shutdown drains the entire active job. That specific process was stopped
+with SIGKILL, preserving SQLite and complete-file checkpoints. The first new MCP
+startup exceeded its 15-second bootstrap timeout during recovery and closed.
+The new worker reclaimed the interrupted normal job `ingest_8ec589064f74`, reducing
+its remaining plan from 39 to 34 batches, and continues draining that recovered
+work. A fresh MCP connection is still required after recovery completes.
+
+Live oMLX observations after the upgrade: 32 requests processed 980 inputs across
+a 103.284-second interval, with 98.81 seconds of reported model time. The earlier
+sample processed 256 inputs across 676.228 seconds with 34.67 seconds of model
+time. These are different source batches, not a controlled end-to-end benchmark,
+but the long non-model gaps are absent in the new sample. Provider, model, batch
+size, and 4,096 dimensions remain unchanged.
+
+## Final acceptance and reviewer handoff
+
+All requested SCS ingestion, generated fixture, upstream publication, installed
+consumer, and fresh MCP checks completed on 2026-09-05. The final released runtime
+is SCS 0.1.8 with TSG 0.2.3; the installed Python module is under
+`~/.local/share/uv/tools/scs/lib/python3.14/site-packages/scs`, not a source checkout.
+
+- Recovered normal job `ingest_8ec589064f74` completed all 34 remaining batches:
+  1,054 changed files, 9,162 entities/embeddings created, zero failed files, and
+  no semantic degradation. The recovery worker then exited cleanly.
+- A fresh MCP `ingest_project` request followed job `ingest_619fe1933054` to
+  completion: 3,010 discovered files, zero changed files, zero failed files, and
+  no semantic degradation. This proves current sources were fully acknowledged.
+- A second independent MCP stdio session verified the installed module/CLI and
+  daemon all report 0.1.8, the exact ten-tool inventory, and project-ready stats:
+  22,829 nodes, 22,829 embeddings, 22,829 indexed vectors, and 3,010 files.
+- MCP inspection returns AGENTS.md ID `5b48058529d9d1d8003dd7daf980559c` and
+  CLAUDE.md ID `7580b42990ca2c809f25db1a9cb51cb3`, with each requested lexical
+  metadata path preserved.
+- Both board/MCP response queries used semantic retrieval and returned relevant
+  indexed source. The board creation query ranked `server/mcp/tools/create-board.ts`
+  first; the response query ranked `McpToolDefinition` in
+  `server/ai/tools/read-only/mcp-adapter.ts` first.
+- Source safety remains unchanged: Mentagen files were not modified by this task.
+  Fixtures procedurally generate invented source, vectors, aliases, and collision
+  cases. Existing source edits observed during ingestion belonged to concurrent work.
+
+Recommended review order: occurrence fixtures and identity/embedding association;
+shared source-path validation and alias regressions; TSG query planning and
+incremental accelerator mutation; then pinned release metadata and this installed
+verification record. Public MCP/wire signatures, storage formats, and model
+configuration remain unchanged. The linked decision records explain alternatives
+and ordinal/canonical-reference limitations.
+
+Known operational limitation: the daemon's 15-second lifecycle timeout can expire
+while a large recovery or active job drains. This upgrade required a targeted
+forced stop of the old runtime and an initial failed MCP bootstrap; subsequent
+fresh sessions started and verified successfully after recovery. Existing MCP
+harness sessions may need reconnecting after an upgrade. This lifecycle behavior
+was observed and is not claimed fixed by the vector-update change.
+
+The opt-in TSG million-vector capacity test was not run; the bounded generated
+benchmark was explicitly run. Existing cargo-deny duplicate/license allowance
+warnings remain, with no security advisory ignored or bypassed. Rollback uses a
+prior compatible published installer without a schema migration, restoring that
+version's known identity/performance defects; rebuildable index data and source
+repositories remain separate.
