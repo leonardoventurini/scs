@@ -91,3 +91,37 @@ Linux CPython 3.14 container with read-only source. No native build or host pack
 changes were required for the focused Linux reproduction. Idle/attached clients
 still require graceful EOF; only partial-frame cases accept reset. Timed shutdown,
 socket removal, and client-count assertions remain intact.
+
+## Installed verification discovery: indexed relationship lookup
+
+SCS 0.1.4 was published from commit 305aa0d after CI 33978442829 and release
+33978925410 passed. The checksum-verified released installer installed the macOS
+wheel, and a fresh MCP session confirmed runtime 0.1.4 from site-packages. The old
+daemon briefly retained its lock while finishing shutdown, then exited without
+forced termination. Mentagen's structural graph stored 22,116 nodes; an interim
+read confirmed 3,936 persisted embeddings and the same vector index count.
+
+Concurrent source edits merged the initial watcher ingestion into a follow-up,
+preserving acknowledged files. During follow-up edge planning, a process sample
+showed repeated TSG attribute scans. SCS already memoizes positive and negative
+qualified-name lookups and creates an expression index for `$.qualified_name`.
+TSG's bound JSON path prevents SQLite from matching that index; its optional-scope
+OR predicate also inhibits scoped index access. An isolated EXPLAIN reproduced
+the scan, and validated literal-path SQL with direct scope equality used the index.
+
+The user authorizes direct upstream TSG fixes, publication, and consumer updates.
+Extend this task to correct internal TSG query planning with generated correctness
+and query-plan regressions, preserving public API, schema, value binding, and JSON
+path validation. Publish the verified upstream patch, update SCS to that immutable
+tag, and publish a new SCS patch. Existing release assets remain immutable. Final
+installed ingestion and search checks must use the resulting released wheel.
+
+A local isolated SQLite probe with 22,000 procedurally generated nodes and 100
+missing-name lookups took 0.897 seconds with the old query and 0.00104 seconds
+with the index-compatible query. This in-memory synthetic result validates the
+query-planning diagnosis; it is not an end-to-end ingestion time guarantee.
+
+SCS 0.1.5 consumes TSG v0.2.2 at immutable commit
+`6e6e607ed80704b4169ed52c5217e76d9a36196a`. The consumer `just verify` gate passes:
+244 Python tests, 98 Rust tests, strict types/lint, native build, and 84.58%
+coverage. The release identity check passes for v0.1.5.

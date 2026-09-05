@@ -32,11 +32,12 @@ verify repeat indexing, whitespace stability, and stale occurrence cleanup.
   lack occurrence coordinates; expanding ambiguous relationships into a Cartesian
   product would invent precision and increase graph size without evidence.
 
-No storage/wire schema migration or TSG version change is required. Whole-file
+The occurrence identity fix requires no storage/wire schema migration. Whole-file
 replacement handles stale occurrence IDs. Existing successful file hashes remain
-valid; failed files can be retried. After publication, the immutable SCS 0.1.4 release will be
-installed through the documented GitHub installer, then Mentagen will be indexed
-and searched through the service. Existing unpublished commits included in this release
+valid; failed files can be retried. SCS 0.1.4 was published and installed through the documented GitHub installer.
+Real Mentagen ingestion then exposed a separate upstream TSG query-planning
+bottleneck. Consume the verified upstream patch in SCS 0.1.5 and finish ingestion
+and search checks through its released wheel. Existing unpublished commits included in this release
 are listed in the associated spec.
 
 ## Verification and recovery
@@ -53,3 +54,11 @@ Linux may report a reset when an incomplete frame is discarded during shutdown.
 The partial-frame tests now accept reset or EOF, while idle/attached connections
 still require EOF. This changes test portability, not production behavior or
 shutdown guarantees. Both macOS and Linux daemon tests verify the corrected contract.
+
+The installed follow-up ingestion showed TSG scanning nodes for each distinct
+unresolved qualified name despite the existing expression index. SCS already
+caches lookup hits and misses. Correct the private query in TSG to use validated
+literal JSON paths and direct scope predicates, keeping lookup values bound.
+This preserves API and schema contracts and avoids a downstream SQL workaround.
+Query-plan regressions belong upstream beside generated correctness and security
+cases; SCS consumes the immutable release tag.

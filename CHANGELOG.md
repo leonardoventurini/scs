@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.5 - 2026-09-05
+
+- fix: use indexed qualified-name relationship lookups through the upstream TSG
+  attribute-query fix, avoiding repeated full graph scans during ingestion
+
 ## 0.1.4 - 2026-09-05
 
 - fix: retain repeated parsed entity occurrences with unique deterministic IDs
