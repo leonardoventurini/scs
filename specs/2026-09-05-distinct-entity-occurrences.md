@@ -188,3 +188,14 @@ ceilings. Coverage is 84.61% against 83%. An initial strict typecheck identified
 untyped empty-set branch in the new ignore-target collection; an explicit set type
 fixed it before the successful full run. Parent owns the version metadata and
 real-project verification commit, followed by publication/installed reindex.
+
+## SCS 0.1.6 real-project verification
+
+Against the current Mentagen checkout, temporary native structural-only storage
+completed both normal ingestion and force-snapshot ingestion: 2,973 files,
+22,448 entities, 19,003 edges, 25,132 unresolved/dropped edges, and zero failed
+files in each pass. Normal ingestion took 6.95 seconds; force snapshot validation
+and ingestion took 50.79 seconds. All 2,973 file hashes were acknowledged, with
+AGENTS.md and its CLAUDE.md alias retaining distinct identities. No model requests
+or persistent service data were used for this diagnostic. The released wheel
+with the configured model still requires final ingestion and search verification.
