@@ -87,3 +87,33 @@ SCS fixes after the upstream release and dependency upgrade.
 
 Recommended review order: force runner and integration regressions; watcher and
 Git fixtures; wire shutdown and real-socket tests; dependency lock and docs.
+
+## Local installation follow-up
+
+At the user's request, built an optimized locked wheel from source commit
+`8fef52df2771e2508d64a947144ad8712cdccce9` with TSG v0.2.1 and installed it into
+the global `uv` tool environment. Python dependencies were constrained to the
+existing `uv.lock`. This local patched build retains package version 0.1.3; no
+new SCS release was published. Artifact:
+`dist/local-8fef52d/scs-0.1.3-cp314-cp314-macosx_11_0_arm64.whl`, SHA-256
+`530490d35aa7e6154d65848ede4284d8b1c57b10911b9e38ffd7783b8c26e3bc`.
+
+Compared installed watcher, force runner, and wire server source against the
+repository. An isolated smoke test using the globally installed native parser,
+TSG store, pipeline, and name search passed.
+
+Restart required terminating old bridge processes and force-stopping the old
+daemon after graceful shutdown remained inside a costly native vector rebuild.
+A stack sample identified full accelerator reconstruction on individual node
+deletions. A first replacement reached readiness but hit its unattached startup
+grace while processing recovered work; it was restarted with an immediate
+temporary client lease. These observations identify follow-up lifecycle and
+indexing-performance issues, not additional fixes in this installation task.
+
+Final verified daemon PID: 51909; generation:
+`39ea30cd1c6d4e18b527ff34d7ff57d8`. Health and readiness passed from the installed
+environment. The interrupted job was marked reclaimed into a queued follow-up,
+and indexing resumed; full queue completion was not awaited. No index files were
+deleted. Existing MCP sessions require reconnection after bridge termination.
+Rollback remains reinstalling the published 0.1.3 wheel and restarting; retained
+runtime data does not require migration.
