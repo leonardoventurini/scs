@@ -47,3 +47,9 @@ installed artifact identity, and final ingestion results are recorded in the spe
 A prior compatible installer restores earlier code without deleting SCS_HOME;
 revert the source commit for code rollback. Older code still cannot ingest these
 colliding sources. Do not purge user indexes or bypass failed ingestion jobs.
+
+The release gate also exposed an existing platform-specific test assumption:
+Linux may report a reset when an incomplete frame is discarded during shutdown.
+The partial-frame tests now accept reset or EOF, while idle/attached connections
+still require EOF. This changes test portability, not production behavior or
+shutdown guarantees. Both macOS and Linux daemon tests verify the corrected contract.

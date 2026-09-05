@@ -7,6 +7,7 @@
 - fix: retain repeated parsed entity occurrences with unique deterministic IDs
   and associate each occurrence with its own embedding
 - test: add generated anonymized fixtures for real-world identity collisions
+- test: accept Linux reset semantics when closing incomplete socket frames
 
 - fix: detect repeated edits to already-dirty files during automatic reindexing
 - fix: close idle daemon clients on shutdown while draining active requests

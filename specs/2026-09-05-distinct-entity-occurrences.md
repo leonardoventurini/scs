@@ -73,3 +73,21 @@ and multiline layouts. No original application source or identifiers are copied.
   are reserved for the final installed-service verification.
 - Code review found no blocker; canonical qualified-name edge ambiguity and
   ordinal shifts within edited repeated groups remain documented limitations.
+
+## Linux CI discovery
+
+CI run 33977741437 passed on macOS and passed supply-chain checks. Linux passed
+242 tests, including every occurrence regression, but failed two preexisting
+shutdown cases (`partial_header`, `partial_body`) introduced by the unpublished
+lifecycle changes included in this release. Linux resets a Unix socket closed
+with unread partial data; the tests incorrectly require EOF and rethrow the reset
+in cleanup. Correct the test closure contract to accept EOF or ConnectionResetError
+only for incomplete-frame cases, preserving timeout, stop completion, socket
+removal, and lease-count assertions. Production wire behavior is unchanged.
+Rerun the full local gate and both CI platforms before tagging.
+
+The portable shutdown assertions pass all 17 daemon tests on macOS and in a
+Linux CPython 3.14 container with read-only source. No native build or host package
+changes were required for the focused Linux reproduction. Idle/attached clients
+still require graceful EOF; only partial-frame cases accept reset. Timed shutdown,
+socket removal, and client-count assertions remain intact.

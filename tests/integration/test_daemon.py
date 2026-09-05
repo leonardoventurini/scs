@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import shutil
 import socket
 import tempfile
@@ -231,16 +232,25 @@ async def test_shutdown_closes_waiting_clients(
         stop_task = asyncio.create_task(server.stop())
         try:
             await asyncio.wait_for(asyncio.shield(stop_task), timeout=1)
-            assert await asyncio.wait_for(reader.read(), timeout=1) == b""
+            try:
+                assert await asyncio.wait_for(reader.read(), timeout=1) == b""
+            except ConnectionResetError:
+                # Linux may reset a socket closed with unread partial-frame
+                # bytes. Both reset and EOF prove this incomplete request closed;
+                # idle and attached clients still require a graceful EOF.
+                if client_state not in {"partial_header", "partial_body"}:
+                    raise
             assert not socket_path.exists()
             assert counts == ([1, 0] if client_state == "attached" else [])
         finally:
             writer.close()
-            await writer.wait_closed()
+            with contextlib.suppress(ConnectionError):
+                await writer.wait_closed()
             await asyncio.wait_for(stop_task, timeout=1)
     finally:
         writer.close()
-        await writer.wait_closed()
+        with contextlib.suppress(ConnectionError):
+            await writer.wait_closed()
         await server.stop()
 
 
