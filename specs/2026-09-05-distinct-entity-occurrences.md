@@ -221,3 +221,11 @@ rebuild, existing performance ceilings, and 84.67% coverage against 83%. A bound
 read-only request to the busy installed daemon initially timed out; no daemon
 restart or index write was performed. Installed alias addressing is a post-release
 verification step and does not require regenerating already correct index data.
+
+Direct bounded SCSWire inspection during the installed 0.1.6 force job confirms
+the native store already retains both aliases: AGENTS.md has ID
+`5b48058529d9d1d8003dd7daf980559c`; CLAUDE.md has ID
+`7580b42990ca2c809f25db1a9cb51cb3`. Each retains its corresponding metadata path.
+The 0.1.7 change corrects request addressing and requires no index rebuild.
+Let the current model-backed force pass finish, then install released 0.1.7 and
+verify searches and alias inspection through a fresh MCP connection.
