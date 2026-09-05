@@ -62,7 +62,7 @@ class GraphStore(Protocol):
     def flush_vector_index_sync(self) -> bool: ...
     def reopened_vectors_contain_sync(self, node_ids: list[str]) -> bool: ...
     def reopened_vectors_absent_sync(self, node_ids: list[str]) -> bool: ...
-    def delete_node_sync(self, node_id: str) -> bool: ...
+    def delete_nodes_sync(self, node_ids: list[str]) -> int: ...
     def remove_file_graph_and_vector_sync(
         self, repo_path: str, rel_path: str
     ) -> int: ...
@@ -379,8 +379,8 @@ class IngestionPipeline:
         # Replacing the file subgraph, rather than merging nodes in place,
         # guarantees removed calls/imports cannot survive an incremental run.
         # Native foreign keys cascade every incident edge during deletion.
-        for node_id in sorted(plan.replaced_ids):
-            self._graph.delete_node_sync(node_id)
+        if plan.replaced_ids:
+            self._graph.delete_nodes_sync(sorted(plan.replaced_ids))
         if plan.nodes:
             result.entities_created = self._graph.batch_upsert_nodes_sync(plan.nodes)
         committed_edges = [*plan.edges, *retained_inbound_edges]

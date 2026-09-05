@@ -135,3 +135,27 @@ iteration-count assumption with an explicit bounded integration-test deadline,
 track the acknowledged job ID, and report terminal failures or timeout state.
 Preserve fresh-root isolation and indexing assertions; do not change production
 timeouts or performance-test ceilings. Verify repeatedly before rerunning CI.
+
+## Bulk replacement deletion follow-up
+
+A subsequent runtime sample identified another ingestion bottleneck: replacing
+files calls native single-node deletion for every old entity, and TSG rebuilds
+its accelerator after every call. Its existing bulk-delete API can perform the
+same cascade once per replacement plan. Add an internal typed Python/Rust bridge
+and call it once with sorted unique replacement IDs, skipping empty plans.
+Preserve inbound-edge capture before deletion, stale node/vector cascades, and
+complete-file acknowledgement. No MCP, wire, schema, or TSG changes are needed.
+Test with generated native occurrence fixtures and count bulk invocations; native
+storage tests should prove one generation transition and correct edge/vector
+cleanup. Run affected tests and full verification before committing. Rollback
+requires no data migration and restores slower per-node behavior.
+
+Bulk deletion verification: the two generated native lifecycle cases failed
+before the pipeline change because replacement never invoked a bulk operation.
+Afterward, all 29 affected indexing/property tests passed. The Rust adapter test
+proved one generation increase for seven generated node deletions, empty-batch
+no-op, edge cascades, and durable vector absence/survival. Full `just verify`
+passed: 244 Python tests, 99 Rust tests, strict typing/lint, and 84.57% coverage
+against 83%. Native rebuilding and existing performance ceilings passed. The
+installed production ingestion has not yet run this newly compiled release;
+release-installed verification remains a rollout step.

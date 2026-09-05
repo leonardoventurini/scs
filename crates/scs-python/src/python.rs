@@ -299,6 +299,12 @@ impl PyKnowledgeGraph {
         }
     }
 
+    /// Delete nodes and their incident edges/vectors with the GIL released.
+    fn delete_nodes(&self, py: Python<'_>, node_ids: Vec<String>) -> PyResult<usize> {
+        py.detach(|| self.inner.delete_nodes(&node_ids))
+            .map_err(scs_err)
+    }
+
     /// Delete a node and its edges/embedding. Returns whether it existed.
     fn delete_node(&self, py: Python<'_>, node_id: &str) -> PyResult<bool> {
         py.detach(|| self.inner.delete_node(node_id))

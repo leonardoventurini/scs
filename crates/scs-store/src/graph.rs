@@ -234,6 +234,18 @@ impl KnowledgeGraph {
             .transpose()
     }
 
+    /// Delete a complete replacement set with one transaction and accelerator rebuild.
+    pub fn delete_nodes(&self, ids: &[String]) -> SCSResult<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        Ok(self
+            .lock()?
+            .delete_nodes(ids)
+            .map_err(tsg_error)?
+            .nodes_deleted)
+    }
+
     pub fn delete_node(&self, id: &str) -> SCSResult<bool> {
         Ok(self
             .lock()?
@@ -1151,6 +1163,49 @@ mod tests {
         config.embedding_dim = 2;
         let graph = KnowledgeGraph::open(config).unwrap();
         (directory, graph)
+    }
+
+    #[test]
+    fn bulk_deletion_rebuilds_once_and_cascades_edges_and_vectors() {
+        let (_directory, graph) = graph();
+        let ids: Vec<String> = (0..8).map(|index| format!("node-{index}")).collect();
+        for id in &ids {
+            graph
+                .upsert_node(
+                    id,
+                    NodeType::Function,
+                    id,
+                    "",
+                    None,
+                    Some(&[1.0, 0.0]),
+                    None,
+                )
+                .unwrap();
+        }
+        for pair in ids.windows(2) {
+            graph
+                .upsert_edge(&pair[0], &pair[1], "calls", 1.0, None)
+                .unwrap();
+        }
+        let generation = graph.lock().unwrap().generation().unwrap();
+        assert_eq!(graph.delete_nodes(&[]).unwrap(), 0);
+        assert_eq!(graph.lock().unwrap().generation().unwrap(), generation);
+        let removed = &ids[..ids.len() - 1];
+        assert_eq!(graph.delete_nodes(removed).unwrap(), removed.len());
+        assert_eq!(graph.lock().unwrap().generation().unwrap(), generation + 1);
+        assert!(graph.reopened_vectors_absent(removed).unwrap());
+        let survivor = ids.last().unwrap();
+        assert!(graph.get_node(survivor).unwrap().is_some());
+        assert!(graph
+            .reopened_vectors_contain(std::slice::from_ref(survivor))
+            .unwrap());
+        assert!(graph
+            .get_neighbors(survivor, None, EdgeDirection::Incoming, 10)
+            .unwrap()
+            .is_empty());
+        for id in removed {
+            assert!(graph.get_node(id).unwrap().is_none());
+        }
     }
 
     #[test]

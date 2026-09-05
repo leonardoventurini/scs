@@ -41,6 +41,12 @@ class RecordingNativeGraph(NativeGraph):
     """Capture vector associations while exercising authoritative native writes."""
 
     embedding_pairs: list[tuple[str, list[float]]]
+    deletion_batches: tuple[tuple[str, ...], ...] = ()
+
+    @override
+    def delete_nodes_sync(self, node_ids: list[str]) -> int:
+        self.deletion_batches += (tuple(node_ids),)
+        return super().delete_nodes_sync(node_ids)
 
     @override
     def batch_upsert_embeddings_sync(
@@ -114,7 +120,9 @@ def test_native_occurrences_preserve_vectors_identity_and_incremental_cleanup(
             legacy_id = hashlib.sha256(legacy_identity.encode()).hexdigest()[:32]
             assert graph.get_node_sync(legacy_id) is not None
 
+    assert graph.deletion_batches == ()
     forced = pipeline.ingest(repository, force=True)
+    assert graph.deletion_batches == (tuple(sorted(node.id for node in nodes)),)
     assert forced.files_failed == 0
     assert occurrence_ids(graph.list_nodes_sync(), kind) == ids
 

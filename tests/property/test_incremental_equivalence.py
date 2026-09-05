@@ -88,6 +88,9 @@ class Graph:
     def reopened_vectors_absent_sync(self, node_ids):
         return True
 
+    def delete_nodes_sync(self, node_ids: list[str]) -> int:
+        return sum(self.delete_node_sync(node_id) for node_id in node_ids)
+
     def delete_node_sync(self, key):
         deleted = self.nodes.pop(key, None) is not None
         self.edges = [

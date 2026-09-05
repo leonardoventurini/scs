@@ -44,6 +44,7 @@ class _NativeGraphHandle(Protocol):
     def get_file_paths_for_repo(self, repo_path: str) -> list[str]: ...
     def get_node_ids_for_file(self, repo_path: str, rel_path: str) -> list[str]: ...
     def delete_node(self, node_id: str) -> bool: ...
+    def delete_nodes(self, node_ids: list[str]) -> int: ...
     def delete_ingested_file(self, repo_path: str, rel_path: str) -> None: ...
     def delete_ingestion_record(self, repo_path: str, rel_path: str) -> None: ...
     def delete_ingestion_records_batch(
@@ -277,6 +278,11 @@ class NativeGraph:
 
     def get_node_ids_for_file_sync(self, repo_path: str, rel_path: str) -> list[str]:
         return self._inner.get_node_ids_for_file(repo_path, rel_path)
+
+    def delete_nodes_sync(self, node_ids: list[str]) -> int:
+        """Delete a replacement set with one native accelerator rebuild."""
+
+        return self._inner.delete_nodes(node_ids)
 
     def delete_node_sync(self, node_id: str) -> bool:
         return self._inner.delete_node(node_id)

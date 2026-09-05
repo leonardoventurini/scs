@@ -182,6 +182,9 @@ class FakeGraph:
             return False
         return all(node_id not in self.embeddings for node_id in node_ids)
 
+    def delete_nodes_sync(self, node_ids: list[str]) -> int:
+        return sum(self.delete_node_sync(node_id) for node_id in node_ids)
+
     def delete_node_sync(self, node_id: str) -> bool:
         deleted = self.nodes.pop(node_id, None) is not None
         self.embeddings.pop(node_id, None)
