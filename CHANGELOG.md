@@ -4,6 +4,8 @@
 
 ## 0.1.5 - 2026-09-05
 
+- test: wait for the requested isolation-test job with a bounded completion deadline
+
 - fix: use indexed qualified-name relationship lookups through the upstream TSG
   attribute-query fix, avoiding repeated full graph scans during ingestion
 

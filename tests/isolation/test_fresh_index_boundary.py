@@ -15,6 +15,9 @@ from scs.main import SCSDaemon
 from scs.providers.base import ProviderMetadata
 from scs.wire.client import SCSClient
 
+JOB_COMPLETION_TIMEOUT_SECONDS = 10.0
+JOB_POLL_INTERVAL_SECONDS = 0.05
+
 
 class _ImmediateEmbeddings:
     """Keep the storage-isolation test independent from a shared OMLX queue."""
@@ -73,16 +76,31 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
             {"repo_path": str(repository)},
         )
         assert acknowledgement["accepted"] is True
-        recent: list[dict[str, object]] = []
-        for _attempt in range(100):
-            recent = cast(
-                list[dict[str, object]],
-                (await client.call("jobs.recent"))["jobs"],
+        job_id = cast(dict[str, object], acknowledgement["job"])["id"]
+        requested_job: dict[str, object] | None = None
+        # This checks eventual isolation, not ingestion speed. Native debug
+        # builds under coverage can exceed a one-second polling assumption.
+        try:
+            async with asyncio.timeout(JOB_COMPLETION_TIMEOUT_SECONDS):
+                while True:
+                    recent = cast(
+                        list[dict[str, object]],
+                        (await client.call("jobs.recent"))["jobs"],
+                    )
+                    requested_job = next(
+                        (job for job in recent if job["id"] == job_id), None
+                    )
+                    if requested_job is not None:
+                        assert requested_job["status"] not in {"failed", "cancelled"}, (
+                            f"Requested ingestion terminated: {requested_job}"
+                        )
+                        if requested_job["status"] == "completed":
+                            break
+                    await asyncio.sleep(JOB_POLL_INTERVAL_SECONDS)
+        except TimeoutError:
+            pytest.fail(
+                f"Requested ingestion {job_id} did not complete: {requested_job}"
             )
-            if recent and recent[0]["status"] == "completed":
-                break
-            await asyncio.sleep(0.01)
-        assert recent[0]["status"] == "completed"
         statuses = await client.call(
             "repositories.status",
             {"repo_paths": [str(repository)]},

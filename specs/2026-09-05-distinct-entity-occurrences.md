@@ -125,3 +125,13 @@ SCS 0.1.5 consumes TSG v0.2.2 at immutable commit
 `6e6e607ed80704b4169ed52c5217e76d9a36196a`. The consumer `just verify` gate passes:
 244 Python tests, 98 Rust tests, strict types/lint, native build, and 84.58%
 coverage. The release identity check passes for v0.1.5.
+
+## Consumer CI timing discovery
+
+CI 33981446767 passed macOS and supply-chain checks. Linux passed 243 tests
+but its fresh-index isolation test stopped after 100 ten-millisecond polls while
+the requested background job was still running without an error. Replace the
+iteration-count assumption with an explicit bounded integration-test deadline,
+track the acknowledged job ID, and report terminal failures or timeout state.
+Preserve fresh-root isolation and indexing assertions; do not change production
+timeouts or performance-test ceilings. Verify repeatedly before rerunning CI.
