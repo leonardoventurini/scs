@@ -12,6 +12,7 @@ from scs.graph.native import NativeGraph
 from scs.indexing.jobs import IngestionJobStore, job_to_dict
 from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.providers.base import EmbeddingProvider, ProviderUnavailableError
+from scs.source_paths import validated_source_path
 
 GraphForRepository = Callable[[str], NativeGraph | None]
 BindingForRepository = Callable[[str], tuple[str, str] | None]
@@ -547,13 +548,7 @@ class SCSServiceRoutes:
         canonical = canonicalize_repo_path(repo_path)
         raw_files = _string_list(params, "file_paths")
         raw_deleted = _string_list(params, "deleted_paths")
-        root = Path(canonical)
-        files: list[str] = []
-        for raw_path in raw_files:
-            resolved = Path(raw_path).expanduser().resolve(strict=True)
-            if not resolved.is_file() or not resolved.is_relative_to(root):
-                raise ValueError(f"source path escapes repository: {resolved}")
-            files.append(str(resolved))
+        files = [validated_source_path(raw_path, canonical) for raw_path in raw_files]
         deleted: list[str] = []
         for raw_path in raw_deleted:
             candidate = Path(raw_path)
@@ -594,11 +589,8 @@ class SCSServiceRoutes:
             return {"file_paths": raw_paths, "affected_node_ids": [], "dependents": [], "test_dependents": []}
         affected_ids: list[str] = []
         for raw_path in raw_paths:
-            path = Path(raw_path)
-            resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
-            if not resolved.is_relative_to(root):
-                raise ValueError(f"source path escapes repository: {resolved}")
-            rel_path = resolved.relative_to(root).as_posix()
+            source = Path(validated_source_path(raw_path, str(root), require_file=False))
+            rel_path = source.relative_to(root).as_posix()
             affected_ids.extend(
                 await asyncio.to_thread(
                     graph.get_node_ids_for_file_sync, str(root), rel_path
@@ -672,8 +664,11 @@ class SCSServiceRoutes:
     def _indexed_location(self, file_path: Path) -> tuple[str | None, str]:
         for repo_path in self._graph().get_ingestion_stats_sync():
             root = Path(repo_path)
-            if file_path.is_relative_to(root):
-                return repo_path, file_path.relative_to(root).as_posix()
+            try:
+                source = Path(validated_source_path(str(file_path), str(root)))
+            except ValueError:
+                continue
+            return repo_path, source.relative_to(root).as_posix()
         return None, file_path.name
 
     async def _node_at_position(self, params: dict[str, object]) -> Node | None:
@@ -681,7 +676,7 @@ class SCSServiceRoutes:
         assert file_path is not None
         line = _integer(params, "line", 0)
         repo_path, rel_path = self._indexed_location(
-            Path(file_path).resolve(strict=True)
+            Path(validated_source_path(file_path))
         )
         if repo_path is None:
             return None

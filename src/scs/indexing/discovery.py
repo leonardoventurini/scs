@@ -7,7 +7,6 @@ change detection.
 
 import hashlib
 import logging
-import os
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ import pathspec
 from pathspec.pattern import Pattern
 
 from scs.indexing.parser.native import NativeParser
+from scs.source_paths import lexical_file_in_repo
 
 logger = logging.getLogger(__name__)
 
@@ -433,24 +433,6 @@ def _resolved_file_in_repo(file_path: Path, repo_path: Path) -> Path | None:
         return None
 
 
-def _lexical_file_in_repo(file_path: Path, repo_path: Path) -> Path | None:
-    """Normalize root aliases while retaining aliases beneath the repository."""
-
-    absolute = Path(os.path.abspath(file_path))
-    try:
-        return repo_path / absolute.relative_to(repo_path)
-    except ValueError:
-        # A caller may use a symlinked checkout root or macOS /var spelling.
-        # Resolve ancestors only until the repository boundary is identified.
-        for parent in absolute.parents:
-            try:
-                if parent.resolve() == repo_path:
-                    return repo_path / absolute.relative_to(parent)
-            except OSError, RuntimeError:
-                continue
-        return None
-
-
 def build_file_entry(
     file_path: Path,
     repo_path: Path,
@@ -469,7 +451,7 @@ def build_file_entry(
     """
     repo_path = repo_path.resolve()
     policy = policy or IngestionPolicy()
-    lexical_path = _lexical_file_in_repo(file_path, repo_path)
+    lexical_path = lexical_file_in_repo(file_path, repo_path)
     if lexical_path is None:
         return None
     file_path = lexical_path

@@ -199,3 +199,25 @@ and ingestion took 50.79 seconds. All 2,973 file hashes were acknowledged, with
 AGENTS.md and its CLAUDE.md alias retaining distinct identities. No model requests
 or persistent service data were used for this diagnostic. The released wheel
 with the configured model still requires final ingestion and search verification.
+
+## MCP source alias forwarding follow-up
+
+Although ingestion now stores distinct alias identities, MCP source validation
+still resolves aliases before forwarding reads and incremental requests; service
+routes repeat that collapse for ingestion, regression risk, and indexed reference
+lookup. Share source-path normalization between discovery, MCP, and services:
+retain lexical file identity, independently validate resolved target containment,
+and normalize checkout-root aliases. Keep wire/MCP schemas and scope boundaries
+unchanged. Generated alias fixtures must exercise MCP forwarding, durable job
+payloads, index lookup identity, and unsafe target rejection. Do not restart the
+active released force ingestion. Publish 0.1.7 only after the current run completes.
+
+MCP alias validation verification: the new forwarding and queued-payload tests
+failed before the fix because aliases were replaced by targets. After shared
+validation and backend corrections, 40 focused cases passed, including a native
+indexed alias exercised through inspection, risk, and public reference routes.
+Full `just verify` passed 254 Python tests, 99 Rust tests, strict typing/lint/native
+rebuild, existing performance ceilings, and 84.67% coverage against 83%. A bounded
+read-only request to the busy installed daemon initially timed out; no daemon
+restart or index write was performed. Installed alias addressing is a post-release
+verification step and does not require regenerating already correct index data.

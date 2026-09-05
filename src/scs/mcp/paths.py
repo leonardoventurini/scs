@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from scs.source_paths import validated_source_path
+
 
 def canonical_repo_path(repo_path: str | None) -> str | None:
     """Resolve a repository scope without creating or changing it."""
@@ -21,20 +23,9 @@ def canonical_repo_path(repo_path: str | None) -> str | None:
 
 
 def contained_file_path(file_path: str, repo_path: str | None = None) -> str:
-    """Resolve a source path and reject escapes from an explicit repository."""
+    """Validate a source target while preserving its indexed alias identity."""
 
-    candidate = Path(file_path).expanduser()
-    if not candidate.is_absolute() and repo_path is not None:
-        candidate = Path(repo_path) / candidate
-    try:
-        resolved = candidate.resolve(strict=True)
-    except OSError as error:
-        raise ValueError(f"source path does not exist: {candidate}") from error
-    if not resolved.is_file():
-        raise ValueError(f"source path is not a file: {resolved}")
-    if repo_path is not None and not resolved.is_relative_to(Path(repo_path)):
-        raise ValueError(f"source path escapes repository: {resolved}")
-    return str(resolved)
+    return validated_source_path(file_path, repo_path)
 
 
 def contained_deleted_path(file_path: str) -> str:

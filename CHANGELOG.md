@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.7 - 2026-09-05
+
+- fix: preserve indexed source alias identities through MCP inspection,
+  incremental ingestion, regression risk, and reference lookup validation
+
 ## 0.1.6 - 2026-09-05
 
 - fix: retain distinct in-repository symlink paths through ordinary, forced, and

@@ -323,7 +323,10 @@ async def test_mcp_application_lists_exact_inventory() -> None:
             ) == (True, False, True, False)
         assert tool.output_schema is not None
         if tool.name != "find_references":
-            assert set(tool.output_schema["properties"]) == EXPECTED_OUTPUT_FIELDS[tool.name]
+            assert (
+                set(tool.output_schema["properties"])
+                == EXPECTED_OUTPUT_FIELDS[tool.name]
+            )
         assert tool.output_schema.get("additionalProperties") is not True
     references = next(tool for tool in tools if tool.name == "find_references")
     assert set(references.input_schema["properties"]) == {"file_path", "line"}
@@ -331,6 +334,7 @@ async def test_mcp_application_lists_exact_inventory() -> None:
     reference_result_schema = references.output_schema["properties"]["result"]
     assert reference_result_schema.get("oneOf")
     assert reference_result_schema["discriminator"]["propertyName"] == "available"
+
 
 async def test_observability_failure_is_fail_open() -> None:
     class BrokenRecorder(ToolRecorder):
@@ -345,3 +349,28 @@ async def test_observability_failure_is_fail_open() -> None:
 
     assert result.structured_content is not None
     assert result.structured_content["status"] == "empty"
+
+
+async def test_source_aliases_preserve_identity_in_mcp_forwarding(tmp_path) -> None:
+    target = tmp_path / "source.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    alias = tmp_path / "alias.py"
+    alias.symlink_to(target.name)
+    gateway = RecordingGateway()
+    mcp = build_mcp(gateway)
+    await mcp.call_tool(
+        "inspect_file", {"repo_path": str(tmp_path), "file_path": alias.name}
+    )
+    assert gateway.calls[-1][1]["file_path"] == alias.name
+    await mcp.call_tool(
+        "ingest_files",
+        {"repo_path": str(tmp_path), "file_paths": [str(target), str(alias)]},
+    )
+    assert gateway.calls[-1][1]["file_paths"] == [str(target), str(alias)]
+    await mcp.call_tool(
+        "regression_risk_report",
+        {"repo_path": str(tmp_path), "file_paths": [str(alias)]},
+    )
+    assert gateway.calls[-1][1]["file_paths"] == [str(alias)]
+    await mcp.call_tool("find_references", {"file_path": str(alias), "line": 0})
+    assert gateway.calls[-1][1]["file_path"] == str(alias)

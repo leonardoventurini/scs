@@ -193,3 +193,23 @@ async def test_symbol_listing_rejects_non_symbol_types_before_graph_reads(
 
     with pytest.raises(ValueError, match="code symbol"):
         await routes.nodes_list({"node_type": "file"})
+
+
+@pytest.mark.asyncio
+async def test_ingest_files_preserves_source_aliases_in_job_payload(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "source.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    alias = repo / "alias.py"
+    alias.symlink_to(target.name)
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = build_routes(tmp_path, jobs)
+    await routes.ingest_files(
+        {"repo_path": str(repo), "file_paths": [str(target), str(alias)]}
+    )
+    assert jobs.list_recent()[0].payload["file_paths"] == sorted(
+        [str(target), str(alias)]
+    )
