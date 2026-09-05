@@ -62,7 +62,7 @@ force request; these fixes do not rewrite old terminal jobs or live user data.
 - [x] Implement and verify watcher, shutdown/socket ownership, and force recovery.
 - [x] Update documentation and decision record.
 - [x] Run `just verify` and inspect the final diff.
-- [ ] Commit with hooks enabled.
+- [x] Commit with hooks enabled (`44c1576`; strict Python type hook passed).
 
 SCS release publication is not part of this requested rollout; deliver committed
 SCS fixes after the upstream release and dependency upgrade.
