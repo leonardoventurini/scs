@@ -12,7 +12,8 @@ uses only path and qualified name, aliasing repeated entities and different kind
 ## Scope, contracts, and uncertainty
 
 Fix SCS identity planning and embedding association. TSG correctly enforces unique
-batch IDs and does not need a change. Keep wire/storage schemas, 32-character
+batch IDs; the occurrence fix does not require changing that contract. A separate
+query-planning defect discovered during rollout is documented below. Keep wire/storage schemas, 32-character
 opaque IDs, parser interfaces, and non-colliding symbol IDs unchanged. Preserve
 the first occurrence's existing hash; derive subsequent hashes using their
 ordinal among occurrences of the same kind and qualified name within that file.
@@ -36,7 +37,7 @@ Do not invent precise call-target relationships as part of this fix.
 - [x] Run affected tests, then `just verify`, keeping performance ceilings.
 - [x] Bump SCS to an unused patch version and update release metadata/lockfiles.
 - [x] Record the decision and verified results; commit with hooks enabled.
-- [ ] Push main, await CI, tag and publish the immutable GitHub release.
+- [x] Push main, await CI, tag and publish the immutable GitHub release.
 - [ ] Verify checksums, install the released artifact, and restart the daemon.
 - [ ] Ingest Mentagen and verify graph/search readiness through MCP.
 
@@ -210,7 +211,7 @@ retain lexical file identity, independently validate resolved target containment
 and normalize checkout-root aliases. Keep wire/MCP schemas and scope boundaries
 unchanged. Generated alias fixtures must exercise MCP forwarding, durable job
 payloads, index lookup identity, and unsafe target rejection. Do not restart the
-active released force ingestion. Publish 0.1.7 only after the current run completes.
+active released force ingestion. Publish 0.1.7 independently, but install it only after the current run completes.
 
 MCP alias validation verification: the new forwarding and queued-payload tests
 failed before the fix because aliases were replaced by targets. After shared
@@ -229,3 +230,15 @@ the native store already retains both aliases: AGENTS.md has ID
 The 0.1.7 change corrects request addressing and requires no index rebuild.
 Let the current model-backed force pass finish, then install released 0.1.7 and
 verify searches and alias inspection through a fresh MCP connection.
+
+## SCS 0.1.7 publication
+
+CI [33987528456](https://github.com/leonardoventurini/scs/actions/runs/33987528456)
+and release [33988024405](https://github.com/leonardoventurini/scs/actions/runs/33988024405)
+passed for commit `7e7e5ed8bac5ed03fd10d585f6585ad214a7689f`. Both Linux and
+macOS wheels passed independent installation smoke tests. The immutable
+[v0.1.7 release](https://github.com/leonardoventurini/scs/releases/tag/v0.1.7)
+published successfully. The downloaded installer matches SHA256SUMS:
+`cf1065aad704c01ac98352cc02e4554ae8a46864cb5cab5a385846dd73d39a28`.
+Installation is deliberately deferred until the active 0.1.6 recovery job
+`ingest_6e6dfbae19df` finishes; publication does not disturb that job.

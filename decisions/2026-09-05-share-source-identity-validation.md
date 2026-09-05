@@ -27,7 +27,7 @@ would permit ingestion/read contracts to drift again. Resolving aliases in the
 index instead would undo established separate source identities. Shared validation
 keeps read and write identities aligned without changing repository contents.
 
-Release as 0.1.7 after the current 0.1.6 force ingestion completes; do not interrupt
-that job merely to repair tool addressing. Existing indexed data needs no rebuild.
+Publish as 0.1.7 independently, then install after the current 0.1.6 force
+ingestion completes; do not interrupt that job merely to repair tool addressing. Existing indexed data needs no rebuild.
 Rollback restores earlier tool behavior without a schema migration. End-to-end
 released MCP validation remains the final rollout check.
