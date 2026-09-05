@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.8 - 2026-09-05
+
+- Consume TSG 0.2.3, which updates changed vectors in the existing search index
+  instead of rebuilding the full corpus after every embedding or metadata batch.
+- Preserve committed vectors, generation checks, sidecar persistence, and recovery
+  when an accelerator update fails; no model or stored-format change is required.
+
 ## 0.1.7 - 2026-09-05
 
 - fix: preserve indexed source alias identities through MCP inspection,

@@ -242,3 +242,45 @@ published successfully. The downloaded installer matches SHA256SUMS:
 `cf1065aad704c01ac98352cc02e4554ae8a46864cb5cab5a385846dd73d39a28`.
 Installation is deliberately deferred until the active 0.1.6 recovery job
 `ingest_6e6dfbae19df` finishes; publication does not disturb that job.
+
+## Embedding persistence throughput follow-up
+
+The user challenged the slow recovery pass. Runtime sampling on installed 0.1.6
+showed `batch_upsert_embeddings -> Store::apply_batch -> VectorAccelerator::rebuild`
+consuming the active CPU thread. Eight recent oMLX requests processed 256 inputs
+in 34.67 seconds of model time over a 676.228-second interval; intervening vector
+index rebuilds dominated. The prior attribution to model throughput was incorrect.
+
+Fix the upstream TSG mutation path so an existing current accelerator receives
+only changed vectors rather than rebuilding the entire corpus after every write.
+Preserve SQLite authority, generation agreement, committed-write receipts,
+sidecar persistence/recovery, public APIs, and stored formats. Add generated
+regressions for repeated small batches, vector replacement, reopening, search
+correctness, and failure recovery before implementation. Compare old/new native
+throughput with the same synthetic workload. USearch's official Rust API already
+supports adding/removing vectors and saving the index:
+https://unum-cloud.github.io/USearch/rust/index.html
+
+- [x] Verify and commit the upstream mutation fix and decision record.
+- [ ] Publish a new immutable TSG release and update SCS's pinned consumer.
+- [x] Run SCS's affected native/indexing tests and full verification.
+- [ ] Publish/install the resulting SCS patch, preserving current recovery work.
+- [ ] Verify completed Mentagen ingestion and fresh MCP search/alias checks.
+
+The active 0.1.6 force job remains running during development. Installation must
+respect durable job/file checkpoints; avoid discarding completed model work.
+No change to embedding model, dimension, provider, or public configuration is
+needed to address this bottleneck. Rollback remains a compatible release install,
+with the known full-rebuild performance penalty restored.
+
+SCS 0.1.8 consumer verification passed with immutable TSG v0.2.3 commit
+`f3f45241723a83b322676ecd22c36d4add66a53b`: 11 targeted native/indexing/performance
+tests, then `just verify` with 254 Python tests, 99 Rust tests, strict typing/lint,
+native rebuild, and 84.67% coverage. Existing performance ceilings passed.
+The upstream test first failed because each batch replaced the accelerator. Its
+512-vector, 4,096-dimensional generated debug benchmark improved from 4.589 seconds
+to 1.038 seconds across sixteen 32-vector commits. Sidecar serialization remains.
+
+During verification, concurrent Mentagen source edits caused recovery job
+`ingest_6e6dfbae19df` to merge at batch 57 into `ingest_68cdf82c6e07`, retaining
+completed durable checkpoints. Final completion must follow the merged job.
