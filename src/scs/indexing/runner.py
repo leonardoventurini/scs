@@ -169,7 +169,7 @@ class IngestionJobRunner:
                 force=False,
             )
         elif job.mode == "force_full":
-            snapshot, first_execution = await self._force_snapshot_for_job(
+            snapshot = await self._force_snapshot_for_job(
                 job, pipeline, repo
             )
             def acknowledge_snapshot_batch(rel_paths: list[str]) -> None:
@@ -180,7 +180,7 @@ class IngestionJobRunner:
             result = await asyncio.to_thread(
                 pipeline.ingest,
                 repo,
-                force=first_execution,
+                force=True,
                 force_snapshot=snapshot,
                 on_force_batch_acknowledged=acknowledge_snapshot_batch,
             )
@@ -204,11 +204,16 @@ class IngestionJobRunner:
         job: IngestionJob,
         pipeline: IngestionPipeline,
         repo: Path,
-    ) -> tuple[list[Mapping[str, object]], bool]:
-        """Return only this durable force job's still-pending frozen files."""
+    ) -> list[Mapping[str, object]]:
+        """Return only this job's unacknowledged frozen files.
+
+        Ordinary ingestion hashes cannot prove that a force attempt ran: an
+        earlier index can already have the same bytes. The durable job manifest
+        owns force completion. A crash before its acknowledgement safely replays
+        the batch, even when its native hash commit has already succeeded.
+        """
 
         raw_snapshot = job.payload.get("force_full_snapshot")
-        first_execution = raw_snapshot is None
         if raw_snapshot is None:
             records = await asyncio.to_thread(
                 pipeline.create_force_full_snapshot, repo
@@ -230,38 +235,13 @@ class IngestionJobRunner:
             isinstance(record, dict) for record in files
         ):
             raise RuntimeError("Force-full job snapshot files are invalid")
-        if not first_execution:
-            acknowledged = await asyncio.to_thread(
-                pipeline.acknowledged_force_snapshot_paths,
-                repo,
-                [cast(Mapping[str, object], record) for record in files],
-            )
-            if acknowledged:
-                job = await asyncio.to_thread(
-                    self._store.acknowledge_force_full_snapshot_files,
-                    job.id,
-                    rel_paths=acknowledged,
-                )
-                raw_snapshot = job.payload.get("force_full_snapshot")
-                if not isinstance(raw_snapshot, dict):
-                    raise RuntimeError("Force-full job snapshot is invalid")
-                refreshed_snapshot = cast(dict[str, object], raw_snapshot)
-                files = cast(list[object], refreshed_snapshot.get("files", []))
-        pending = [
+        return [
             cast(Mapping[str, object], typed_record)
             for typed_record in (
                 cast(dict[str, object], record) for record in files
             )
             if not bool(typed_record.get("acknowledged", False))
         ]
-        # A process can die after persisting its manifest but before the
-        # pipeline invalidates matching hashes.  Reapply force only while no
-        # snapshot target has been acknowledged; once even one batch is
-        # durable, native hashes and snapshot state become the retry boundary.
-        first_execution = first_execution or (
-            job.attempts == 0 and len(pending) == len(files)
-        )
-        return pending, first_execution
 
     async def _publish(self, job: IngestionJob) -> None:
         await self._events.publish("indexing_job", job_to_dict(job))

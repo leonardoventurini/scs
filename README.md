@@ -83,7 +83,7 @@ ingestion checkpoints, metadata filters, traversal, and semantic search onto
 generic TSG primitives. The Python, SCSWire, MCP, and CLI contracts therefore
 remain SCS-owned without coupling TSG to code intelligence.
 
-The dependency is pinned to the immutable `v0.2.0` Git tag and its resolved
+The dependency is pinned to the immutable `v0.2.1` Git tag and its resolved
 commit in `Cargo.lock`; building SCS does not require a sibling TSG checkout.
 TSG keeps canonical graph, catalog, and embedding state transactionally in
 SQLite and treats its vector index as a rebuildable accelerator.
@@ -159,9 +159,12 @@ The text sample size must not exceed the maximum file size.
 SCS automatically reconciles every active enrolled project from Git-visible
 state. Each daemon start queues a full discovery pass, which uses stored hashes
 to parse and embed only changed files and removes stale file graphs. Subsequent
-polls fingerprint `HEAD` plus Git porcelain status, covering commits, branch
-switches, staged and unstaged edits, deletions, and non-ignored untracked files.
-Ignored files do not trigger work.
+polls fingerprint `HEAD`, Git porcelain status, and dirty-path metadata, covering
+commits, branch switches, repeated staged and unstaged edits, deletions, and
+non-ignored untracked files. Nanosecond modification/change times and file identity
+detect edits even when a path's Git status stays unchanged. Polling reads metadata
+without reading whole source files or following symlink targets. Ignored files do
+not trigger work; ingestion still verifies source content hashes.
 
 Active repositories are checked every 2 seconds. Unchanged repositories back
 off exponentially to 30 seconds; any change resets the interval to 2 seconds

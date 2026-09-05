@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 from scs.wire.client import SCSClient, SCSConnection
+from scs.models import PROTOCOL_VERSION
+from scs.wire.framing import read_frame, write_frame
 from scs.wire.router import Router
 from scs.wire.server import WireServer
 
@@ -180,3 +182,146 @@ async def test_attached_client_connection_owns_a_live_lease(
 
 async def _record_count(counts: list[int], count: int) -> None:
     counts.append(count)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "client_state", ["idle", "partial_header", "partial_body", "attached"]
+)
+async def test_shutdown_closes_waiting_clients(
+    short_runtime_path: Path,
+    client_state: str,
+) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+    router = Router()
+    counts: list[int] = []
+
+    @router.method("system.client.attach")
+    async def attach(_params: dict[str, object]) -> dict[str, object]:
+        return {"attached": True}
+
+    server = WireServer(
+        router,
+        socket_path=socket_path,
+        client_count_changed=lambda count: _record_count(counts, count),
+    )
+    await server.start()
+    reader, writer = await asyncio.open_unix_connection(socket_path)
+    try:
+        # A response establishes that the server has accepted this connection.
+        await write_frame(
+            writer,
+            {
+                "id": "ready",
+                "version": PROTOCOL_VERSION,
+                "kind": "request",
+                "method": "system.client.attach"
+                if client_state == "attached"
+                else "health",
+                "params": {},
+            },
+        )
+        await read_frame(reader)
+        if client_state == "partial_header":
+            writer.write(b"\x00")
+        elif client_state == "partial_body":
+            writer.write((100).to_bytes(4, "big") + b"{")
+        await writer.drain()
+
+        stop_task = asyncio.create_task(server.stop())
+        try:
+            await asyncio.wait_for(asyncio.shield(stop_task), timeout=1)
+            assert await asyncio.wait_for(reader.read(), timeout=1) == b""
+            assert not socket_path.exists()
+            assert counts == ([1, 0] if client_state == "attached" else [])
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await asyncio.wait_for(stop_task, timeout=1)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drains_dispatched_request_without_reading_next_request(
+    short_runtime_path: Path,
+) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+    router = Router()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    requests: list[dict[str, object]] = []
+
+    @router.method("blocked")
+    async def blocked(params: dict[str, object]) -> dict[str, object]:
+        requests.append(params)
+        entered.set()
+        await release.wait()
+        return {"finished": True}
+
+    server = WireServer(router, socket_path=socket_path)
+    await server.start()
+    reader, writer = await asyncio.open_unix_connection(socket_path)
+    stop_task: asyncio.Task[None] | None = None
+    try:
+        for index in range(2):
+            await write_frame(
+                writer,
+                {
+                    "id": str(index),
+                    "version": PROTOCOL_VERSION,
+                    "kind": "request",
+                    "method": "blocked",
+                    "params": {"index": index},
+                },
+            )
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        stop_task = asyncio.create_task(server.stop())
+        await asyncio.sleep(0)
+        assert not stop_task.done()
+        release.set()
+        response = await asyncio.wait_for(read_frame(reader), timeout=1)
+        assert response["result"] == {"finished": True}
+        assert await asyncio.wait_for(reader.read(), timeout=1) == b""
+        await asyncio.wait_for(asyncio.shield(stop_task), timeout=1)
+        assert requests == [{"index": 0}]
+        assert not socket_path.exists()
+    finally:
+        release.set()
+        writer.close()
+        await writer.wait_closed()
+        if stop_task is not None:
+            await asyncio.wait_for(stop_task, timeout=1)
+        await server.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "probe_error", [PermissionError, TimeoutError, ConnectionResetError, OSError]
+)
+async def test_uncertain_socket_probe_preserves_occupant(
+    short_runtime_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_error: type[OSError],
+) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+    occupant = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    occupant.bind(str(socket_path))
+    occupant.close()
+    identity = socket_path.stat().st_ino
+
+    async def fail_probe(
+        _path: Path,
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        raise probe_error("probe failed")
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", fail_probe)
+    server = WireServer(Router(), socket_path=socket_path)
+    try:
+        with pytest.raises(RuntimeError, match="cannot determine"):
+            await server.start()
+        assert socket_path.stat().st_ino == identity
+    finally:
+        await server.stop()

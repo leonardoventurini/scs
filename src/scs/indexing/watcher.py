@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
+import stat
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -23,6 +25,8 @@ GIT_STATUS_COMMAND: tuple[str, ...] = (
     "-z",
     "--untracked-files=all",
 )
+_PORCELAIN_PATH_OFFSET = 3
+_PORCELAIN_TWO_PATH_STATUSES = (ord("R"), ord("C"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,12 +55,66 @@ class JobQueue(Protocol):
 FingerprintReader = Callable[[Path, float], GitFingerprint | None]
 
 
+def _dirty_paths(status: bytes) -> Iterator[bytes]:
+    """Read raw porcelain paths, including the extra rename/copy source field."""
+
+    records = iter(status.split(b"\0"))
+    for record in records:
+        if not record:
+            continue
+        if len(record) <= _PORCELAIN_PATH_OFFSET or record[2:3] != b" ":
+            raise ValueError("invalid Git porcelain status record")
+        yield record[_PORCELAIN_PATH_OFFSET:]
+        if any(code in _PORCELAIN_TWO_PATH_STATUSES for code in record[:2]):
+            source = next(records, None)
+            if not source:
+                raise ValueError("missing Git rename/copy source path")
+            yield source
+
+
+def _path_metadata(repo_path: Path, raw_path: bytes) -> bytes:
+    """Read bounded metadata without reading file contents or symlink targets.
+
+    Check ancestors as well as the leaf: a tracked directory can have been
+    replaced by a symlink since Git recorded its children. Missing paths are
+    expected for deletions and changes racing the status command.
+    """
+
+    relative = Path(os.fsdecode(raw_path))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("Git status path is outside the repository")
+    current = repo_path
+    metadata: os.stat_result | None = None
+    for part in relative.parts:
+        current = current / part
+        try:
+            metadata = current.lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            return b"missing"
+        if not stat.S_ISDIR(metadata.st_mode):
+            break
+    if metadata is None:
+        raise ValueError("Git status path is empty")
+    return str(
+        (
+            metadata.st_mode,
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+        )
+    ).encode("ascii")
+
+
 def git_fingerprint(repo_path: Path, timeout_seconds: float) -> GitFingerprint | None:
     """Return a digest covering HEAD and every non-ignored working-tree change.
 
     Git's porcelain status owns ignore semantics and reports staged, unstaged,
     deleted, renamed, and untracked paths. An unborn repository has an empty
-    HEAD but remains observable through its status output.
+    HEAD but remains observable through its status output. Dirty-path metadata
+    detects repeated edits whose porcelain status stays unchanged; source hashes
+    remain the indexing authority because polling is not a filesystem journal.
     """
 
     try:
@@ -89,8 +147,14 @@ def git_fingerprint(repo_path: Path, timeout_seconds: float) -> GitFingerprint |
         )
         return None
     head_bytes = head.stdout.strip() if head.returncode == 0 else b""
-    digest = hashlib.sha256(head_bytes + b"\0" + status.stdout).hexdigest()
-    return GitFingerprint(digest)
+    digest = hashlib.sha256(head_bytes + b"\0" + status.stdout)
+    try:
+        for raw_path in _dirty_paths(status.stdout):
+            digest.update(b"\0" + _path_metadata(repo_path, raw_path))
+    except (OSError, ValueError) as exc:
+        logger.warning("Git path metadata polling failed for %s: %s", repo_path, exc)
+        return None
+    return GitFingerprint(digest.hexdigest())
 
 
 class RepositoryWatcher:

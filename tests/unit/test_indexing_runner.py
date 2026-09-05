@@ -132,7 +132,7 @@ async def test_runner_marks_store_stale_before_executing_pipeline(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_force_full_retry_preserves_acknowledged_hash_checkpoints(tmp_path: Path) -> None:
+async def test_force_full_retry_forces_unacknowledged_snapshot_files(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     store = IngestionJobStore(tmp_path / "jobs.db")
@@ -163,7 +163,7 @@ async def test_force_full_retry_preserves_acknowledged_hash_checkpoints(tmp_path
 
     assert await runner.run_once()
 
-    assert flags == [False]
+    assert flags == [True]
 
 
 @pytest.mark.asyncio
@@ -203,7 +203,7 @@ async def test_force_full_first_execution_freezes_a_snapshot_and_invalidates_has
 
 
 @pytest.mark.asyncio
-async def test_force_retry_reconciles_hash_checkpoint_before_selecting_pending_work(
+async def test_force_retry_does_not_accept_content_equality_as_completion(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -234,7 +234,7 @@ async def test_force_retry_reconciles_hash_checkpoint_before_selecting_pending_w
     assert completed is not None and completed.status == "completed"
     snapshot = completed.payload["force_full_snapshot"]
     assert snapshot["files"][0]["acknowledged"] is True
-    assert flags == [False]
+    assert flags == [True]
 
 
 @pytest.mark.asyncio

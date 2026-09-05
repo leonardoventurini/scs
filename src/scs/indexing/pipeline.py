@@ -215,12 +215,12 @@ class IngestionPipeline:
     def acknowledged_force_snapshot_paths(
         self, repo_path: Path, snapshot: Sequence[Mapping[str, object]]
     ) -> list[str]:
-        """Recover a force snapshot mirror from authoritative hash checkpoints.
+        """Return snapshot paths matching the current ingestion hashes.
 
-        Project-store hash acknowledgement precedes the queue's lightweight
-        snapshot mirror.  A process may stop in that narrow cross-database
-        interval, so a retry repairs only exact hash matches before selecting
-        pending work.  It never treats a changed source as acknowledged.
+        These matches describe content equality only. They must not be used as
+        force-job completion evidence because an earlier index can have the same
+        hashes before the force job starts. Retained for internal compatibility;
+        durable force recovery uses only its job manifest acknowledgements.
         """
 
         canonical = canonicalize_repo_path(repo_path)

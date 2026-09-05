@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- fix: detect repeated edits to already-dirty files during automatic reindexing
+- fix: close idle daemon clients on shutdown while draining active requests
+- fix: preserve sockets when ownership probing fails without connection refusal
+- fix: resume force indexing from job acknowledgements instead of old source hashes
+- deps: upgrade TSG to v0.2.1 for adaptive-search fallback, scope integrity, and
+  literal name-search fixes
+
 ## 0.1.3 - 2026-09-04
 
 - refactor: remove foreign-product provenance and compatibility assumptions

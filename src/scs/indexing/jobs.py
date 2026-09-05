@@ -530,9 +530,10 @@ class IngestionJobStore:
     ) -> IngestionJob:
         """Mark a native-acknowledged force batch complete in the job manifest.
 
-        Native ingestion hashes remain the authoritative semantic checkpoint.
-        This mirror makes a reclaimed force job's target set explicit and
-        bounded; it persists only file identity and hash state.
+        The pipeline calls this only after the native semantic commit. This
+        job-scoped checkpoint distinguishes force work from an earlier index
+        containing the same hashes. A crash before this update may replay the
+        batch; it must never infer force completion from content equality.
         """
 
         expected_paths = sorted(set(rel_paths))

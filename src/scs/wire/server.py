@@ -47,6 +47,8 @@ class WireServer:
         self._server: asyncio.AbstractServer | None = None
         self._socket_identity: tuple[int, int] | None = None
         self._client_tasks: set[asyncio.Task[object]] = set()
+        self._idle_writers: set[asyncio.StreamWriter] = set()
+        self._stopping: bool = False
         self._attached_clients: int = 0
         self._client_count_changed: ClientCountCallback | None = client_count_changed
 
@@ -67,6 +69,7 @@ class WireServer:
         path.parent.mkdir(parents=True, exist_ok=True, mode=RUNTIME_DIRECTORY_MODE)
         os.chmod(path.parent, RUNTIME_DIRECTORY_MODE)
         await self._prepare_socket_path(path)
+        self._stopping = False
         try:
             self._server = await asyncio.start_unix_server(
                 self._handle_client,
@@ -83,8 +86,14 @@ class WireServer:
 
         server = self._server
         self._server = None
+        self._stopping = True
         if server is not None:
             server.close()
+            # Closing readers wakes idle and partial-frame clients. Dispatched
+            # work must finish before its transport closes, including native
+            # work that cancellation cannot safely interrupt.
+            for writer in tuple(self._idle_writers):
+                writer.close()
             await server.wait_closed()
         tasks = tuple(self._client_tasks)
         if tasks:
@@ -131,10 +140,15 @@ class WireServer:
         if task is not None:
             self._client_tasks.add(task)
         try:
-            while True:
+            while not self._stopping:
+                self._idle_writers.add(writer)
                 try:
                     envelope = await read_frame(reader)
                 except FrameError:
+                    break
+                finally:
+                    self._idle_writers.discard(writer)
+                if self._stopping:
                     break
                 response = await self.dispatch_envelope(envelope)
                 await write_frame(writer, response)
@@ -153,12 +167,14 @@ class WireServer:
             writer.close()
             with contextlib.suppress(ConnectionError):
                 await writer.wait_closed()
-            if task is not None:
-                self._client_tasks.discard(task)
-            if attached:
-                self._attached_clients -= 1
-                if self._client_count_changed is not None:
-                    await self._client_count_changed(self._attached_clients)
+            try:
+                if attached:
+                    self._attached_clients -= 1
+                    if self._client_count_changed is not None:
+                        await self._client_count_changed(self._attached_clients)
+            finally:
+                if task is not None:
+                    self._client_tasks.discard(task)
 
     async def _prepare_socket_path(self, path: Path) -> None:
         try:
@@ -176,9 +192,13 @@ class WireServer:
                 asyncio.open_unix_connection(path),
                 timeout=OWNERSHIP_PROBE_TIMEOUT_SECONDS,
             )
-        except ConnectionError, OSError, TimeoutError:
+        except ConnectionRefusedError:
             path.unlink()
             return
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot determine SCSWire socket ownership: {path}"
+            ) from error
         request_id = f"ownership-{uuid.uuid4().hex}"
         try:
             await asyncio.wait_for(
