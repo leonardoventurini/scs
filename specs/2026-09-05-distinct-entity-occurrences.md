@@ -159,3 +159,32 @@ passed: 244 Python tests, 99 Rust tests, strict typing/lint, and 84.57% coverage
 against 83%. Native rebuilding and existing performance ceilings passed. The
 installed production ingestion has not yet run this newly compiled release;
 release-installed verification remains a rollout step.
+
+## Force snapshot symlink identity follow-up
+
+The released occurrence fix passed ordinary discovery (2,973 files and 22,448
+unique IDs), but forced snapshot reconstruction failed again. `build_file_entry`
+resolved a source symlink before computing its relative path, collapsing the
+instruction-file alias onto its target while discovery retained both names.
+Preserve lexical repository-relative identity in the single-file builder and
+keep separate resolved-target containment, skipped-directory, generated-directory,
+and ignore checks. Avoid changing full-discovery symlink policy. Generated
+alias fixtures must cover ordinary/forced/incremental ID agreement, distinct
+checkpoints, and external/excluded target rejection. No file or index mutation
+outside explicit ingestion; a new immutable release is required.
+
+Alias containment consistency includes ordinary discovery, preserving the
+repository-scoped read contract already enforced by explicit-file construction.
+Generated tests cover both Git-listing and filesystem-fallback paths, internal
+file/directory aliases, root aliases, outside targets, exclusions/ignores, dangling
+links, and cycles. A separate generated two-batch accounting regression failed
+with 2 embeddings reported versus 66 stored; accumulation restores total reporting.
+The native alias test failed before the fix with the exact duplicate-ID storage
+error; targeted discovery/indexing coverage now passes all 42 cases.
+
+Alias/accounting candidate verification completed: `just verify` passed 250 Python
+tests, 99 Rust tests, strict typing/lint, native rebuild, and existing performance
+ceilings. Coverage is 84.61% against 83%. An initial strict typecheck identified an
+untyped empty-set branch in the new ignore-target collection; an explicit set type
+fixed it before the successful full run. Parent owns the version metadata and
+real-project verification commit, followed by publication/installed reindex.

@@ -495,3 +495,19 @@ def test_embeddings_consume_only_parser_owned_entity_text(repository: Path) -> N
         "file: main",
         "function main.run ",
     ]
+
+
+def test_embedding_count_accumulates_across_complete_file_batches(
+    repository: Path,
+) -> None:
+    for index in range(pipeline_module.INGESTION_BATCH_MAX_FILES + 1):
+        (repository / f"module_{index}.py").write_text(
+            f"def symbol_{index}():\n    pass\n", encoding="utf-8"
+        )
+    graph = FakeGraph()
+    result = IngestionPipeline(
+        graph=graph, parser=FakeParser(), embeddings=FakeEmbeddings()
+    ).ingest(repository)
+    assert graph.flushes == 2
+    assert result.embeddings_created == len(graph.embeddings)
+    assert result.embeddings_created == result.entities_created

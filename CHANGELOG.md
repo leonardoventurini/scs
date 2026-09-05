@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.6 - 2026-09-05
+
+- fix: retain distinct in-repository symlink paths through ordinary, forced, and
+  incremental ingestion while consistently rejecting external or excluded targets
+- fix: report the cumulative number of embeddings created across ingestion batches
+
 ## 0.1.5 - 2026-09-05
 
 - perf: delete replaced ingestion nodes in one native transaction and accelerator rebuild

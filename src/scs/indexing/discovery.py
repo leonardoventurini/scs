@@ -7,6 +7,7 @@ change detection.
 
 import hashlib
 import logging
+import os
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
@@ -421,6 +422,35 @@ def _path_has_large_generated_ancestor(
     return False
 
 
+def _resolved_file_in_repo(file_path: Path, repo_path: Path) -> Path | None:
+    """Validate target containment without replacing a source alias identity."""
+
+    try:
+        target = file_path.resolve(strict=True)
+        target.relative_to(repo_path)
+        return target if target.is_file() else None
+    except OSError, RuntimeError, ValueError:
+        return None
+
+
+def _lexical_file_in_repo(file_path: Path, repo_path: Path) -> Path | None:
+    """Normalize root aliases while retaining aliases beneath the repository."""
+
+    absolute = Path(os.path.abspath(file_path))
+    try:
+        return repo_path / absolute.relative_to(repo_path)
+    except ValueError:
+        # A caller may use a symlinked checkout root or macOS /var spelling.
+        # Resolve ancestors only until the repository boundary is identified.
+        for parent in absolute.parents:
+            try:
+                if parent.resolve() == repo_path:
+                    return repo_path / absolute.relative_to(parent)
+            except OSError, RuntimeError:
+                continue
+        return None
+
+
 def build_file_entry(
     file_path: Path,
     repo_path: Path,
@@ -437,26 +467,28 @@ def build_file_entry(
     Returns None if the file doesn't exist, has an unsupported extension,
     or is in an always-skipped directory.
     """
-    file_path = file_path.resolve()
     repo_path = repo_path.resolve()
     policy = policy or IngestionPolicy()
-
-    # The file must exist and be a regular file (not a directory or symlink to one).
-    if not file_path.is_file():
+    lexical_path = _lexical_file_in_repo(file_path, repo_path)
+    if lexical_path is None:
         return None
-
-    # Compute the relative path from the repo root.
-    try:
-        rel_file_path = file_path.relative_to(repo_path)
-    except ValueError:
-        # File is not under repo_path — cannot compute a relative path.
-        logger.warning("File %s is not under repo %s — skipping", file_path, repo_path)
+    file_path = lexical_path
+    target = _resolved_file_in_repo(file_path, repo_path)
+    if target is None:
         return None
+    rel_file_path = file_path.relative_to(repo_path)
+    target_rel_path = target.relative_to(repo_path)
 
     # Skip files in always-excluded directories (e.g., .venv, node_modules).
-    if _is_in_always_skipped_directory(rel_file_path):
+    if any(
+        _is_in_always_skipped_directory(path)
+        for path in (rel_file_path, target_rel_path)
+    ):
         return None
-    if _path_has_large_generated_ancestor(file_path, repo_path, policy):
+    if any(
+        _path_has_large_generated_ancestor(path, repo_path, policy)
+        for path in {file_path, target}
+    ):
         return None
 
     extensions = extensions or supported_extensions()
@@ -465,8 +497,9 @@ def build_file_entry(
 
     # Respect Git ignore rules, with a root .gitignore fallback outside Git repos.
     fallback_spec = _load_gitignore_spec(repo_path)
-    ignored_paths = _resolve_ignored_paths(repo_path, [rel_path], fallback_spec)
-    if rel_path in ignored_paths:
+    checked_paths = sorted({rel_path, target_rel_path.as_posix()})
+    ignored_paths = _resolve_ignored_paths(repo_path, checked_paths, fallback_spec)
+    if ignored_paths:
         return None
 
     # Compute content hash and file size.
@@ -563,11 +596,39 @@ def discover(
         else set[str]()
     )
 
+    resolved_targets = {
+        rel_path: target
+        for file_path, rel_path in candidate_items
+        if (target := _resolved_file_in_repo(file_path, repo_path)) is not None
+    }
+    alias_target_paths = {
+        target.relative_to(repo_path).as_posix()
+        for rel_path, target in resolved_targets.items()
+        if target != repo_path / rel_path
+    }
+    ignored_targets: set[str] = (
+        _resolve_ignored_paths(repo_path, sorted(alias_target_paths), fallback_spec)
+        if alias_target_paths
+        else set()
+    )
+
     for file_path, rel_path in candidate_items:
         # Skip directories, broken symlinks, and files in always-excluded
         # directories (unless disabled for library ingestion where source
         # IS inside venv/node_modules).
-        if not file_path.is_file():
+        target = resolved_targets.get(rel_path)
+        if target is None:
+            continue
+        target_rel_path = target.relative_to(repo_path)
+        if target_rel_path.as_posix() in ignored_targets:
+            continue
+        if skip_always_dirs and _is_in_always_skipped_directory(target_rel_path):
+            continue
+        if (
+            skip_always_dirs
+            and target != file_path
+            and _path_has_large_generated_ancestor(target, repo_path, policy)
+        ):
             continue
 
         rel_file_path = file_path.relative_to(repo_path)

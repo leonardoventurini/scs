@@ -193,3 +193,39 @@ def test_anonymized_source_collision_patterns_keep_embedding_associations(
         assert node.metadata["start_line"] == entity.start_line
         assert node.content == entity.raw_text
         assert embeddings.document_inputs[int(vector[0]) - 1] == entity.embed_text()
+
+
+def test_instruction_aliases_keep_distinct_identity_through_force_and_incremental(
+    repository: Path,
+    tmp_path: Path,
+) -> None:
+    target = repository / "instructions.md"
+    target.write_text("Synthetic instructions.\n", encoding="utf-8")
+    alias = repository / "assistant.md"
+    alias.symlink_to(target.name)
+    embeddings = OccurrenceEmbeddings()
+    graph = RecordingNativeGraph(
+        database_path=tmp_path / "graph.db",
+        vector_path=tmp_path / "vectors.usearch",
+        provider_metadata_path=tmp_path / "provider.json",
+        provider=embeddings.metadata,
+    )
+    pipeline = IngestionPipeline(
+        graph=graph, parser=NativeParser(), embeddings=embeddings
+    )
+    initial = pipeline.ingest(repository)
+    assert initial.files_changed == 2 and initial.files_failed == 0
+    initial_ids = {node.id for node in graph.list_nodes_sync()}
+    snapshot = pipeline.create_force_full_snapshot(repository)
+    forced = pipeline.ingest(repository, force=True, force_snapshot=snapshot)
+    assert forced.files_changed == 2 and forced.files_failed == 0
+    assert {node.id for node in graph.list_nodes_sync()} == initial_ids
+    target.write_text("Updated synthetic instructions.\n", encoding="utf-8")
+    updated = pipeline.ingest_files(repository, [target, alias])
+    assert updated.files_changed == 2 and updated.files_failed == 0
+    assert {node.id for node in graph.list_nodes_sync()} == initial_ids
+    assert set(graph.get_all_ingested_files_sync(str(repository))) == {
+        target.name,
+        alias.name,
+    }
+    assert graph.reopened_vectors_contain_sync(sorted(initial_ids))

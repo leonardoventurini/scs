@@ -775,7 +775,7 @@ class IngestionPipeline:
                 strict=True,
             )
         ]
-        result.embeddings_created = (
+        result.embeddings_created += (
             self._graph.batch_upsert_embeddings_sync(pairs) if pairs else 0
         )
         # A file can validly produce no embeddable entities. Its structural

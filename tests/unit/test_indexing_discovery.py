@@ -251,3 +251,101 @@ def test_build_file_entry_applies_large_generated_directory_policy(
         discovery.build_file_entry(files[0], repo, frozenset({".py"}), policy=policy)
         is None
     )
+
+
+def test_build_file_entry_preserves_alias_identity_and_target_boundaries(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "instructions.md"
+    target.write_text("Synthetic instructions.\n", encoding="utf-8")
+    alias = repo / "assistant.md"
+    alias.symlink_to(target.name)
+    entry = discovery.build_file_entry(alias, repo)
+    assert entry is not None
+    assert entry.rel_path == alias.name
+    assert entry.abs_path == alias
+    assert entry.content_hash == hashlib.sha256(target.read_bytes()).hexdigest()
+
+    outside = tmp_path / "outside.md"
+    outside.write_text("External content.\n", encoding="utf-8")
+    for index, unsafe_target in enumerate(
+        [outside, repo / "node_modules" / "hidden.md", repo / "ignored.md"]
+    ):
+        unsafe_target.parent.mkdir(exist_ok=True)
+        unsafe_target.write_text("Excluded content.\n", encoding="utf-8")
+        (repo / ".gitignore").write_text("ignored.md\n", encoding="utf-8")
+        unsafe_alias = repo / f"unsafe-{index}.md"
+        unsafe_alias.symlink_to(unsafe_target)
+        assert discovery.build_file_entry(unsafe_alias, repo) is None
+
+
+@pytest.mark.parametrize("git_listing", [False, True])
+def test_discovery_aliases_reject_unsafe_targets_consistently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_listing: bool,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "target.md"
+    target.write_text("Synthetic content.\n", encoding="utf-8")
+    (repo / "alias.md").symlink_to(target.name)
+    outside = tmp_path / "external.md"
+    outside.write_text("External content.\n", encoding="utf-8")
+    (repo / "external.md").symlink_to(outside)
+    (repo / "dangling.md").symlink_to("absent.md")
+    (repo / "loop.md").symlink_to("loop.md")
+    skipped = repo / "node_modules" / "hidden.md"
+    skipped.parent.mkdir()
+    skipped.write_text("Excluded content.\n", encoding="utf-8")
+    (repo / "hidden-alias.md").symlink_to(skipped)
+    ignored = repo / "ignored.md"
+    ignored.write_text("Ignored content.\n", encoding="utf-8")
+    (repo / "ignored-target-alias.md").symlink_to(ignored.name)
+    (repo / "ignored-alias.md").symlink_to(target.name)
+    (repo / ".gitignore").write_text("ignored.md\nignored-alias.md\n", encoding="utf-8")
+    candidates = [
+        path.name
+        for path in repo.iterdir()
+        if path.suffix == ".md"
+        and not path.name.startswith("ignored.")
+        and path.name != "ignored-alias.md"
+    ]
+    monkeypatch.setattr(
+        discovery,
+        "_list_git_non_ignored_paths",
+        lambda _: candidates if git_listing else None,
+    )
+    found = {
+        entry.rel_path
+        for entry in discovery.discover(repo)
+        if entry.rel_path.endswith(".md")
+    }
+    assert found == {"target.md", "alias.md"}
+    for name in [
+        "external.md",
+        "dangling.md",
+        "loop.md",
+        "hidden-alias.md",
+        "ignored-target-alias.md",
+        "ignored-alias.md",
+    ]:
+        assert discovery.build_file_entry(repo / name, repo) is None
+
+
+def test_single_file_keeps_directory_alias_under_a_symlinked_checkout(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "content").mkdir(parents=True)
+    (repo / "content" / "file.md").write_text("Synthetic content.\n", encoding="utf-8")
+    (repo / "alias").symlink_to("content", target_is_directory=True)
+    checkout = tmp_path / "checkout"
+    checkout.symlink_to(repo, target_is_directory=True)
+    for root in (repo, checkout):
+        entry = discovery.build_file_entry(checkout / "alias" / "file.md", root)
+        assert entry is not None
+        assert entry.rel_path == "alias/file.md"
+        assert entry.abs_path == repo / "alias" / "file.md"
