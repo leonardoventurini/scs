@@ -46,8 +46,8 @@ index backups. No unrelated repository files are part of this change.
 - [x] Complete required tests: 260 Python tests, 84.69% coverage, strict typing, lint, and Rust tests pass. Release version validation follows the version bump.
 - [x] Commit, push, release the patch, and verify build assets: fix 094cf1a, release d868595, tag v0.1.9.
 - [x] Reinstall the verified release; copy m3 settings with explicit host trust.
-- [ ] Register Codex and verify MCP, provider, daemon, and Meteor ingestion.
-- [x] Record the decision and installation verification results; ingestion completion follows.
+- [x] Register Codex and verify MCP, provider, daemon, and Meteor ingestion.
+- [x] Record the decision and all verification results.
 
 ## Installed release verification
 
@@ -69,11 +69,36 @@ index backups. No unrelated repository files are part of this change.
   /Users/leonardo/.local/state/scs-backups/20260906T012900Z.
 - Meteor's actual checkout is /Users/leonardo/Repositories/meteor/meteor;
   its parent directory is only the workspace container. MCP accepted job
-  ingest_8aad29c543d4, which is actively embedding 133 file batches with no
-  reported errors. Completion and final semantic search remain pending.
+  ingest_8aad29c543d4, which completed all 133 file batches with no errors or
+  retries. All 4,193 discovered files were indexed, with zero failed files.
 - This conversation's tool catalog predates registration. The independent
   installed MCP client was verified; reopen Codex to refresh its tool catalog.
 
 Review order: src/scs/config.py, tests/unit/test_config.py, README.md/OMLX.md,
 then the decision and this rollout evidence. Unrestricted remote-host access
 was replaced with explicit trust following automatic approval review.
+
+## Completed ingestion and final handoff
+
+The installed MCP client verified 13,897 nodes, 13,897 embeddings, and 13,897
+vectors for Meteor. Graph status is ready and semantic_search_ready is true.
+A repository-scoped publication/subscription query returned three results with
+retrieval_mode = semantic. The job reported no semantic degradation.
+
+The pipeline retained 9,559 edges and filtered 12,975 candidate edges through
+its existing duplicate/unresolved-endpoint policy. This verification establishes
+successful indexing and usable semantic retrieval, not exhaustive resolution
+of every source relationship.
+
+After the smoke client finished, scs daemon start and scs doctor confirmed
+0.1.9 ready; Codex still reports the enabled local stdio registration. Legacy
+index.db, WAL, SHM, and provider.json match the backup byte-for-byte. Unrelated
+Codex settings are semantically unchanged; its serializer omitted an empty
+node_repl args list, which has the same default behavior.
+
+No required implementation checks were skipped. This conversation's original
+MCP tool catalog still requires a Codex restart to expose the new registration;
+the actual installed command was verified independently over MCP. Rollback
+instructions and the backup location above remain applicable. The old divergent
+source checkout was preserved, and all repair/release records were pushed to
+SCS main from the isolated repair branch.
