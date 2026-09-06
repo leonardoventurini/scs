@@ -223,3 +223,44 @@ def test_storage_root_resolves_directory_alias(tmp_path: Path) -> None:
     alias.symlink_to(storage, target_is_directory=True)
 
     assert validate_scs_home(alias) == storage.resolve()
+
+
+@pytest.mark.parametrize("host", ["m3", "M3"])
+def test_omlx_accepts_only_explicitly_trusted_remote_host(host: str) -> None:
+    endpoint = f"http://{host}:10000/v1"
+    settings = SCSSettings(
+        embedding_provider="omlx",
+        omlx_base_url=f"{endpoint}/",
+        omlx_trusted_hosts=["m3"],
+    )
+
+    assert settings.omlx_base_url == endpoint
+    assert settings.effective_openai_api_key is None
+
+
+@pytest.mark.parametrize("trusted", ["m3", "*", "*.example.com"])
+def test_omlx_trust_does_not_allow_other_hosts(trusted: str) -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        SCSSettings(
+            omlx_base_url="http://m3.example.com:10000/v1",
+            omlx_trusted_hosts=[trusted],
+        )
+
+
+def test_omlx_trust_loads_from_toml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / ".scs"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        'embedding_provider = "omlx"\n'
+        'omlx_base_url = "http://m3:10000/v1"\n'
+        'omlx_trusted_hosts = ["m3"]\n'
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    settings = SCSSettings()
+
+    assert settings.omlx_trusted_hosts == ["m3"]
+    assert settings.omlx_base_url == "http://m3:10000/v1"

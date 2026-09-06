@@ -131,8 +131,19 @@ embedding_dimension = 4096
 omlx_base_url = "http://127.0.0.1:10000/v1"
 ```
 
-OMLX endpoints must be loopback HTTP URLs. In OMLX mode, SCS ignores OpenAI
-credentials and sends no authorization header. Changing the provider, model,
+OMLX defaults to loopback HTTP URLs. To use an OMLX server on an explicitly
+trusted network host, configure both its URL and exact hostname:
+
+```toml
+omlx_base_url = "http://m3:10000/v1"
+omlx_trusted_hosts = ["m3"]
+```
+
+The trust list is empty by default and matches hostnames case-insensitively;
+it does not match subdomains or wildcards. Only opt in to a host and network
+that you trust with source-derived embedding text. SCS continues to run locally.
+The environment equivalent is `SCS_OMLX_TRUSTED_HOSTS='["m3"]'`.
+In OMLX mode, SCS ignores OpenAI credentials and sends no authorization header. Changing the provider, model,
 or dimension quarantines incompatible vectors; the next indexing pass
 regenerates embeddings while preserving the structural graph.
 

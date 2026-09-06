@@ -57,6 +57,7 @@ class SCSSettings(BaseSettings):
         validation_alias=AliasChoices("OPENAI_API_KEY", "openai_api_key"),
     )
     omlx_base_url: str = DEFAULT_OMLX_BASE_URL
+    omlx_trusted_hosts: list[str] = Field(default_factory=list)
     index_text_fallback: bool = True
     index_max_file_bytes: int = Field(default=1_048_576, ge=1)
     index_text_sample_bytes: int = Field(default=8_192, ge=1)
@@ -132,19 +133,31 @@ class SCSSettings(BaseSettings):
     @field_validator("omlx_base_url")
     @classmethod
     def _validate_omlx_base_url(cls, value: str) -> str:
-        """Keep source-derived embedding requests on the local machine."""
+        """Validate the OMLX transport before applying the host trust policy."""
 
         parsed = urlsplit(value)
         if parsed.scheme != "http" or not parsed.hostname:
             raise ValueError("omlx_base_url must be an absolute http URL")
-        host = parsed.hostname.lower()
+        return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def _validate_omlx_host_trust(self) -> "SCSSettings":
+        """Require explicit trust before sending entity text off the workstation."""
+
+        host = urlsplit(self.omlx_base_url).hostname
+        assert host is not None  # The field validator requires an absolute URL.
+        host = host.lower()
         try:
             is_loopback = ip_address(host).is_loopback
         except ValueError:
             is_loopback = host == "localhost"
-        if not is_loopback:
-            raise ValueError("omlx_base_url must use a loopback host")
-        return value.rstrip("/")
+        trusted_hosts = {trusted.lower() for trusted in self.omlx_trusted_hosts}
+        if not is_loopback and host not in trusted_hosts:
+            raise ValueError(
+                "omlx_base_url must use a loopback host or an exact host listed "
+                "in omlx_trusted_hosts"
+            )
+        return self
 
     @field_validator("openai_base_url")
     @classmethod

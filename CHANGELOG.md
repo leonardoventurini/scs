@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2026-09-05
+
+- fix: allow explicitly trusted OMLX hosts while keeping loopback-only defaults
+
 ## 0.1.8 - 2026-09-05
 
 - Consume TSG 0.2.3, which updates changed vectors in the existing search index

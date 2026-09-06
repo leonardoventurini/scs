@@ -1,8 +1,8 @@
 # OMLX embeddings
 
-SCS uses the local OMLX OpenAI-compatible embeddings endpoint by default. This
-keeps parser-derived source representations on the machine while enabling
-semantic retrieval alongside the structural code graph.
+SCS supports OMLX as an explicitly selected OpenAI-compatible embedding
+provider. Its default endpoint is local; a trusted remote host can be selected
+while SCS continues to index repositories on this machine.
 
 ## Required local service
 
@@ -28,9 +28,21 @@ export SCS_EMBEDDING_MODEL=Qwen3-Embedding-8B-4bit-DWQ
 export SCS_EMBEDDING_DIMENSION=4096
 ```
 
-`SCS_OMLX_BASE_URL` accepts only a loopback `http` URL. This is deliberate:
-embedding inputs are derived from repository source, and SCS must not send
-them to a remote endpoint through configuration drift.
+`SCS_OMLX_BASE_URL` accepts loopback `http` URLs by default. A remote host
+requires explicit trust because embedding inputs are derived from repository
+source. For a trusted OMLX server named `m3`, use these additional settings in
+`~/.scs/config.toml`:
+
+```toml
+omlx_base_url = "http://m3:10000/v1"
+omlx_trusted_hosts = ["m3"]
+```
+
+Set `embedding_provider = "omlx"` in the same file. The trust list is empty by
+default, matches exact hostnames case-insensitively, and accepts no wildcard or
+subdomain expansion. HTTP sends entity text to the selected host over the
+configured network. The environment equivalent is
+`SCS_OMLX_TRUSTED_HOSTS='["m3"]'`. OpenAI credentials are never sent in OMLX mode.
 
 The legacy in-process adapter remains available for compatible local setups,
 but it needs its own model identity and dimension:
@@ -46,7 +58,7 @@ export SCS_EMBEDDING_DIMENSION=768
 Restart SCS after OMLX is available:
 
 ```sh
-scs service restart
+scs daemon restart
 scs doctor
 ```
 
