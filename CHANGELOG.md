@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 2026-09-05
+## 0.1.9 - 2026-09-05
 
 - fix: allow explicitly trusted OMLX hosts while keeping loopback-only defaults
 
