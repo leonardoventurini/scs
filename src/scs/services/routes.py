@@ -648,23 +648,20 @@ class SCSServiceRoutes:
         }
 
     async def lsp_references(self, params: dict[str, object]) -> dict[str, object]:
-        node = await self._node_at_position(params)
-        if node is None:
+        located = await self._node_at_position(params)
+        if located is None:
             return self._lsp_unavailable(
                 str(params.get("file_path", "")),
                 "no indexed symbol exists at this position",
             )
+        graph, node = located
         edges = await asyncio.to_thread(
-            self._graph().get_edges_sync, node.id, direction="incoming"
+            graph.get_edges_sync, node.id, direction="incoming"
         )
         references = [
             related
             for edge in edges
-            if (
-                related := await asyncio.to_thread(
-                    self._graph().get_node_sync, edge.source_id
-                )
-            )
+            if (related := await asyncio.to_thread(graph.get_node_sync, edge.source_id))
             is not None
         ]
         return {
@@ -674,32 +671,55 @@ class SCSServiceRoutes:
             "references": [_node_dict(item) for item in references],
         }
 
-    def _indexed_location(self, file_path: Path) -> tuple[str | None, str]:
-        for repo_path in self._graph().get_ingestion_stats_sync():
+    async def _indexed_location(
+        self, file_path: Path
+    ) -> tuple[NativeGraph | None, str | None, str]:
+        resolver = self._graph_for_repository
+        if resolver is not None:
+            # Start at the nearest ancestor so nested registered repositories
+            # retain ownership of their source paths.
+            for root in file_path.parents:
+                repo_path = canonicalize_repo_path(str(root))
+                graph = await asyncio.to_thread(resolver, repo_path)
+                if graph is None:
+                    continue
+                try:
+                    source = Path(validated_source_path(str(file_path), repo_path))
+                except ValueError:
+                    continue
+                return graph, repo_path, source.relative_to(repo_path).as_posix()
+
+        graph = self._read_graph(None)
+        if graph is None:
+            return None, None, file_path.name
+        ingestion_stats = await asyncio.to_thread(graph.get_ingestion_stats_sync)
+        for repo_path in ingestion_stats:
             root = Path(repo_path)
             try:
                 source = Path(validated_source_path(str(file_path), str(root)))
             except ValueError:
                 continue
-            return repo_path, source.relative_to(root).as_posix()
-        return None, file_path.name
+            return graph, repo_path, source.relative_to(root).as_posix()
+        return None, None, file_path.name
 
-    async def _node_at_position(self, params: dict[str, object]) -> Node | None:
+    async def _node_at_position(
+        self, params: dict[str, object]
+    ) -> tuple[NativeGraph, Node] | None:
         file_path = _string(params, "file_path", required=True)
         assert file_path is not None
         line = _integer(params, "line", 0)
-        repo_path, rel_path = self._indexed_location(
+        graph, repo_path, rel_path = await self._indexed_location(
             Path(validated_source_path(file_path))
         )
-        if repo_path is None:
+        if graph is None or repo_path is None:
             return None
         node_ids = await asyncio.to_thread(
-            self._graph().get_node_ids_for_file_sync, repo_path, rel_path
+            graph.get_node_ids_for_file_sync, repo_path, rel_path
         )
         candidates = [
             node
             for node_id in node_ids
-            if (node := await asyncio.to_thread(self._graph().get_node_sync, node_id))
+            if (node := await asyncio.to_thread(graph.get_node_sync, node_id))
             is not None
         ]
         containing = [
@@ -713,7 +733,7 @@ class SCSServiceRoutes:
                 node.metadata.get("end_line"), key="end_line", default=-1
             )
         ]
-        return min(
+        node = min(
             containing,
             key=lambda node: (
                 _integer_metadata(
@@ -725,6 +745,7 @@ class SCSServiceRoutes:
             ),
             default=None,
         )
+        return (graph, node) if node is not None else None
 
     @staticmethod
     def _lsp_unavailable(file_path: str, reason: str) -> dict[str, object]:

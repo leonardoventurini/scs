@@ -12,6 +12,8 @@ import pytest
 
 from scs.config import SCSSettings
 from scs.indexing.jobs import IngestionJobStore
+from scs.indexing.parser.native import NativeParser
+from scs.indexing.pipeline import IngestionPipeline
 from scs.main import SCSDaemon
 from scs.providers.base import ProviderMetadata, ProviderUnavailableError
 from scs.storage.registry import ProjectStoreRegistry
@@ -65,6 +67,64 @@ async def test_startup_restores_watchers_without_opening_every_graph(
     try:
         await daemon.start()
         assert (runtime / "scs.sock").exists()
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_references_lazily_open_the_registered_project_graph(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    source = repository / "sample.py"
+    source.write_text("def indexed_symbol():\n    return 1\n", encoding="utf-8")
+    runtime = Path(tempfile.mkdtemp(prefix="scs-lazy-references-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+        auto_reindex_enabled=False,
+    )
+    registry = ProjectStoreRegistry(
+        home=settings.paths.home,
+        provider=UnavailableEmbeddings().metadata,
+    )
+    _record, graph = registry.ensure_graph(repository)
+    pipeline = IngestionPipeline(graph=graph, parser=NativeParser())
+
+    await asyncio.to_thread(pipeline.ingest, repository)
+    registry.flush()
+    # Model a prior daemon generation that released every native store handle.
+    del pipeline, graph, registry
+
+    daemon = SCSDaemon(settings)
+    await daemon.start()
+
+    try:
+        result = await SCSClient(runtime / "scs.sock").call(
+            "lsp.references",
+            {"file_path": str(source), "line": 0},
+        )
+
+        assert result["available"] is True
+        symbol = cast(dict[str, object], result["symbol"])
+        assert symbol["name"] == "indexed_symbol"
+
+        unavailable = await SCSClient(runtime / "scs.sock").call(
+            "lsp.references",
+            {"file_path": str(source), "line": 999},
+        )
+
+        assert unavailable == {
+            "available": False,
+            "source": "index",
+            "file_path": str(source),
+            "reason": "no indexed symbol exists at this position",
+            "language_server_configured": False,
+        }
     finally:
         await daemon.stop()
 

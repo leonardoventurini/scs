@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import override
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult
 
 from scs.mcp.inventory import MCP_TOOL_NAMES
 from scs.mcp.observability import ToolRecorder
@@ -262,6 +265,50 @@ async def test_search_dispatches_through_public_service_gateway(tmp_path) -> Non
             },
         )
     ]
+
+
+@pytest.mark.parametrize(
+    "route_output",
+    [
+        {
+            "available": True,
+            "source": "index",
+            "symbol": {"id": "symbol-1", "name": "retained"},
+            "references": [],
+        },
+        {
+            "available": False,
+            "source": "index",
+            "file_path": "/repo/module.py",
+            "reason": "not indexed",
+            "language_server_configured": False,
+        },
+    ],
+)
+async def test_reference_result_variants_serialize_through_mcp(
+    tmp_path: Path, route_output: dict[str, object]
+) -> None:
+    source = tmp_path / "module.py"
+    source.write_text("def retained():\n    return True\n", encoding="utf-8")
+
+    class ReferenceGateway(RecordingGateway):
+        @override
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            self.calls.append((method, params))
+            return route_output
+
+    result = await build_mcp(ReferenceGateway()).call_tool(
+        "find_references",
+        {"file_path": str(source), "line": 0},
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.is_error is False
+    assert result.structured_content == {"result": route_output}
 
 
 async def test_search_dispatches_opt_in_compact_result_detail(tmp_path) -> None:
