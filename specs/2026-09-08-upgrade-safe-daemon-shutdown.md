@@ -125,11 +125,11 @@ existing SCS installation is unchanged.
 
 ## Executable checklist
 
-- [ ] Add cancellation and full-exit lifecycle tests.
-- [ ] Implement `daemon stop --cancel-active`.
-- [ ] Keep identity until writer-lock release and wait for exact daemon exit.
-- [ ] Make the installer block replacement on unsuccessful shutdown.
-- [ ] Update documentation.
-- [ ] Run targeted tests and `just verify`.
-- [ ] Record the decision and commit the verified unit.
+- [x] Add cancellation and full-exit lifecycle tests.
+- [x] Implement `daemon stop --cancel-active`.
+- [x] Keep identity until writer-lock release and wait for exact daemon exit.
+- [x] Make the installer block replacement on unsuccessful shutdown.
+- [x] Update documentation.
+- [x] Run targeted tests and `just verify`.
+- [x] Record the decision and commit the verified unit.
 - [ ] Publish, install, and validate the patch release locally.

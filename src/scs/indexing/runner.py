@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from scs.indexing.jobs import IngestionJob, IngestionJobStore, job_to_dict
-from scs.indexing.pipeline import IngestionPipeline
+from scs.indexing.pipeline import IngestionCancelled, IngestionPipeline
 from scs.indexing.repository_paths import assert_not_user_home_repo
 from scs.providers.base import EventSink, NullEventSink
 
@@ -112,6 +112,9 @@ class IngestionJobRunner:
                     self._store.complete, job.id, result=result
                 )
             await self._publish(final)
+        except IngestionCancelled:
+            final = await asyncio.to_thread(self._store.mark_cancelled, job.id)
+            await self._publish(final)
         except Exception as exc:
             final = await asyncio.to_thread(
                 self._store.fail_or_retry, job.id, error=str(exc)
@@ -149,7 +152,13 @@ class IngestionJobRunner:
         repo = Path(job.repo_path)
         if job.mode != "drop_index":
             assert_not_user_home_repo(repo)
-        pipeline = self._pipeline_factory(job)
+        if await asyncio.to_thread(self._store.cancellation_requested, job.id):
+            raise IngestionCancelled("ingestion cancelled before graph open")
+        # Opening a large native graph can rebuild its vector accelerator. Keep
+        # that work off the control-plane loop so SCSWire can become ready.
+        pipeline = await asyncio.to_thread(self._pipeline_factory, job)
+        if await asyncio.to_thread(self._store.cancellation_requested, job.id):
+            raise IngestionCancelled("ingestion cancelled after graph open")
         if job.mode == "files":
             result = await asyncio.to_thread(
                 pipeline.ingest_files,

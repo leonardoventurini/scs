@@ -58,6 +58,7 @@ class FakeGraph:
         self.fail_at = fail_at
         self.flushes = 0
         self.qualified_name_resolutions = 0
+        self.deleted_node_batches: list[list[str]] = []
 
     def _fail(self, boundary: str) -> None:
         if self.fail_at == boundary:
@@ -183,6 +184,7 @@ class FakeGraph:
         return all(node_id not in self.embeddings for node_id in node_ids)
 
     def delete_nodes_sync(self, node_ids: list[str]) -> int:
+        self.deleted_node_batches.append(list(node_ids))
         return sum(self.delete_node_sync(node_id) for node_id in node_ids)
 
     def delete_node_sync(self, node_id: str) -> bool:

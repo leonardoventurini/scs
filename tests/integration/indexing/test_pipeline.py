@@ -214,6 +214,28 @@ def test_deleted_file_cascades_nodes_edges_and_vectors(repository: Path) -> None
     assert graph.embeddings == {}
 
 
+def test_deleted_files_use_one_native_delete_per_durable_batch(
+    repository: Path,
+) -> None:
+    first = repository / "first.py"
+    second = repository / "second.py"
+    first.write_text("def first():\n    pass\n")
+    second.write_text("def second():\n    pass\n")
+    graph = FakeGraph()
+    pipeline = IngestionPipeline(
+        graph=graph, parser=FakeParser(), embeddings=FakeEmbeddings()
+    )
+    pipeline.ingest(repository)
+    first.unlink()
+    second.unlink()
+
+    result = pipeline.ingest(repository)
+
+    assert result.files_deleted == 2
+    assert len(graph.deleted_node_batches) == 1
+    assert len(graph.deleted_node_batches[0]) == 4
+
+
 def test_deletion_reopen_failure_preserves_ingestion_checkpoint(
     repository: Path,
 ) -> None:

@@ -89,3 +89,62 @@ async def test_stop_is_idempotent_when_daemon_is_absent(
     monkeypatch.setattr(DaemonController, "status", absent)
 
     assert await controller.stop() is False
+
+
+@pytest.mark.asyncio
+async def test_stop_waits_for_writer_lock_after_socket_disappears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = DaemonController(_settings(tmp_path))
+    states = iter(
+        [
+            DaemonStatus(True, True, pid=321, generation="generation-1"),
+            DaemonStatus(False, False, error="FileNotFoundError"),
+        ]
+    )
+    lock_states = iter([False, False, True])
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    async def status(_self: DaemonController) -> DaemonStatus:
+        return next(states)
+
+    class Client:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def call(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"accepted": True}
+
+    monkeypatch.setattr(DaemonController, "status", status)
+    monkeypatch.setattr("scs.daemon.SCSClient", Client)
+    monkeypatch.setattr(
+        controller, "_writer_lock_available", lambda: next(lock_states)
+    )
+    monkeypatch.setattr("scs.daemon.DAEMON_POLL_SECONDS", 0.0)
+
+    assert await controller.stop(cancel_active=True) is True
+    assert calls == [
+        (
+            "system.shutdown",
+            {"generation": "generation-1", "cancel_active": True},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stop_rejects_unreachable_unidentified_lock_holder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = DaemonController(_settings(tmp_path))
+
+    async def absent(_self: DaemonController) -> DaemonStatus:
+        return DaemonStatus(False, False, error="FileNotFoundError")
+
+    monkeypatch.setattr(DaemonController, "status", absent)
+    monkeypatch.setattr(controller, "_writer_lock_available", lambda: False)
+
+    with pytest.raises(RuntimeError, match="unreachable daemon retains"):
+        await controller.stop(cancel_active=True)

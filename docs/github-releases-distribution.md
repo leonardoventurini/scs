@@ -109,7 +109,12 @@ expanded inside the TOML `command` value.
 
 ## Upgrade, rollback, and uninstall
 
-Running a newer versioned installer performs an in-place `uv tool` replacement.
+Running a newer versioned installer first requests cooperative cancellation of
+active indexing, waits for the daemon to release its root-scoped writer lock,
+and then performs an in-place `uv tool` replacement. If safe shutdown fails,
+the installer exits before changing the installed tool. Releases predating
+cooperative cancellation drain their current durable operation before the first
+upgrade to a supporting release.
 It stops the prior daemon first and preserves `SCS_HOME`, project stores,
 configuration, durable jobs, and logs.
 

@@ -182,6 +182,7 @@ class SCSDaemon:
                         large_dir_file_count=self.settings.index_large_dir_files,
                         large_dir_byte_size=self.settings.index_large_dir_bytes,
                     ),
+                    cancellation_requested=lambda: jobs.cancellation_requested(job.id),
                 )
 
             def mark_job_store_ready(job: IngestionJob) -> None:
@@ -225,8 +226,6 @@ class SCSDaemon:
             self._stores = stores
             for record in await asyncio.to_thread(stores.records):
                 if record.active_generation is None:
-                    continue
-                if stores.lookup_graph(record.canonical_root) is None:
                     continue
                 await self._ensure_watcher(record.canonical_root, jobs=jobs)
             server = WireServer(
@@ -283,8 +282,6 @@ class SCSDaemon:
             await server.stop()
         identity = self._identity
         self._identity = None
-        if identity is not None:
-            identity.remove_owned()
         watchers, self._watchers = tuple(self._watchers.values()), {}
         for watcher in watchers:
             await watcher.stop()
@@ -304,6 +301,8 @@ class SCSDaemon:
         self._lock = None
         if process_lock is not None:
             process_lock.release()
+        if identity is not None:
+            identity.remove_owned()
         self._jobs = None
         self._embeddings = None
         self._reranker = None
@@ -344,14 +343,13 @@ class SCSDaemon:
     async def _shutdown_after(self, delay: float, *, unattached: bool) -> None:
         await asyncio.sleep(delay)
         jobs = self._jobs
-        if (
-            not unattached
-            and jobs is not None
-            and await asyncio.to_thread(jobs.has_active)
-        ):
+        if jobs is not None and await asyncio.to_thread(jobs.has_active):
             # Keep the control plane observable while background work drains.
             self._shutdown_task = asyncio.create_task(
-                self._shutdown_after(CLIENT_HANDOFF_SECONDS, unattached=False)
+                self._shutdown_after(
+                    CLIENT_HANDOFF_SECONDS,
+                    unattached=unattached,
+                )
             )
             return
         if not unattached or not self._ever_attached:
@@ -377,8 +375,17 @@ class SCSDaemon:
         async def system_shutdown(params: dict[str, object]) -> dict[str, object]:
             if params.get("generation") != self._generation:
                 raise ValueError("daemon generation changed before shutdown")
+            cancelled_jobs = 0
+            if params.get("cancel_active") is True:
+                cancelled_jobs = len(
+                    await asyncio.to_thread(self._require_jobs().request_cancel_all)
+                )
             self.request_shutdown()
-            return {"accepted": True, "generation": self._generation}
+            return {
+                "accepted": True,
+                "generation": self._generation,
+                "cancelled_jobs": cancelled_jobs,
+            }
 
         @self._router.method("repositories.status")
         async def repository_statuses(params: dict[str, object]) -> dict[str, object]:

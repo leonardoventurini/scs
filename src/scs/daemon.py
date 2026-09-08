@@ -16,6 +16,7 @@ from scs.service import ProcessLock
 from scs.wire.client import SCSClient
 
 DAEMON_START_TIMEOUT_SECONDS = 15.0
+DAEMON_STOP_TIMEOUT_SECONDS = 300.0
 DAEMON_POLL_SECONDS = 0.05
 
 
@@ -97,21 +98,41 @@ class DaemonController:
         finally:
             bootstrap_lock.release()
 
-    async def stop(self) -> bool:
-        """Request generation-scoped graceful shutdown when a daemon is live."""
+    async def stop(self, *, cancel_active: bool = False) -> bool:
+        """Request shutdown and wait until the root writer lock is released."""
 
         current = await self.status()
         if not current.available:
-            return False
+            if self._writer_lock_available():
+                return False
+            raise RuntimeError(
+                "unreachable daemon retains the SCS writer lock; refusing "
+                "unverified process recovery"
+            )
         await SCSClient(self._socket_path).call(
-            "system.shutdown", {"generation": current.generation}
+            "system.shutdown",
+            {
+                "generation": current.generation,
+                "cancel_active": cancel_active,
+            },
         )
-        deadline = time.monotonic() + DAEMON_START_TIMEOUT_SECONDS
+        deadline = time.monotonic() + DAEMON_STOP_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
-            if not (await self.status()).available:
+            if self._writer_lock_available():
                 return True
             await asyncio.sleep(DAEMON_POLL_SECONDS)
-        raise TimeoutError("SCS daemon did not stop before timeout")
+        raise TimeoutError("SCS daemon did not release its writer lock before timeout")
+
+    def _writer_lock_available(self) -> bool:
+        """Probe the ownership invariant without relying on socket visibility."""
+
+        lock = ProcessLock(self.settings.paths.home / ".daemon.lock")
+        try:
+            lock.acquire()
+        except RuntimeError:
+            return False
+        lock.release()
+        return True
 
     def _spawn(self) -> None:
         log_path = self.settings.paths.logs / "daemon.log"

@@ -71,7 +71,8 @@ bridge. The first bridge starts the shared daemon, concurrent bridges reuse it,
 and closing the final bridge shuts it down cleanly.
 
 Re-run the versioned installation procedure to upgrade or reinstall SCS. The
-installer replaces the `uv` tool atomically, stops an older daemon first, and
+installer cancels active indexing at a durable boundary, waits for the older
+daemon to release its writer lock, and then replaces the `uv` tool atomically.
 preserves `SCS_HOME`, including configuration and indexes.
 
 ## Storage architecture

@@ -42,3 +42,14 @@ def test_source_installer_requires_an_exact_release_version() -> None:
 
     assert completed.returncode == 2
     assert "requires --version" in completed.stderr
+
+
+def test_installer_stops_daemon_before_replacing_tool() -> None:
+    root = Path(__file__).parents[2]
+    script = (root / "scripts" / "install.sh").read_text(encoding="utf-8")
+
+    stop_position = script.index("daemon stop --cancel-active")
+    install_position = script.index('"$uv_command" tool install')
+
+    assert stop_position < install_position
+    assert "daemon stop --cancel-active >/dev/null 2>&1 || true" not in script

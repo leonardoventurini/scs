@@ -50,6 +50,7 @@ esac
 
 command -v curl >/dev/null 2>&1 || { printf '%s\n' "curl is required" >&2; exit 1; }
 command -v tar >/dev/null 2>&1 || { printf '%s\n' "tar is required" >&2; exit 1; }
+command -v sed >/dev/null 2>&1 || { printf '%s\n' "sed is required" >&2; exit 1; }
 
 os_name=$(uname -s)
 architecture=$(uname -m)
@@ -124,7 +125,30 @@ else
 fi
 
 if command -v scs >/dev/null 2>&1; then
-    scs daemon stop >/dev/null 2>&1 || true
+    daemon_status=$(scs daemon status 2>/dev/null || true)
+    daemon_pid=$(printf '%s\n' "$daemon_status" | sed -n 's/.*"pid": \([0-9][0-9]*\).*/\1/p')
+    stop_help=$(scs daemon stop --help 2>&1 || true)
+    case "$stop_help" in
+        *--cancel-active*)
+            scs daemon stop --cancel-active >/dev/null
+            ;;
+        *)
+            # Releases before cooperative cancellation still need a complete
+            # process handoff; their stop command reports socket loss too early.
+            scs daemon stop >/dev/null
+            ;;
+    esac
+    if [ -n "$daemon_pid" ]; then
+        wait_count=0
+        while kill -0 "$daemon_pid" 2>/dev/null; do
+            wait_count=$((wait_count + 1))
+            if [ "$wait_count" -ge 300 ]; then
+                printf 'SCS daemon %s did not exit; installation was not changed.\n' "$daemon_pid" >&2
+                exit 1
+            fi
+            sleep 1
+        done
+    fi
 fi
 
 "$uv_command" tool install \

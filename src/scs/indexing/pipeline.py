@@ -35,6 +35,10 @@ INGESTION_BATCH_MAX_ENTITIES = 512
 T = TypeVar("T")
 
 
+class IngestionCancelled(RuntimeError):
+    """Signal cooperative cancellation at a durable ingestion boundary."""
+
+
 class GraphStore(Protocol):
     """Persistence operations required by indexing, suitable for native fakes."""
 
@@ -180,6 +184,7 @@ class IngestionPipeline:
         embeddings: EmbeddingProvider | None = None,
         progress: Callable[[IngestionProgress], None] | None = None,
         policy: IngestionPolicy | None = None,
+        cancellation_requested: Callable[[], bool] | None = None,
     ) -> None:
         self._graph: GraphStore = graph
         self._parser: LanguageParser = parser
@@ -188,10 +193,25 @@ class IngestionPipeline:
             progress or self._ignore_progress
         )
         self._policy: IngestionPolicy = policy or IngestionPolicy()
+        self._cancellation_requested: Callable[[], bool] = (
+            cancellation_requested or self._never_cancelled
+        )
 
     @staticmethod
     def _ignore_progress(_progress: IngestionProgress) -> None:
         """Provide a typed no-op when no progress observer is configured."""
+
+    @staticmethod
+    def _never_cancelled() -> bool:
+        """Provide a typed no-op cancellation source for direct pipeline use."""
+
+        return False
+
+    def _check_cancelled(self) -> None:
+        """Stop only between durable operations, never inside a native mutation."""
+
+        if self._cancellation_requested():
+            raise IngestionCancelled("ingestion cancelled at a durable boundary")
 
     def _report(
         self, phase: str, current: int, total: int, *, path: str = "", message: str = ""
@@ -363,11 +383,13 @@ class IngestionPipeline:
         if not changed:
             return result
 
+        self._check_cancelled()
         # A discovered hash is a content contract, not merely a change hint.
         # Reading and hashing before parsing ensures a racing writer cannot
         # make us install structure for bytes we later acknowledge differently.
         self._report("parse", 0, len(changed), message="Parsing changed source files")
         parsed, failed = self._parse_files(changed)
+        self._check_cancelled()
         result.files_failed = len(failed)
         for index, item in enumerate(parsed, start=1):
             self._report("parse", index, len(changed), path=item.entry.rel_path)
@@ -393,6 +415,7 @@ class IngestionPipeline:
 
         batches = self._plan_batches(plan.parsed)
         for batch_number, batch in enumerate(batches, start=1):
+            self._check_cancelled()
             self._report(
                 "embed",
                 batch_number,
@@ -485,6 +508,7 @@ class IngestionPipeline:
 
         deleted_paths = sorted(set(paths))
         for offset in range(0, len(deleted_paths), INGESTION_BATCH_MAX_FILES):
+            self._check_cancelled()
             deleted_batch = deleted_paths[offset : offset + INGESTION_BATCH_MAX_FILES]
             removed_node_ids = [
                 node_id
@@ -493,8 +517,9 @@ class IngestionPipeline:
                     repo_path, rel_path
                 )
             ]
-            for rel_path in deleted_batch:
-                self._graph.remove_file_graph_and_vector_sync(repo_path, rel_path)
+            # Delete the complete file batch in one native transaction so the
+            # vector accelerator is rebuilt once, not once per source file.
+            self._graph.delete_nodes_sync(sorted(set(removed_node_ids)))
             self._graph.flush_vector_index_sync()
             if removed_node_ids and not self._graph.reopened_vectors_absent_sync(
                 removed_node_ids

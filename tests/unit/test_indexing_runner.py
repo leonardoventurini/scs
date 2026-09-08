@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from scs.indexing.jobs import IngestionJobStore
+from scs.indexing.pipeline import IngestionCancelled
 from scs.indexing.runner import IngestionJobRunner
 
 
@@ -19,6 +21,12 @@ class Result:
 class Pipeline:
     def ingest(self, repo: Path, *, force: bool = False) -> Result:
         return Result()
+
+
+class CancellingPipeline(Pipeline):
+    def ingest(self, repo: Path, *, force: bool = False) -> Result:
+        del repo, force
+        raise IngestionCancelled("cancelled at batch boundary")
 
 
 class ForceRecordingPipeline(Pipeline):
@@ -89,6 +97,85 @@ async def test_runner_completes_only_after_pipeline_returns(tmp_path: Path) -> N
 
     assert store.get(job.id).status == "completed"
     assert sink.events[-1][1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_cooperative_pipeline_cancellation(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    job = store.enqueue(repo_path=str(repo), mode="full", reason="explicit")
+    runner = IngestionJobRunner(
+        store=store,
+        graph=object(),
+        pipeline_factory=lambda _: CancellingPipeline(),
+    )
+
+    assert await runner.run_once() is True
+
+    cancelled = store.get(job.id)
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+    assert cancelled.error is None
+
+
+@pytest.mark.asyncio
+async def test_runner_builds_pipeline_off_the_control_plane_thread(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    store.enqueue(repo_path=str(repo), mode="full", reason="explicit")
+    control_thread = threading.get_ident()
+    factory_threads: list[int] = []
+
+    def build_pipeline(_job: object) -> Pipeline:
+        factory_threads.append(threading.get_ident())
+        return Pipeline()
+
+    runner = IngestionJobRunner(
+        store=store,
+        graph=object(),
+        pipeline_factory=build_pipeline,
+    )
+
+    assert await runner.run_once() is True
+    assert factory_threads
+    assert factory_threads[0] != control_thread
+
+
+@pytest.mark.asyncio
+async def test_runner_honors_cancellation_requested_while_graph_opens(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    job = store.enqueue(repo_path=str(repo), mode="full", reason="explicit")
+    pipeline_calls: list[bool] = []
+
+    class UnusedPipeline(Pipeline):
+        def ingest(self, repo: Path, *, force: bool = False) -> Result:
+            pipeline_calls.append(True)
+            return super().ingest(repo, force=force)
+
+    def build_pipeline(active_job: object) -> UnusedPipeline:
+        del active_job
+        store.request_cancel(job.id)
+        return UnusedPipeline()
+
+    runner = IngestionJobRunner(
+        store=store,
+        graph=object(),
+        pipeline_factory=build_pipeline,
+    )
+
+    assert await runner.run_once() is True
+    assert pipeline_calls == []
+    cancelled = store.get(job.id)
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
 
 
 @pytest.mark.asyncio

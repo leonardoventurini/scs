@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument(
         "action", choices=("start", "stop", "restart", "status")
     )
+    daemon.add_argument(
+        "--cancel-active",
+        action="store_true",
+        help="cancel active indexing before stopping (for upgrades)",
+    )
     return parser
 
 
@@ -75,7 +80,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if action == "start":
             result = asyncio.run(controller.ensure_started())
         elif action == "stop":
-            stopped = asyncio.run(controller.stop())
+            stopped = asyncio.run(
+                controller.stop(cancel_active=values.get("cancel_active") is True)
+            )
             result = asyncio.run(controller.status())
             print(json.dumps({"stopped": stopped, **asdict(result)}, sort_keys=True))
             return 0

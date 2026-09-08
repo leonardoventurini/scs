@@ -14,6 +14,7 @@ from scs.config import SCSSettings
 from scs.indexing.jobs import IngestionJobStore
 from scs.main import SCSDaemon
 from scs.providers.base import ProviderMetadata, ProviderUnavailableError
+from scs.storage.registry import ProjectStoreRegistry
 from scs.wire.client import SCSClient, SCSConnection
 
 MCP_GATEWAY_METHODS = frozenset(
@@ -30,6 +31,42 @@ MCP_GATEWAY_METHODS = frozenset(
         "repository.ingest_files",
     }
 )
+
+
+@pytest.mark.asyncio
+async def test_startup_restores_watchers_without_opening_every_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    runtime = Path(tempfile.mkdtemp(prefix="scs-lazy-start-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+        auto_reindex_enabled=False,
+    )
+    registry = ProjectStoreRegistry(
+        home=settings.paths.home,
+        provider=UnavailableEmbeddings().metadata,
+    )
+    registry.ensure_graph(repository)
+    registry.flush()
+
+    def unexpected_open(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("startup eagerly opened a project graph")
+
+    monkeypatch.setattr(ProjectStoreRegistry, "lookup_graph", unexpected_open)
+    daemon = SCSDaemon(settings)
+
+    try:
+        await daemon.start()
+        assert (runtime / "scs.sock").exists()
+    finally:
+        await daemon.stop()
 
 
 class UnavailableEmbeddings:
@@ -368,4 +405,84 @@ async def test_final_client_defers_shutdown_until_durable_jobs_are_idle(
         assert jobs.checks >= 2
         assert (runtime / "scs.sock").exists()
     finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_unattached_startup_grace_keeps_active_jobs_observable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovered durable work must not leave a live lock without a socket."""
+
+    class ActiveThenIdleJobs:
+        def __init__(self) -> None:
+            self.checks = 0
+
+        def has_active(self) -> bool:
+            self.checks += 1
+            return self.checks == 1
+
+    runtime = Path(tempfile.mkdtemp(prefix="scs-unattached-job-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+    )
+    monkeypatch.setattr("scs.main.UNATTACHED_STARTUP_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr("scs.main.CLIENT_HANDOFF_SECONDS", 0.01)
+    daemon = SCSDaemon(settings)
+    await daemon.start()
+    jobs = ActiveThenIdleJobs()
+    daemon._jobs = cast(IngestionJobStore, jobs)
+    daemon.arm_startup_grace()
+
+    try:
+        await asyncio.sleep(0.015)
+        assert jobs.checks == 1
+        assert (runtime / "scs.sock").exists()
+        await asyncio.wait_for(daemon.wait_for_shutdown_request(), timeout=1)
+        assert jobs.checks >= 2
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_upgrade_shutdown_requests_cancellation_before_exit(
+    tmp_path: Path,
+) -> None:
+    runtime = Path(tempfile.mkdtemp(prefix="scs-cancel-shutdown-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+    )
+    daemon = SCSDaemon(settings)
+    await daemon.start()
+    original_jobs = daemon._jobs
+    calls: list[bool] = []
+
+    class Jobs:
+        def request_cancel_all(self) -> list[object]:
+            calls.append(True)
+            return [object(), object()]
+
+    daemon._jobs = cast(IngestionJobStore, Jobs())
+
+    try:
+        response = await SCSClient(runtime / "scs.sock").call(
+            "system.shutdown",
+            {"generation": daemon._generation, "cancel_active": True},
+        )
+
+        assert response["accepted"] is True
+        assert response["cancelled_jobs"] == 2
+        assert calls == [True]
+        await asyncio.wait_for(daemon.wait_for_shutdown_request(), timeout=1)
+    finally:
+        daemon._jobs = original_jobs
         await daemon.stop()

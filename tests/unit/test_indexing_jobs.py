@@ -249,6 +249,21 @@ def test_cancel_request_preserves_terminal_state_and_cancels_active_jobs(
     assert store.request_cancel(completed.id).status == "cancelled"
 
 
+def test_cancel_all_requests_cancels_every_active_job(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    queued = store.enqueue(repo_path="/queued", mode="full", reason="explicit")
+    running = store.enqueue(repo_path="/running", mode="full", reason="explicit")
+    claimed = store.claim_next(lease_owner="worker")
+    assert claimed is not None
+    assert claimed.id == queued.id
+
+    cancelled = store.request_cancel_all()
+
+    assert {job.id for job in cancelled} == {queued.id, running.id}
+    assert store.get(queued.id).status == "cancelling"
+    assert store.get(running.id).status == "cancelled"
+
+
 @pytest.mark.parametrize("operation", ["complete", "fail_or_retry", "request_cancel"])
 def test_job_transition_rejects_unknown_identifier(
     tmp_path: Path, operation: str

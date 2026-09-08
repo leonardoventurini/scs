@@ -729,6 +729,50 @@ class IngestionJobStore:
             conn.commit()
             return self._get_locked(conn, job_id)
 
+    def request_cancel_all(self) -> list[IngestionJob]:
+        """Cancel queued work and request cancellation of every running job."""
+
+        now = utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = cast(
+                list[sqlite3.Row],
+                conn.execute(
+                    """
+                    SELECT id
+                    FROM ingestion_jobs
+                    WHERE status IN ('queued', 'retrying', 'running', 'cancelling')
+                    ORDER BY created_at, id
+                    """
+                ).fetchall(),
+            )
+            conn.execute(
+                """
+                UPDATE ingestion_jobs
+                SET status = 'cancelled', phase = 'cancelled',
+                    lease_owner = NULL, lease_expires_at = NULL,
+                    updated_at = ?, finished_at = ?
+                WHERE status IN ('queued', 'retrying')
+                """,
+                (now, now),
+            )
+            conn.execute(
+                """
+                UPDATE ingestion_jobs
+                SET status = 'cancelling', phase = 'cancelling', updated_at = ?
+                WHERE status = 'running'
+                """,
+                (now,),
+            )
+            conn.commit()
+            return [self._get_locked(conn, _row_str(row, "id")) for row in rows]
+
+    def cancellation_requested(self, job_id: str) -> bool:
+        """Return whether a running job should stop at its next safe boundary."""
+
+        job = self.get(job_id)
+        return job is not None and job.status == "cancelling"
+
     def mark_cancelled(self, job_id: str) -> IngestionJob:
         now = utc_now()
         with closing(self._connect()) as conn:

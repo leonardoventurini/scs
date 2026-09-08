@@ -22,6 +22,9 @@ def test_operational_commands_are_parseable() -> None:
     assert parser.parse_args(["reindex", "."]).command == "reindex"
     for action in ("start", "stop", "restart", "status"):
         assert parser.parse_args(["daemon", action]).action == action
+    stop = parser.parse_args(["daemon", "stop", "--cancel-active"])
+    assert stop.action == "stop"
+    assert stop.cancel_active is True
 
 
 def test_mcp_entrypoint_is_installed_with_root_scs_package() -> None:
@@ -57,6 +60,27 @@ class _ServiceStatus:
 class _DaemonController:
     async def status(self) -> _ServiceStatus:
         return _ServiceStatus()
+
+
+def test_daemon_stop_forwards_upgrade_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: list[bool] = []
+
+    class Controller:
+        async def stop(self, *, cancel_active: bool = False) -> bool:
+            calls.append(cancel_active)
+            return True
+
+        async def status(self) -> _ServiceStatus:
+            return _ServiceStatus()
+
+    monkeypatch.setattr("scs.cli.DaemonController", Controller)
+
+    assert main(["daemon", "stop", "--cancel-active"]) == 0
+    assert calls == [True]
+    assert json.loads(capsys.readouterr().out)["stopped"] is True
 
 
 class _Paths:
