@@ -96,26 +96,26 @@ quality, response size, and latency before changing retrieval behavior.
 
 ## Executable checklist
 
-- [ ] Add failing tests for configuration defaults, TOML/environment overrides,
+- [x] Add failing tests for configuration defaults, TOML/environment overrides,
       and loopback-only reranker activation.
-- [ ] Add failing provider tests for exact oMLX requests, ordered responses,
+- [x] Add failing provider tests for exact oMLX requests, ordered responses,
       strict response validation, recovery, and fail-open errors.
-- [ ] Expand search tests for deterministic semantic/lexical fusion, reranking,
+- [x] Expand search tests for deterministic semantic/lexical fusion, reranking,
       bounds, stable ties, and degradation.
-- [ ] Expand service and MCP contract tests for full compatibility and compact
+- [x] Expand service and MCP contract tests for full compatibility and compact
       projection.
-- [ ] Add failing metric tests for Recall@k, reciprocal rank, nDCG@k, latency,
+- [x] Add failing metric tests for Recall@k, reciprocal rank, nDCG@k, latency,
       payload accounting, and malformed evaluation suites.
-- [ ] Implement the typed reranking provider and daemon composition.
-- [ ] Make one hybrid search service authoritative for the public route.
-- [ ] Implement compact result projection without changing the default shape.
-- [ ] Implement the versioned evaluation suite reader, runner, JSON report, and
+- [x] Implement the typed reranking provider and daemon composition.
+- [x] Make one hybrid search service authoritative for the public route.
+- [x] Implement compact result projection without changing the default shape.
+- [x] Implement the versioned evaluation suite reader, runner, JSON report, and
       `just eval-search` entry point.
-- [ ] Document configuration, compact queries, suite authoring, metrics, and
+- [x] Document configuration, compact queries, suite authoring, metrics, and
       result comparison.
-- [ ] Run targeted tests before each implementation unit.
-- [ ] Run a live oMLX evaluation when the configured model is reachable.
-- [ ] Run `just verify` and report every acceptance criterion.
+- [x] Run targeted tests before each implementation unit.
+- [x] Run a live oMLX evaluation when the configured model is reachable.
+- [x] Run `just verify` and report every acceptance criterion.
 
 ## Direct rollout
 
@@ -135,3 +135,26 @@ before and after activation. No index migration or re-embedding is required.
 - A live local run records whether the selected oMLX reranker loads, its actual
   response schema, quality metrics on a repository suite, and cold/warm latency.
 - `just verify` must pass before the final implementation commit.
+
+### Recorded results
+
+- Targeted provider, configuration, fusion, MCP, service-route, and evaluation
+  tests passed before their respective implementation commits.
+- A live four-file repository was generated under a temporary directory and
+  indexed through Qwen3-Embedding-8B via the configured loopback oMLX server.
+  Three graded queries achieved Recall@4 1.0, MRR 1.0, and nDCG@4 1.0 both
+  before and after reranking.
+- The selected Qwen3 reranker successfully handled every live request. Mean
+  request latency increased from 62.55 ms without reranking to 206.32 ms with
+  reranking; observed p95 increased from 68.45 ms to 213.55 ms. This supports
+  the decision to keep reranking explicitly opt-in.
+- Compact live responses averaged 1,265 bytes without reranking and 1,332 bytes
+  with reranking; the difference is primarily the longer retrieval-mode label.
+  Integration coverage separately proves compact responses are smaller than
+  full records for identical indexed results.
+- `just verify` passed with 272 Python tests, 84.87% branch coverage against
+  the 83% floor, strict Basedpyright, Ruff, and 99 Rust tests.
+- The existing user catalog exposed an unrelated lifecycle limitation: catalog
+  startup exceeded the CLI's 15-second readiness timeout, and a prior daemon
+  retained its lock after its socket disappeared. Live feature validation used
+  an isolated SCS root so this unrelated state could not distort results.

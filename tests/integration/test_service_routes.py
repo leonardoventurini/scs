@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 from pathlib import Path
 from typing import cast
@@ -232,6 +233,9 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
             "start_line",
             "type",
         }
+        assert len(json.dumps(compact_search)) < len(
+            json.dumps(results["knowledge.search"])
+        )
         assert results["knowledge.related"]["matches"][0]["id"] == "symbol-production"
         assert results["knowledge.stats"]["repo_path"] == repo_path
         assert results["knowledge.stats"]["total_nodes"] == 5

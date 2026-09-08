@@ -66,6 +66,7 @@ def test_evaluate_case_computes_standard_rank_metrics() -> None:
     assert metrics.reciprocal_rank == 1.0
     assert metrics.ndcg_at_k == pytest.approx(expected_dcg / expected_ideal)
     assert metrics.latency_ms == 12.5
+    assert metrics.latency_samples_ms == [12.5]
     assert metrics.response_bytes == 640
     assert metrics.retrieved_relevant == 2
 
@@ -196,6 +197,7 @@ async def test_run_search_evaluation_uses_public_routes_and_repeats() -> None:
     assert report.suite_name == "synthetic"
     assert report.aggregate.mean_recall_at_k == 1.0
     assert report.queries[0].retrieval_mode == "hybrid_reranked"
+    assert len(report.queries[0].latency_samples_ms) == 2
     assert report.queries[0].response_bytes > 0
     assert report.environment.reranking_provider == "omlx"
 

@@ -58,6 +58,7 @@ class QueryMetrics(_StrictModel):
     retrieved_relevant: int
     relevant_total: int
     latency_ms: float
+    latency_samples_ms: list[float] = Field(min_length=1)
     response_bytes: int
     retrieval_mode: str
 
@@ -126,6 +127,7 @@ def evaluate_case(
     latency_ms: float,
     response_bytes: int,
     retrieval_mode: str = "unknown",
+    latency_samples_ms: Sequence[float] | None = None,
 ) -> QueryMetrics:
     """Compute standard ranked-retrieval metrics for one observed response."""
 
@@ -162,6 +164,9 @@ def evaluate_case(
     )
     ideal_dcg = _discounted_gain(ideal_grades[:k])
     ndcg = _discounted_gain(grades[:k]) / ideal_dcg if ideal_dcg else 0.0
+    samples = list(latency_samples_ms) if latency_samples_ms is not None else [latency_ms]
+    if not samples:
+        raise ValueError("latency samples cannot be empty")
     return QueryMetrics(
         query=case.query,
         recall_at_k=retrieved_at_k / len(case.relevant),
@@ -172,6 +177,7 @@ def evaluate_case(
         retrieved_relevant=retrieved_at_k,
         relevant_total=len(case.relevant),
         latency_ms=latency_ms,
+        latency_samples_ms=samples,
         response_bytes=response_bytes,
         retrieval_mode=retrieval_mode,
     )
@@ -191,8 +197,10 @@ def aggregate_metrics(metrics: Sequence[QueryMetrics]) -> AggregateMetrics:
             p95_latency_ms=0.0,
         )
     count = len(metrics)
-    latencies = sorted(metric.latency_ms for metric in metrics)
-    p95_index = math.ceil(count * 0.95) - 1
+    latencies = sorted(
+        sample for metric in metrics for sample in metric.latency_samples_ms
+    )
+    p95_index = math.ceil(len(latencies) * 0.95) - 1
     return AggregateMetrics(
         query_count=count,
         mean_recall_at_k=sum(metric.recall_at_k for metric in metrics) / count,
@@ -203,7 +211,7 @@ def aggregate_metrics(metrics: Sequence[QueryMetrics]) -> AggregateMetrics:
         mean_response_bytes=(
             sum(metric.response_bytes for metric in metrics) / count
         ),
-        mean_latency_ms=sum(latencies) / count,
+        mean_latency_ms=sum(latencies) / len(latencies),
         p95_latency_ms=latencies[p95_index],
     )
 
@@ -262,6 +270,7 @@ async def run_search_evaluation(
                 k=k,
                 latency_ms=sum(latencies) / len(latencies),
                 response_bytes=round(sum(sizes) / len(sizes)),
+                latency_samples_ms=latencies,
                 retrieval_mode=(
                     retrieval_mode if isinstance(retrieval_mode, str) else "unknown"
                 ),
