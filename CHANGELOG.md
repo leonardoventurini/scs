@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.1.10 - 2026-09-08
+
+- feat: fuse semantic and lexical code search with deterministic reciprocal
+  rank fusion and optional fail-open oMLX reranking
+- feat: add opt-in compact search results and a versioned relevance, payload,
+  and latency evaluation suite
+- refactor: activate reranking only through an explicitly configured model,
+  with no model selected for new installations
+
 ## 0.1.9 - 2026-09-05
 
 - fix: allow explicitly trusted OMLX hosts while keeping loopback-only defaults
