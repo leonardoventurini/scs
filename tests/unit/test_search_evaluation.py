@@ -14,6 +14,7 @@ from scs.evaluation.search import (
     evaluate_case,
     load_evaluation_suite,
     run_search_evaluation,
+    wait_for_stable_index,
 )
 
 
@@ -197,3 +198,30 @@ async def test_run_search_evaluation_uses_public_routes_and_repeats() -> None:
     assert report.queries[0].retrieval_mode == "hybrid_reranked"
     assert report.queries[0].response_bytes > 0
     assert report.environment.reranking_provider == "omlx"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_stable_index_observes_active_jobs_until_completion() -> None:
+    class Caller:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def call(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            assert method == "jobs.recent"
+            assert params == {"repo_path": "/repo", "limit": 20}
+            self.calls += 1
+            status = "running" if self.calls == 1 else "completed"
+            return {"jobs": [{"status": status}]}
+
+    caller = Caller()
+
+    await wait_for_stable_index(
+        caller,
+        repo_path="/repo",
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.0,
+    )
+
+    assert caller.calls == 2

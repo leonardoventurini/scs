@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar, Literal, Protocol, cast
+from typing import ClassVar, Final, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ResultDetail = Literal["full", "compact"]
+ACTIVE_JOB_STATUSES: Final[frozenset[str]] = frozenset(
+    {"queued", "retrying", "running", "cancelling"}
+)
 
 
 class _StrictModel(BaseModel):
@@ -279,6 +283,42 @@ async def run_search_evaluation(
         queries=observations,
         aggregate=aggregate_metrics(observations),
     )
+
+
+async def wait_for_stable_index(
+    caller: SearchRouteCaller,
+    *,
+    repo_path: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.1,
+) -> None:
+    """Wait until no queued or running indexing job targets the repository."""
+
+    if timeout_seconds <= 0:
+        raise ValueError("index wait timeout must be positive")
+    if poll_interval_seconds < 0:
+        raise ValueError("index poll interval cannot be negative")
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        response = await caller.call(
+            "jobs.recent", {"repo_path": repo_path, "limit": 20}
+        )
+        raw_jobs = response.get("jobs")
+        if not isinstance(raw_jobs, list):
+            raise TypeError("jobs.recent response jobs must be a list")
+        jobs = cast(list[object], raw_jobs)
+        if not all(isinstance(job, Mapping) for job in jobs):
+            raise TypeError("jobs.recent jobs must contain objects")
+        active = any(
+            cast(Mapping[str, object], job).get("status") in ACTIVE_JOB_STATUSES
+            for job in jobs
+        )
+        if not active:
+            return
+        if time.monotonic() >= deadline:
+            raise TimeoutError("timed out waiting for repository indexing to become idle")
+        await asyncio.sleep(poll_interval_seconds)
 
 
 def _result_identity(result: Mapping[str, object]) -> tuple[str | None, str | None]:

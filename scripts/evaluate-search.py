@@ -16,6 +16,7 @@ from scs.evaluation.search import (
     ResultDetail,
     load_evaluation_suite,
     run_search_evaluation,
+    wait_for_stable_index,
 )
 from scs.wire.client import SCSConnection
 
@@ -28,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--wait-timeout", type=float, default=120.0)
     parser.add_argument(
         "--result-detail", choices=("full", "compact"), default="compact"
     )
@@ -41,6 +43,11 @@ async def run(arguments: argparse.Namespace) -> dict[str, object]:
     repo_path = str(cast(Path, arguments.repo).resolve())
     await DaemonController(settings).ensure_started()
     async with SCSConnection(settings.paths.runtime / "scs.sock") as connection:
+        await wait_for_stable_index(
+            connection,
+            repo_path=repo_path,
+            timeout_seconds=cast(float, arguments.wait_timeout),
+        )
         report = await run_search_evaluation(
             connection,
             suite,

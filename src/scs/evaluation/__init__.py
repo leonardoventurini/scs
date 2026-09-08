@@ -7,6 +7,7 @@ from scs.evaluation.search import (
     SearchEvaluationReport,
     load_evaluation_suite,
     run_search_evaluation,
+    wait_for_stable_index,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "SearchEvaluationReport",
     "load_evaluation_suite",
     "run_search_evaluation",
+    "wait_for_stable_index",
 ]

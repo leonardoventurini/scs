@@ -42,4 +42,5 @@ The JSON report includes per-query Recall@k, reciprocal rank, nDCG@k, response
 bytes, mean request latency, retrieval mode, graph statistics, and reranker
 identity. Model-backed timings are intentionally observational rather than CI
 gates. Commit representative suites for each evaluated repository and compare
-reports produced with the same suite version and cutoff.
+reports produced with the same suite version and cutoff. The runner waits for
+active indexing jobs to finish before collecting measurements.
