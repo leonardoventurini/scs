@@ -16,6 +16,7 @@ from scs.evaluation.search import (
     ResultDetail,
     load_evaluation_suite,
     run_search_evaluation,
+    wait_for_evaluation_daemon,
     wait_for_stable_index,
 )
 from scs.wire.client import SCSConnection
@@ -41,12 +42,15 @@ async def run(arguments: argparse.Namespace) -> dict[str, object]:
     settings = SCSSettings()
     suite = load_evaluation_suite(cast(Path, arguments.suite))
     repo_path = str(cast(Path, arguments.repo).resolve())
-    await DaemonController(settings).ensure_started()
+    wait_timeout = cast(float, arguments.wait_timeout)
+    await wait_for_evaluation_daemon(
+        DaemonController(settings), timeout_seconds=wait_timeout
+    )
     async with SCSConnection(settings.paths.runtime / "scs.sock") as connection:
         await wait_for_stable_index(
             connection,
             repo_path=repo_path,
-            timeout_seconds=cast(float, arguments.wait_timeout),
+            timeout_seconds=wait_timeout,
         )
         report = await run_search_evaluation(
             connection,

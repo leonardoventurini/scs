@@ -14,6 +14,7 @@ from scs.evaluation.search import (
     evaluate_case,
     load_evaluation_suite,
     run_search_evaluation,
+    wait_for_evaluation_daemon,
     wait_for_stable_index,
 )
 
@@ -227,3 +228,31 @@ async def test_wait_for_stable_index_observes_active_jobs_until_completion() -> 
     )
 
     assert caller.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_wait_for_evaluation_daemon_outlives_controller_start_deadline() -> None:
+    class Status:
+        def __init__(self, ready: bool) -> None:
+            self.ready = ready
+
+    class Controller:
+        def __init__(self) -> None:
+            self.status_calls = 0
+
+        async def ensure_started(self) -> Status:
+            raise TimeoutError("short controller deadline")
+
+        async def status(self) -> Status:
+            self.status_calls += 1
+            return Status(ready=self.status_calls == 2)
+
+    controller = Controller()
+
+    await wait_for_evaluation_daemon(
+        controller,
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.0,
+    )
+
+    assert controller.status_calls == 2

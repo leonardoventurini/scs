@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar, Final, Literal, Protocol, cast
+from typing import ClassVar, Final, Literal, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -105,6 +105,33 @@ class SearchRouteCaller(Protocol):
         self, method: str, params: dict[str, object] | None = None
     ) -> dict[str, object]:
         """Call one public SCS route."""
+
+        ...
+
+
+class DaemonReadiness(Protocol):
+    """Readiness projection returned by the daemon controller."""
+
+    @property
+    def ready(self) -> bool:
+        """Whether the daemon is accepting requests."""
+
+        ...
+
+
+ReadinessT_co = TypeVar("ReadinessT_co", bound=DaemonReadiness, covariant=True)
+
+
+class EvaluationDaemonController(Protocol[ReadinessT_co]):
+    """Lifecycle surface needed to await a slow evaluation daemon startup."""
+
+    async def ensure_started(self) -> ReadinessT_co:
+        """Start or reuse the daemon within the controller's normal deadline."""
+
+        ...
+
+    async def status(self) -> ReadinessT_co:
+        """Read current daemon readiness without changing process state."""
 
         ...
 
@@ -328,6 +355,35 @@ async def wait_for_stable_index(
         if time.monotonic() >= deadline:
             raise TimeoutError("timed out waiting for repository indexing to become idle")
         await asyncio.sleep(poll_interval_seconds)
+
+
+async def wait_for_evaluation_daemon(
+    controller: EvaluationDaemonController[ReadinessT_co],
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.1,
+) -> None:
+    """Allow evaluation startup to outlive the controller's short deadline."""
+
+    if timeout_seconds <= 0:
+        raise ValueError("daemon wait timeout must be positive")
+    if poll_interval_seconds < 0:
+        raise ValueError("daemon poll interval cannot be negative")
+
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        readiness = await controller.ensure_started()
+        if readiness.ready:
+            return
+    except TimeoutError:
+        # The controller intentionally leaves its spawned contender running.
+        # Evaluation may wait longer, then attach before the grace period ends.
+        pass
+    while time.monotonic() < deadline:
+        if (await controller.status()).ready:
+            return
+        await asyncio.sleep(poll_interval_seconds)
+    raise TimeoutError("timed out waiting for the SCS evaluation daemon")
 
 
 def _result_identity(result: Mapping[str, object]) -> tuple[str | None, str | None]:

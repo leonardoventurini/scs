@@ -152,9 +152,11 @@ before and after activation. No index migration or re-embedding is required.
   with reranking; the difference is primarily the longer retrieval-mode label.
   Integration coverage separately proves compact responses are smaller than
   full records for identical indexed results.
-- `just verify` passed with 272 Python tests, 84.87% branch coverage against
+- `just verify` passed with 273 Python tests, 84.78% branch coverage against
   the 83% floor, strict Basedpyright, Ruff, and 99 Rust tests.
 - The existing user catalog exposed an unrelated lifecycle limitation: catalog
   startup exceeded the CLI's 15-second readiness timeout, and a prior daemon
   retained its lock after its socket disappeared. Live feature validation used
-  an isolated SCS root so this unrelated state could not distort results.
+  an isolated SCS root so this unrelated state could not distort results. The
+  evaluator now continues polling a spawned daemon within its own bounded wait,
+  without changing ordinary daemon or MCP startup deadlines.
