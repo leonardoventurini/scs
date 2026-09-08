@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "name": "scs-search-v1",
+  "cases": [
+    {
+      "query": "combine semantic and lexical code search candidates",
+      "relevant": [
+        {
+          "qualified_name": "src.scs.indexing.search.CodeSearchService.search",
+          "file_path": "src/scs/indexing/search.py",
+          "relevance": 3
+        },
+        {
+          "qualified_name": "src.scs.indexing.search.CodeSearchService._fuse",
+          "file_path": "src/scs/indexing/search.py",
+          "relevance": 2
+        }
+      ]
+    },
+    {
+      "query": "validate an oMLX reranking response",
+      "relevant": [
+        {
+          "qualified_name": "src.scs.providers.omlx_reranking.OMLXRerankingProvider._parse_results",
+          "file_path": "src/scs/providers/omlx_reranking.py",
+          "relevance": 3
+        },
+        {
+          "qualified_name": "src.scs.providers.omlx_reranking.OMLXRerankingProvider.rerank",
+          "file_path": "src/scs/providers/omlx_reranking.py",
+          "relevance": 2
+        }
+      ]
+    },
+    {
+      "query": "build the MCP code intelligence tool server",
+      "relevant": [
+        {
+          "qualified_name": "src.scs.mcp.server.build_mcp",
+          "file_path": "src/scs/mcp/server.py",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "query": "index a repository and persist parsed entities",
+      "relevant": [
+        {
+          "qualified_name": "src.scs.indexing.pipeline.IngestionPipeline.ingest",
+          "file_path": "src/scs/indexing/pipeline.py",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "query": "expand semantic search seeds through graph relationships",
+      "relevant": [
+        {
+          "qualified_name": "src.scs.services.routes.SCSServiceRoutes.graph_context",
+          "file_path": "src/scs/services/routes.py",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "query": "start the daemon and construct embedding providers",
+      "relevant": [
+        {
+          "qualified_name": "src.scs.main.SCSDaemon.start",
+          "file_path": "src/scs/main.py",
+          "relevance": 3
+        }
+      ]
+    }
+  ]
+}

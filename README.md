@@ -147,6 +147,19 @@ In OMLX mode, SCS ignores OpenAI credentials and sends no authorization header. 
 or dimension quarantines incompatible vectors; the next indexing pass
 regenerates embeddings while preserving the structural graph.
 
+Search always fuses bounded semantic and lexical candidates. To rerank that
+candidate set through the local oMLX reranking endpoint, opt in explicitly:
+
+~~~toml
+reranking_provider = "omlx"
+reranking_model = "mku64/Qwen3-Reranker-0.6B-mlx-8Bit"
+~~~
+
+Reranking is disabled by default, uses the same validated loopback
+OMLX base URL, and sends no credentials. An unavailable or malformed
+reranker degrades to deterministic fused retrieval without making search
+unavailable.
+
 Files supported by a native parser are indexed structurally. Other regular
 UTF-8 text files—including `Dockerfile`, dotfiles, extensionless files, and
 configuration formats—are indexed as file-level text for lexical and semantic
@@ -206,6 +219,11 @@ remove stale SCS-owned index state; SCS never mutates repository source.
 Operational diagnostics remain available through the CLI and SCSWire instead
 of occupying the model's tool catalog.
 
+The search tool returns the existing full node records by default. Consumers
+can set result detail to compact to retain stable symbol identity, source
+location, signature, bounded content, and semantic distance while omitting
+timestamps, repository IDs, and unrelated parser metadata.
+
 ## Runtime ownership
 
 MCP uses stdio between each harness and its bridge, then SCSWire over one
@@ -223,6 +241,7 @@ Runtime artifacts live under `~/Library/Application Support/SCS/` on macOS and
 ```bash
 just setup
 just verify
+just eval-search
 ```
 
 `just setup` installs Python dependencies, builds the private `scs._scs_native`
@@ -254,3 +273,9 @@ Isolation gates cover exact stdio MCP inventory, multi-bridge daemon
 convergence, bounded frames, generation-safe cleanup, stale/live socket
 ownership, empty-startup behavior, runtime isolation, repository
 source fingerprints, and committed RSS/index/query budgets.
+
+The search evaluation recipe runs the versioned suite in
+evals/scs-search-v1.json against the current checkout through the public SCS
+route. It reports Recall@k, MRR, nDCG@k, response size, and latency as JSON.
+Suite schema and comparison guidance live in evals/README.md; live model timing
+is evidence, not a machine-independent CI threshold.
