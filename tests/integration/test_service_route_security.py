@@ -28,6 +28,17 @@ def build_routes(tmp_path: Path, jobs: IngestionJobStore) -> SCSServiceRoutes:
 
 
 @pytest.mark.asyncio
+async def test_search_rejects_unknown_result_detail_before_graph_reads(
+    tmp_path: Path,
+) -> None:
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = build_routes(tmp_path, jobs)
+
+    with pytest.raises(ValueError, match="result_detail"):
+        await routes.search({"query": "symbol", "result_detail": "verbose"})
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalid_changes",
     [

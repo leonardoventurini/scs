@@ -20,8 +20,9 @@ from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
 from scs.identity import IdentityPublisher
-from scs.providers.base import EmbeddingProvider
+from scs.providers.base import EmbeddingProvider, RerankingProvider
 from scs.providers.mlx import MLXEmbeddingProvider
+from scs.providers.omlx_reranking import OMLXRerankingProvider
 from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 from scs.service import ProcessLock
 from scs.services import SCSServiceRoutes
@@ -70,6 +71,7 @@ class SCSDaemon:
         self._stores: ProjectStoreRegistry | None = None
         self._runner: IngestionJobRunner | None = None
         self._embeddings: EmbeddingProvider | None = None
+        self._reranker: RerankingProvider | None = None
         self._watchers: dict[str, RepositoryWatcher] = {}
         self._events: EventBroker = EventBroker()
         self._started: bool = False
@@ -82,6 +84,7 @@ class SCSDaemon:
             embeddings=self._require_embeddings,
             graph_for_repository=self._lookup_graph,
             binding_for_repository=self._binding_for_repository,
+            reranker=lambda: self._reranker,
         )
         self._register_methods()
 
@@ -119,6 +122,14 @@ class SCSDaemon:
                     dimension=self.settings.embedding_dimension,
                     batch_size=self.settings.embedding_batch_size,
                 )
+            reranker: RerankingProvider | None = (
+                OMLXRerankingProvider(
+                    base_url=self.settings.omlx_base_url,
+                    model_name=self.settings.reranking_model,
+                )
+                if self.settings.reranking_provider == "omlx"
+                else None
+            )
             stores = ProjectStoreRegistry(home=paths.home, provider=embeddings.metadata)
             jobs = await asyncio.to_thread(IngestionJobStore, paths.jobs_database)
             parser = NativeParser()
@@ -222,6 +233,7 @@ class SCSDaemon:
             self._jobs = jobs
             self._runner = runner
             self._embeddings = embeddings
+            self._reranker = reranker
             self._server = server
             identity = IdentityPublisher(
                 paths.runtime / "daemon-service.json",
@@ -247,6 +259,7 @@ class SCSDaemon:
             self._jobs = None
             self._runner = None
             self._embeddings = None
+            self._reranker = None
             raise
         self._identity = identity
         self._lock = process_lock
@@ -287,6 +300,7 @@ class SCSDaemon:
             process_lock.release()
         self._jobs = None
         self._embeddings = None
+        self._reranker = None
         self._started = False
 
     async def wait_for_shutdown_request(self) -> None:

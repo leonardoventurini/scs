@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections.abc import Callable
-from typing import TypeVar, cast
+from typing import Literal, TypeVar, cast
 
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -76,6 +76,7 @@ def build_mcp(
         query: str,
         node_type: str | None = None,
         limit: int = 10,
+        result_detail: Literal["full", "compact"] = "full",
         repo_path: str | None = None,
     ) -> SearchCodeOutput:
         """Search indexed code using semantic and lexical retrieval."""
@@ -87,6 +88,7 @@ def build_mcp(
                     "query": query,
                     "node_type": node_type,
                     "limit": _limit(limit),
+                    "result_detail": result_detail,
                     "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
                 },
             ),

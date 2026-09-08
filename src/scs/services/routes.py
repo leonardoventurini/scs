@@ -11,7 +11,8 @@ from scs.graph.models import Edge, Node, NodeType, RelationshipType
 from scs.graph.native import NativeGraph
 from scs.indexing.jobs import IngestionJobStore, job_to_dict
 from scs.indexing.repository_paths import canonicalize_repo_path
-from scs.providers.base import EmbeddingProvider, ProviderUnavailableError
+from scs.indexing.search import CodeSearchMatch, CodeSearchService
+from scs.providers.base import EmbeddingProvider, RerankingProvider
 from scs.source_paths import validated_source_path
 
 GraphForRepository = Callable[[str], NativeGraph | None]
@@ -41,10 +42,30 @@ DEFAULT_INSPECT_NODE_LIMIT = 50
 DEFAULT_INSPECT_EDGE_LIMIT = 100
 MAX_INSPECT_NODE_LIMIT = 200
 MAX_INSPECT_EDGE_LIMIT = 500
+COMPACT_CONTENT_CHARACTERS = 1_024
 
 
 def _node_dict(node: Node) -> dict[str, object]:
     return node.model_dump(mode="json")
+
+
+def _compact_match_dict(match: CodeSearchMatch) -> dict[str, object]:
+    """Project one result onto the bounded fields code consumers need most."""
+
+    node = match.node
+    metadata = node.metadata
+    return {
+        "id": node.id,
+        "type": node.type.value,
+        "name": node.name,
+        "qualified_name": metadata.get("qualified_name"),
+        "file_path": metadata.get("file_path"),
+        "start_line": metadata.get("start_line"),
+        "end_line": metadata.get("end_line"),
+        "signature": metadata.get("signature"),
+        "content": node.content[:COMPACT_CONTENT_CHARACTERS],
+        "distance": match.semantic_distance,
+    }
 
 
 def _edge_dict(edge: Edge) -> dict[str, object]:
@@ -126,12 +147,16 @@ class SCSServiceRoutes:
         graph: Callable[[], NativeGraph],
         jobs: Callable[[], IngestionJobStore],
         embeddings: Callable[[], EmbeddingProvider],
+        reranker: Callable[[], RerankingProvider | None] | None = None,
         graph_for_repository: GraphForRepository | None = None,
         binding_for_repository: BindingForRepository | None = None,
     ) -> None:
         self._graph: Callable[[], NativeGraph] = graph
         self._jobs: Callable[[], IngestionJobStore] = jobs
         self._embeddings: Callable[[], EmbeddingProvider] = embeddings
+        self._reranker: Callable[[], RerankingProvider | None] = (
+            reranker if reranker is not None else lambda: None
+        )
         self._graph_for_repository: GraphForRepository | None = graph_for_repository
         self._binding_for_repository: BindingForRepository | None = (
             binding_for_repository
@@ -163,6 +188,9 @@ class SCSServiceRoutes:
         query = _string(params, "query", required=True)
         assert query is not None
         limit = min(200, _integer(params, "limit", 10, minimum=1))
+        result_detail = _string(params, "result_detail") or "full"
+        if result_detail not in {"full", "compact"}:
+            raise ValueError("result_detail must be full or compact")
         node_type = _node_type(params.get("node_type"))
         repo_path = params.get("repo_path")
         repo_id = self._repo_id(repo_path)
@@ -183,34 +211,19 @@ class SCSServiceRoutes:
                 "total": 0,
                 "retrieval_mode": "none",
             }
-        results: list[dict[str, object]] = []
-        mode = "lexical"
-        try:
-            vector = await self._embeddings().embed_query(query)
-            semantic = await asyncio.to_thread(
-                graph.search_by_vector_sync,
-                vector,
-                node_type=node_type,
-                limit=limit,
-                repo_id=repo_id,
-            )
-            results = [
-                {**_node_dict(match.node), "distance": match.distance}
-                for match in semantic
+        response = await CodeSearchService(
+            graph,
+            self._embeddings(),
+            self._reranker(),
+        ).search(query, node_type=node_type, limit=limit, repo_id=repo_id)
+        results = (
+            [_compact_match_dict(match) for match in response.matches]
+            if result_detail == "compact"
+            else [
+                {**_node_dict(match.node), "distance": match.semantic_distance}
+                for match in response.matches
             ]
-            mode = "semantic"
-        except ProviderUnavailableError:
-            pass
-        if not results:
-            lexical = await asyncio.to_thread(
-                graph.search_by_name_sync,
-                query,
-                node_type=node_type,
-                limit=limit,
-                repo_id=repo_id,
-            )
-            results = [{**_node_dict(node), "distance": None} for node in lexical]
-            mode = "lexical"
+        )
         neighbors: list[dict[str, object]] = []
         if bool(params.get("include_neighbors")):
             seen = {str(item["id"]) for item in results}
@@ -227,7 +240,7 @@ class SCSServiceRoutes:
             "results": results,
             "neighbors": neighbors,
             "total": len(results),
-            "retrieval_mode": mode,
+            "retrieval_mode": response.retrieval_mode,
         }
 
     async def nodes_list(self, params: dict[str, object]) -> dict[str, object]:

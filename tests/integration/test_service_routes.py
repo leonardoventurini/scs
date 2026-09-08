@@ -209,6 +209,29 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         assert "production_symbol" in {
             item["name"] for item in results["knowledge.search"]["results"]
         }
+        full_search = results["knowledge.search"]["results"][0]
+        assert "created_at" in full_search
+        compact_search = await client.call(
+            "knowledge.search",
+            {
+                "query": "production_symbol",
+                "repo_path": repo_path,
+                "result_detail": "compact",
+            },
+        )
+        assert compact_search["results"]
+        assert set(compact_search["results"][0]) == {
+            "content",
+            "distance",
+            "end_line",
+            "file_path",
+            "id",
+            "name",
+            "qualified_name",
+            "signature",
+            "start_line",
+            "type",
+        }
         assert results["knowledge.related"]["matches"][0]["id"] == "symbol-production"
         assert results["knowledge.stats"]["repo_path"] == repo_path
         assert results["knowledge.stats"]["total_nodes"] == 5

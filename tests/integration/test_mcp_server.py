@@ -139,10 +139,11 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
             (
                 "knowledge.search",
                 {
-                    "query": "retained",
-                    "node_type": None,
-                    "limit": 10,
-                    "repo_path": repo,
+                        "query": "retained",
+                        "node_type": None,
+                        "limit": 10,
+                        "result_detail": "full",
+                        "repo_path": repo,
                 },
             ),
         ),
@@ -256,6 +257,33 @@ async def test_search_dispatches_through_public_service_gateway(tmp_path) -> Non
                 "query": "router contract",
                 "node_type": None,
                 "limit": 200,
+                "result_detail": "full",
+                "repo_path": str(tmp_path.resolve()),
+            },
+        )
+    ]
+
+
+async def test_search_dispatches_opt_in_compact_result_detail(tmp_path) -> None:
+    gateway = RecordingGateway()
+
+    await build_mcp(gateway).call_tool(
+        "search_code",
+        {
+            "query": "router contract",
+            "repo_path": str(tmp_path),
+            "result_detail": "compact",
+        },
+    )
+
+    assert gateway.calls == [
+        (
+            "knowledge.search",
+            {
+                "query": "router contract",
+                "node_type": None,
+                "limit": 10,
+                "result_detail": "compact",
                 "repo_path": str(tmp_path.resolve()),
             },
         )
