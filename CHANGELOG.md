@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.11 - 2026-09-08
+
+- fix: keep the SCSWire control plane reachable while recovered durable work is
+  active and move native graph opening off the event loop
+- fix: make upgrades cancel indexing cooperatively, wait for writer-lock
+  release, and abort before replacing an installation when shutdown fails
+- perf: delete stale file batches with one native vector-accelerator rebuild
+
 ## 0.1.10 - 2026-09-08
 
 - feat: fuse semantic and lexical code search with deterministic reciprocal
