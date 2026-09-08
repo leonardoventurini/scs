@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.13 - 2026-09-08
+
+- fix: allow upgrades to proceed after an exited daemon remains as a zombie
+  child of its MCP bridge
+
 ## 0.1.12 - 2026-09-08
 
 - fix: resolve reference lookups through lazily opened project stores

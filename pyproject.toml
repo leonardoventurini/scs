@@ -1,6 +1,6 @@
 [project]
 name = "scs"
-version = "0.1.12"
+version = "0.1.13"
 description = "Headless semantic code indexing and intelligence service"
 readme = "README.md"
 license = "MIT"

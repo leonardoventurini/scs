@@ -30,6 +30,10 @@ cannot start a new one, so it exits before replying to MCP `initialize`.
   runner and before releasing the process lock.
 - `DaemonController.stop()` polls only socket-backed health, and the installer
   suppresses and ignores its result.
+- A live v0.1.12 upgrade reproduced a second handoff edge: the daemon exited but
+  remained as zombie PID 966 until its MCP bridge reaped it. `kill -0` continued
+  to succeed, so the installer waited even though no process could retain the
+  writer lock and `scs daemon status` correctly reported no daemon.
 
 ## Desired outcome
 
@@ -67,6 +71,8 @@ disappeared.
 - The installer invokes the explicit cancellation mode, surfaces failures, and
   does not replace SCS until shutdown succeeds.
 - With no daemon present, stop remains idempotent and installation proceeds.
+- For legacy PID polling, a zombie is treated as exited while every other
+  observable process state remains blocking.
 
 ## Test strategy and acceptance criteria
 
@@ -78,8 +84,10 @@ disappeared.
    shutdown route and verify the identity remains until the lock is released.
 4. Extend installer tests with a procedural fake `scs`/`uv` environment to prove
    cancellation is requested and installation is skipped on stop failure.
-5. Run targeted Python tests, then `just verify`.
-6. Build and install the release artifact, then complete a real MCP initialize
+5. Procedurally create a live process and its unreaped zombie child, then prove
+   the installer distinguishes the two states.
+6. Run targeted Python tests, then `just verify`.
+7. Build and install the release artifact, then complete a real MCP initialize
    exchange within Codex's configured startup limit.
 
 Observable acceptance criteria:
@@ -89,6 +97,7 @@ Observable acceptance criteria:
 - queued/running jobs reach `cancelled` without losing committed batch state;
 - successful stop implies the captured daemon PID is gone and the writer lock
   is acquirable;
+- an unreaped zombie daemon does not delay or fail installation;
 - local `scs status` reports no hidden lock holder after stop;
 - the installed bridge replies successfully to MCP `initialize`.
 
@@ -129,6 +138,8 @@ existing SCS installation is unchanged.
 - [x] Implement `daemon stop --cancel-active`.
 - [x] Keep identity until writer-lock release and wait for exact daemon exit.
 - [x] Make the installer block replacement on unsuccessful shutdown.
+- [x] Treat an unreaped zombie daemon as exited without weakening live-process
+  blocking.
 - [x] Update documentation.
 - [x] Run targeted tests and `just verify`.
 - [x] Record the decision and commit the verified unit.

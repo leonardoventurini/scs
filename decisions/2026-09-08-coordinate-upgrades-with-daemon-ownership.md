@@ -34,6 +34,12 @@ Upgrade shutdown is an explicit lifecycle operation:
   captured legacy daemon PID when upgrading older releases, and aborts before
   replacement on failure.
 
+Legacy PID polling combines signal visibility with process state. An unreaped
+zombie has already exited and cannot own the writer lock, so the installer
+treats `ps` state `Z` as complete. Every other observable state remains live and
+subject to the bounded wait. This does not grant authority to signal a process
+or weaken the generation and same-UID checks used by the controller.
+
 Control-plane availability is independent of graph workload. Project graphs are
 not eagerly opened while restoring watchers, pipeline construction runs off the
 event loop, and active durable work defers both attached and unattached idle
@@ -69,4 +75,6 @@ durable batch causes one vector-accelerator rebuild.
   surfaced as an error; SCS never signals an unverified process.
 - MCP initialization remains responsive while recovered indexing opens or
   rebuilds a large graph in a worker thread.
+- An MCP bridge that has not yet reaped its daemon child no longer stalls an
+  otherwise complete upgrade handoff.
 - Persisted schemas and the default fresh-install configuration are unchanged.

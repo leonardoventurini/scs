@@ -49,6 +49,7 @@ case "$requested_version" in
 esac
 
 command -v curl >/dev/null 2>&1 || { printf '%s\n' "curl is required" >&2; exit 1; }
+command -v ps >/dev/null 2>&1 || { printf '%s\n' "ps is required" >&2; exit 1; }
 command -v tar >/dev/null 2>&1 || { printf '%s\n' "tar is required" >&2; exit 1; }
 command -v sed >/dev/null 2>&1 || { printf '%s\n' "sed is required" >&2; exit 1; }
 
@@ -110,6 +111,20 @@ verify_asset() {
 verify_asset "$wheel"
 verify_asset "$constraints"
 
+process_is_running() {
+    process_pid="$1"
+    kill -0 "$process_pid" 2>/dev/null || return 1
+
+    # A daemon child can remain as a zombie until its MCP bridge reaps it.
+    # Zombies have exited and cannot retain the writer lock, so they must not
+    # block an otherwise safe tool replacement.
+    process_state=$(ps -o stat= -p "$process_pid" 2>/dev/null | awk 'NR == 1 { print $1 }')
+    case "$process_state" in
+        Z*|'') return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 if command -v uv >/dev/null 2>&1; then
     uv_command=$(command -v uv)
 else
@@ -140,7 +155,7 @@ if command -v scs >/dev/null 2>&1; then
     esac
     if [ -n "$daemon_pid" ]; then
         wait_count=0
-        while kill -0 "$daemon_pid" 2>/dev/null; do
+        while process_is_running "$daemon_pid"; do
             wait_count=$((wait_count + 1))
             if [ "$wait_count" -ge 300 ]; then
                 printf 'SCS daemon %s did not exit; installation was not changed.\n' "$daemon_pid" >&2
