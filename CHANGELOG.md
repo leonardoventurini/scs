@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.12 - 2026-09-08
+
+- fix: resolve reference lookups through lazily opened project stores
+- test: cover available and unavailable reference results through SCSWire and
+  FastMCP
+
 ## 0.1.11 - 2026-09-08
 
 - fix: keep the SCSWire control plane reachable while recovered durable work is
