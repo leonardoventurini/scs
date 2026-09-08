@@ -1,5 +1,10 @@
 # Hybrid Reranking and Search Evaluation
 
+> Configuration amendment: activation by `reranking_provider` and the compiled
+> default model were superseded by
+> `specs/2026-09-08-configured-reranker-activation.md`. Reranking is now enabled
+> only by a non-empty configured `reranking_model`.
+
 ## Problem
 
 SCS exposes semantic code search to consumer harnesses, but the public service

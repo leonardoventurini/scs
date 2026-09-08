@@ -180,7 +180,6 @@ async def test_run_search_evaluation_uses_public_routes_and_repeats() -> None:
         k=5,
         repeats=2,
         result_detail="compact",
-        reranking_provider="omlx",
         reranking_model="test-reranker",
     )
 
@@ -200,7 +199,7 @@ async def test_run_search_evaluation_uses_public_routes_and_repeats() -> None:
     assert report.queries[0].retrieval_mode == "hybrid_reranked"
     assert len(report.queries[0].latency_samples_ms) == 2
     assert report.queries[0].response_bytes > 0
-    assert report.environment.reranking_provider == "omlx"
+    assert report.environment.reranking_model == "test-reranker"
 
 
 @pytest.mark.asyncio

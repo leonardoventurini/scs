@@ -1,5 +1,10 @@
 # Use Hybrid Reranking and Versioned Search Evaluations
 
+> Superseded in part by
+> `decisions/2026-09-08-activate-reranking-by-configured-model.md`: reranking is
+> now activated by a configured model rather than a separate provider switch,
+> and SCS no longer compiles a default reranker model.
+
 ## Context
 
 The public SCS search route previously chose semantic results whenever any

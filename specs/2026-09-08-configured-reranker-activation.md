@@ -54,14 +54,14 @@ the oMLX reranker. Existing installations that only set
 
 ## Executable checklist
 
-- [ ] Update configuration tests to require a nullable, disabled default.
-- [ ] Test TOML and environment activation using only `reranking_model`.
-- [ ] Test blank model rejection.
-- [ ] Compose the oMLX reranker only when a model is configured.
-- [ ] Update evaluation metadata, documentation, and prior decision context.
-- [ ] Set the Qwen reranker only in this workstation's owner-local config.
-- [ ] Run targeted tests, strict type checking, and `just verify`.
-- [ ] Record the resulting configuration decision.
+- [x] Update configuration tests to require a nullable, disabled default.
+- [x] Test TOML and environment activation using only `reranking_model`.
+- [x] Test blank model rejection.
+- [x] Compose the oMLX reranker only when a model is configured.
+- [x] Update evaluation metadata, documentation, and prior decision context.
+- [x] Set the Qwen reranker only in this workstation's owner-local config.
+- [x] Run targeted tests, strict type checking, and `just verify`.
+- [x] Record the resulting configuration decision.
 
 ## Direct rollout
 
@@ -85,3 +85,16 @@ Acceptance requires:
 - search remains fail-open when the configured service is unavailable;
 - the local config contains the Qwen model without changing repository state;
 - all Python, typing, lint, coverage, and Rust verification gates pass.
+
+## Verification results
+
+- 50 targeted configuration, composition, evaluation, provider, and search
+  tests passed.
+- The route integration test passed with reranking explicitly isolated from
+  workstation configuration.
+- `just verify` passed with 276 Python tests, 84.98% coverage against the 83%
+  floor, strict Basedpyright, Ruff, and 99 Rust tests.
+- `~/.scs/config.toml` remains owner-only (`0600`) and resolves the configured
+  model against `http://127.0.0.1:10000/v1/rerank`.
+- A live request through `SCSSettings` and `build_reranker` ranked the relevant
+  document first with a score of `0.957031`.

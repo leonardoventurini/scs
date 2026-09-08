@@ -65,6 +65,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         runtime_dir=Path(tempfile.mkdtemp(prefix="scs-routes-", dir="/tmp")),
         log_dir=tmp_path / "logs",
         embedding_dimension=2,
+        reranking_model=None,
     )
     daemon = SCSDaemon(settings)
     await daemon.start()

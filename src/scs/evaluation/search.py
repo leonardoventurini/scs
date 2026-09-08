@@ -79,8 +79,7 @@ class EvaluationEnvironment(_StrictModel):
     """Configuration identity needed to compare evaluation runs."""
 
     graph_stats: dict[str, object]
-    reranking_provider: str
-    reranking_model: str
+    reranking_model: str | None
 
 
 class SearchEvaluationReport(_StrictModel):
@@ -251,8 +250,7 @@ async def run_search_evaluation(
     k: int,
     repeats: int,
     result_detail: ResultDetail,
-    reranking_provider: str,
-    reranking_model: str,
+    reranking_model: str | None,
 ) -> SearchEvaluationReport:
     """Execute a suite through public routes and return a comparable report."""
 
@@ -313,7 +311,6 @@ async def run_search_evaluation(
         result_detail=result_detail,
         environment=EvaluationEnvironment(
             graph_stats=graph_stats,
-            reranking_provider=reranking_provider,
             reranking_model=reranking_model,
         ),
         queries=observations,

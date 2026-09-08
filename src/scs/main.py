@@ -44,6 +44,19 @@ def _metadata_integer(values: Mapping[str, object], key: str) -> int:
     return int(value)
 
 
+def build_reranker(settings: SCSSettings) -> RerankingProvider | None:
+    """Compose reranking only when an operator configures a model."""
+
+    model_name = settings.reranking_model
+    if model_name is None:
+        return None
+
+    return OMLXRerankingProvider(
+        base_url=settings.omlx_base_url,
+        model_name=model_name,
+    )
+
+
 class BrokerEventSink:
     """Adapt transport-neutral indexing events to the daemon event broker."""
 
@@ -122,14 +135,7 @@ class SCSDaemon:
                     dimension=self.settings.embedding_dimension,
                     batch_size=self.settings.embedding_batch_size,
                 )
-            reranker: RerankingProvider | None = (
-                OMLXRerankingProvider(
-                    base_url=self.settings.omlx_base_url,
-                    model_name=self.settings.reranking_model,
-                )
-                if self.settings.reranking_provider == "omlx"
-                else None
-            )
+            reranker = build_reranker(self.settings)
             stores = ProjectStoreRegistry(home=paths.home, provider=embeddings.metadata)
             jobs = await asyncio.to_thread(IngestionJobStore, paths.jobs_database)
             parser = NativeParser()

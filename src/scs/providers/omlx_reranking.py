@@ -47,6 +47,12 @@ class OMLXRerankingProvider:
             reason=self._unavailable_reason,
         )
 
+    @property
+    def endpoint(self) -> str:
+        """Return the configured local reranking endpoint."""
+
+        return f"{self._base_url}/{RERANK_PATH}"
+
     async def rerank(
         self, query: str, documents: Sequence[str], *, limit: int
     ) -> list[RankedDocument]:
@@ -93,9 +99,7 @@ class OMLXRerankingProvider:
 
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(
-                f"{self._base_url}/{RERANK_PATH}", json=payload
-            ) as response:
+            async with session.post(self.endpoint, json=payload) as response:
                 response.raise_for_status()
                 return cast(object, await response.json(content_type=None))
 

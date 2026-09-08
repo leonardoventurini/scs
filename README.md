@@ -151,14 +151,13 @@ Search always fuses bounded semantic and lexical candidates. To rerank that
 candidate set through the local oMLX reranking endpoint, opt in explicitly:
 
 ~~~toml
-reranking_provider = "omlx"
-reranking_model = "mku64/Qwen3-Reranker-0.6B-mlx-8Bit"
+reranking_model = "your-installed-omlx-reranker"
 ~~~
 
-Reranking is disabled by default, uses the same validated loopback
-OMLX base URL, and sends no credentials. An unavailable or malformed
-reranker degrades to deterministic fused retrieval without making search
-unavailable.
+An absent `reranking_model` disables reranking. A configured model uses the
+same validated loopback `omlx_base_url` as oMLX embeddings and sends no
+credentials. An unavailable or malformed reranker degrades to deterministic
+fused retrieval without making search unavailable.
 
 Files supported by a native parser are indexed structurally. Other regular
 UTF-8 text files—including `Dockerfile`, dotfiles, extensionless files, and

@@ -59,7 +59,6 @@ async def run(arguments: argparse.Namespace) -> dict[str, object]:
             k=cast(int, arguments.k),
             repeats=cast(int, arguments.repeats),
             result_detail=cast(ResultDetail, arguments.result_detail),
-            reranking_provider=settings.reranking_provider,
             reranking_model=settings.reranking_model,
         )
     return report.model_dump(mode="json")
