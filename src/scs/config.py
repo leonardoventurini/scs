@@ -27,6 +27,8 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LOCAL_EMBEDDING_MODEL = "Qwen3-Embedding-8B-4bit-DWQ"
 DEFAULT_LOCAL_EMBEDDING_DIMENSION = 4096
 DEFAULT_OMLX_BASE_URL = "http://127.0.0.1:10000/v1"
+DEFAULT_RERANKING_PROVIDER = "none"
+DEFAULT_OMLX_RERANKING_MODEL = "mku64/Qwen3-Reranker-0.6B-mlx-8Bit"
 
 
 class SCSSettings(BaseSettings):
@@ -58,6 +60,8 @@ class SCSSettings(BaseSettings):
     )
     omlx_base_url: str = DEFAULT_OMLX_BASE_URL
     omlx_trusted_hosts: list[str] = Field(default_factory=list)
+    reranking_provider: Literal["none", "omlx"] = DEFAULT_RERANKING_PROVIDER
+    reranking_model: str = DEFAULT_OMLX_RERANKING_MODEL
     index_text_fallback: bool = True
     index_max_file_bytes: int = Field(default=1_048_576, ge=1)
     index_text_sample_bytes: int = Field(default=8_192, ge=1)

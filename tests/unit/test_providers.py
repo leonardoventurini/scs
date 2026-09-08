@@ -7,6 +7,7 @@ import pytest
 
 from scs.providers.base import EmbeddingProvider, ProviderUnavailableError
 from scs.providers.mlx import MLXEmbeddingProvider
+from scs.providers.omlx_reranking import OMLXRerankingProvider
 from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 
 
@@ -239,3 +240,112 @@ async def test_openai_compatible_provider_recovers_and_honors_batch_size() -> No
         ["search_document: one"],
         ["search_document: two"],
     ]
+
+
+@pytest.mark.asyncio
+async def test_omlx_reranker_preserves_ranked_indexes_and_exact_request() -> None:
+    payloads: list[dict[str, object]] = []
+
+    async def request(payload: dict[str, object]) -> object:
+        payloads.append(payload)
+        return {
+            "results": [
+                {"index": 2, "relevance_score": 0.9},
+                {"index": 0, "relevance_score": 0.4},
+            ]
+        }
+
+    provider = OMLXRerankingProvider(
+        base_url="http://127.0.0.1:10000/v1",
+        model_name="test-reranker",
+        request=request,
+    )
+
+    results = await provider.rerank(
+        "find parser",
+        ["storage", "transport", "parser"],
+        limit=2,
+    )
+
+    assert [(result.index, result.score) for result in results] == [
+        (2, 0.9),
+        (0, 0.4),
+    ]
+    assert payloads == [
+        {
+            "model": "test-reranker",
+            "query": "find parser",
+            "documents": ["storage", "transport", "parser"],
+            "top_n": 2,
+            "return_documents": False,
+        }
+    ]
+    assert provider.metadata.available is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"results": [{"index": 0, "relevance_score": 0.5}]},
+        {
+            "results": [
+                {"index": 0, "relevance_score": 0.5},
+                {"index": 0, "relevance_score": 0.4},
+            ]
+        },
+        {
+            "results": [
+                {"index": 0, "relevance_score": 0.5},
+                {"index": 9, "relevance_score": 0.4},
+            ]
+        },
+        {
+            "results": [
+                {"index": 0, "relevance_score": 0.5},
+                {"index": 1, "relevance_score": float("nan")},
+            ]
+        },
+    ],
+)
+async def test_omlx_reranker_rejects_incomplete_or_invalid_results(
+    response: object,
+) -> None:
+    async def request(_payload: dict[str, object]) -> object:
+        return response
+
+    provider = OMLXRerankingProvider(
+        base_url="http://127.0.0.1:10000/v1",
+        model_name="test-reranker",
+        request=request,
+    )
+
+    with pytest.raises(ProviderUnavailableError):
+        await provider.rerank("query", ["first", "second"], limit=2)
+
+    assert provider.metadata.available is False
+
+
+@pytest.mark.asyncio
+async def test_omlx_reranker_recovers_after_transient_failure() -> None:
+    attempts = 0
+
+    async def request(_payload: dict[str, object]) -> object:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("oMLX is starting")
+        return {"results": [{"index": 0, "relevance_score": 0.75}]}
+
+    provider = OMLXRerankingProvider(
+        base_url="http://127.0.0.1:10000/v1",
+        model_name="test-reranker",
+        request=request,
+    )
+
+    with pytest.raises(ProviderUnavailableError, match="starting"):
+        await provider.rerank("query", ["document"], limit=1)
+    assert provider.metadata.available is False
+
+    assert (await provider.rerank("query", ["document"], limit=1))[0].score == 0.75
+    assert provider.metadata.available is True

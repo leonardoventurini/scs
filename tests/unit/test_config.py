@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scs.config import (
+    DEFAULT_OMLX_RERANKING_MODEL,
     DEFAULT_OPENAI_BASE_URL,
     DEFAULT_OPENAI_EMBEDDING_DIMENSION,
     DEFAULT_OPENAI_EMBEDDING_MODEL,
@@ -105,6 +106,8 @@ def test_embedding_defaults_target_openai(
     assert settings.embedding_model == DEFAULT_OPENAI_EMBEDDING_MODEL
     assert settings.embedding_dimension == DEFAULT_OPENAI_EMBEDDING_DIMENSION
     assert settings.openai_base_url == DEFAULT_OPENAI_BASE_URL
+    assert settings.reranking_provider == "none"
+    assert settings.reranking_model == DEFAULT_OMLX_RERANKING_MODEL
 
 
 def test_embedding_configuration_loads_from_scs_toml(
@@ -121,6 +124,8 @@ def test_embedding_configuration_loads_from_scs_toml(
                 'embedding_model = "local-model"',
                 "embedding_dimension = 2048",
                 'omlx_base_url = "http://localhost:9000/v1"',
+                'reranking_provider = "omlx"',
+                'reranking_model = "local-reranker"',
                 'openai_api_key = "config-secret"',
             ]
         )
@@ -135,6 +140,8 @@ def test_embedding_configuration_loads_from_scs_toml(
     assert settings.embedding_model == "local-model"
     assert settings.embedding_dimension == 2048
     assert settings.omlx_base_url == "http://localhost:9000/v1"
+    assert settings.reranking_provider == "omlx"
+    assert settings.reranking_model == "local-reranker"
     assert settings.openai_api_key is not None
     assert settings.openai_api_key.get_secret_value() == "config-secret"
 
@@ -184,6 +191,18 @@ def test_explicit_embedding_settings_override_environment(
     settings = SCSSettings(embedding_provider="mlx")
 
     assert settings.embedding_provider == "mlx"
+
+
+def test_reranking_configuration_accepts_environment_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCS_RERANKING_PROVIDER", "omlx")
+    monkeypatch.setenv("SCS_RERANKING_MODEL", "environment-reranker")
+
+    settings = SCSSettings()
+
+    assert settings.reranking_provider == "omlx"
+    assert settings.reranking_model == "environment-reranker"
 
 
 def test_omlx_disables_openai_api_key(

@@ -27,6 +27,24 @@ class ProviderMetadata:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class RerankerMetadata:
+    """Runtime identity and availability for optional result reranking."""
+
+    provider: str
+    model: str
+    available: bool = True
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RankedDocument:
+    """One reranker score associated with its original document position."""
+
+    index: int
+    score: float
+
+
 @runtime_checkable
 class EmbeddingProvider(Protocol):
     """Asynchronous, bounded provider for document and query embeddings."""
@@ -44,6 +62,24 @@ class EmbeddingProvider(Protocol):
 
     async def embed_query(self, text: str) -> list[float]:
         """Embed a semantic search query."""
+
+        ...
+
+
+@runtime_checkable
+class RerankingProvider(Protocol):
+    """Asynchronous provider for bounded query-document relevance ordering."""
+
+    @property
+    def metadata(self) -> RerankerMetadata:
+        """Describe the configured reranker and its observed availability."""
+
+        ...
+
+    async def rerank(
+        self, query: str, documents: Sequence[str], *, limit: int
+    ) -> list[RankedDocument]:
+        """Rank document positions by their relevance to one query."""
 
         ...
 

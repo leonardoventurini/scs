@@ -6,6 +6,9 @@ from scs.providers.base import (
     NullEventSink,
     ProviderMetadata,
     ProviderUnavailableError,
+    RankedDocument,
+    RerankerMetadata,
+    RerankingProvider,
 )
 
 __all__ = [
@@ -14,4 +17,7 @@ __all__ = [
     "NullEventSink",
     "ProviderMetadata",
     "ProviderUnavailableError",
+    "RankedDocument",
+    "RerankerMetadata",
+    "RerankingProvider",
 ]
