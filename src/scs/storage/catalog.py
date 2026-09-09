@@ -240,7 +240,7 @@ class ProjectStoreCatalog:
         root: str | Path,
         *,
         expected_store_id: StoreId,
-        expected_generation: StoreGeneration,
+        expected_generation: StoreGeneration | None,
     ) -> bool:
         """Remove exactly the project-store binding owned by a deletion job.
 
@@ -251,21 +251,36 @@ class ProjectStoreCatalog:
 
         canonical_root = canonical_repository_root(root)
         store_id = validate_store_id(expected_store_id)
-        generation = validate_store_generation(expected_generation)
+        generation = (
+            validate_store_generation(expected_generation)
+            if expected_generation is not None
+            else None
+        )
         if not self._database.exists():
             return False
         connection = sqlite3.connect(self._database, isolation_level=None)
         try:
             connection.execute("BEGIN IMMEDIATE")
-            cursor = connection.execute(
-                """
-                DELETE FROM project_stores
-                WHERE canonical_root = ?
-                  AND store_id = ?
-                  AND active_generation = ?
-                """,
-                (canonical_root, store_id, generation),
-            )
+            if generation is None:
+                cursor = connection.execute(
+                    """
+                    DELETE FROM project_stores
+                    WHERE canonical_root = ?
+                      AND store_id = ?
+                      AND active_generation IS NULL
+                    """,
+                    (canonical_root, store_id),
+                )
+            else:
+                cursor = connection.execute(
+                    """
+                    DELETE FROM project_stores
+                    WHERE canonical_root = ?
+                      AND store_id = ?
+                      AND active_generation = ?
+                    """,
+                    (canonical_root, store_id, generation),
+                )
             connection.execute("COMMIT")
         except sqlite3.Error as exc:
             connection.execute("ROLLBACK")

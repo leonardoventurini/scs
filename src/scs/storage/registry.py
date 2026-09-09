@@ -159,7 +159,6 @@ class ProjectStoreRegistry:
         record = self.catalog.lookup(canonical)
         binding_matches = (
             record is not None
-            and generation is not None
             and record.store_id == safe_store_id
             and record.active_generation == generation
         )
@@ -172,8 +171,7 @@ class ProjectStoreRegistry:
             "superseded": False,
         }
         if not tombstone.exists() and paths.store.exists():
-            if binding_matches:
-                assert generation is not None
+            if binding_matches and generation is not None:
                 binding = StoreBinding(str(safe_store_id), str(generation))
                 graph = self.graph_for_binding(canonical, binding)
                 native_result = graph.delete_repo_sync(canonical)
@@ -184,7 +182,6 @@ class ProjectStoreRegistry:
             paths.store.replace(tombstone)
 
         if binding_matches:
-            assert generation is not None
             self.catalog.unregister(
                 canonical,
                 expected_store_id=safe_store_id,

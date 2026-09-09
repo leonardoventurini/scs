@@ -186,6 +186,23 @@ def test_catalog_unregister_is_conditional_idempotent_and_isolated(
     )
 
 
+def test_catalog_unregister_removes_an_uninitialized_registration(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    catalog = ProjectStoreCatalog(tmp_path / "scs-home")
+    record = catalog.register(repository)
+
+    assert record.active_generation is None
+    assert catalog.unregister(
+        repository,
+        expected_store_id=record.store_id,
+        expected_generation=None,
+    )
+    assert catalog.lookup(repository) is None
+
+
 def test_repository_retirement_preserves_source_and_sibling_store(
     tmp_path: Path,
 ) -> None:
