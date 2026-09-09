@@ -53,6 +53,111 @@ def test_queue_merges_incremental_paths(tmp_path: Path) -> None:
     assert second.payload["file_paths"] == ["a.py", "b.py"]
 
 
+def test_queued_deletion_supersedes_queued_indexing(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    store_id = "a" * 64
+    store_generation = "g00000001"
+    first = store.enqueue(
+        repo_path="/repo",
+        mode="full",
+        reason="explicit",
+        store_id=store_id,
+        store_generation=store_generation,
+    )
+
+    second = store.enqueue(
+        repo_path="/repo",
+        mode="drop_index",
+        reason="explicit",
+        store_id=store_id,
+        store_generation=store_generation,
+    )
+
+    assert second.id == first.id
+    assert second.mode == "drop_index"
+    assert second.payload == {}
+    assert second.store_id == store_id
+    assert second.store_generation == store_generation
+
+
+def test_queued_deletion_rejects_new_indexing_work(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    deletion = store.enqueue(
+        repo_path="/repo",
+        store_id="a" * 64,
+        store_generation="g00000001",
+        mode="drop_index",
+        reason="explicit_delete",
+    )
+
+    with pytest.raises(ValueError, match="deletion is in progress"):
+        store.enqueue(
+            repo_path="/repo",
+            store_id="a" * 64,
+            store_generation="g00000001",
+            mode="full",
+            reason="explicit_index",
+        )
+
+    assert store.get(deletion.id) == deletion
+
+
+def test_duplicate_queued_deletion_reuses_the_durable_job(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    first = store.enqueue(
+        repo_path="/repo",
+        store_id="a" * 64,
+        store_generation="g00000001",
+        mode="drop_index",
+        reason="explicit_delete",
+    )
+    second = store.enqueue(
+        repo_path="/repo",
+        store_id="a" * 64,
+        store_generation="g00000001",
+        mode="drop_index",
+        reason="explicit_delete",
+    )
+
+    assert second.id == first.id
+    assert second.mode == "drop_index"
+    assert len(store.list_recent(repo_path="/repo")) == 1
+
+
+def test_running_index_failure_merges_into_queued_deletion(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    store_id = "a" * 64
+    store_generation = "g00000001"
+    indexing = store.enqueue(
+        repo_path="/repo",
+        mode="full",
+        reason="explicit_index",
+        store_id=store_id,
+        store_generation=store_generation,
+    )
+    claimed = store.claim_next(lease_owner="worker")
+    assert claimed is not None and claimed.id == indexing.id
+    deletion = store.enqueue(
+        repo_path="/repo",
+        mode="drop_index",
+        reason="explicit_delete",
+        store_id=store_id,
+        store_generation=store_generation,
+    )
+
+    merged = store.fail_or_retry(indexing.id, error="indexing interrupted")
+
+    assert merged.id == deletion.id
+    assert merged.mode == "drop_index"
+    assert merged.payload == {}
+    retired_index = store.get(indexing.id)
+    assert retired_index is not None
+    assert retired_index.status == "cancelled"
+    claimed_deletion = store.claim_next(lease_owner="replacement")
+    assert claimed_deletion is not None
+    assert claimed_deletion.id == deletion.id
+
+
 def test_new_explicit_force_request_replaces_a_queued_force_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -262,6 +367,22 @@ def test_cancel_all_requests_cancels_every_active_job(tmp_path: Path) -> None:
     assert {job.id for job in cancelled} == {queued.id, running.id}
     assert store.get(queued.id).status == "cancelling"
     assert store.get(running.id).status == "cancelled"
+
+
+def test_cancel_all_preserves_durable_repository_deletion(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    deletion = store.enqueue(
+        repo_path="/delete",
+        store_id="a" * 64,
+        store_generation="g00000001",
+        mode="drop_index",
+        reason="explicit_delete",
+    )
+
+    assert store.request_cancel_all() == []
+    retained = store.get(deletion.id)
+    assert retained is not None
+    assert retained.status == "queued"
 
 
 @pytest.mark.parametrize("operation", ["complete", "fail_or_retry", "request_cancel"])

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -27,6 +27,8 @@ class DeletableGraph(Protocol):
 
 GraphResolver = Callable[[IngestionJob], DeletableGraph]
 CompletionHandler = Callable[[IngestionJob], None]
+RepositoryDeleter = Callable[[IngestionJob], dict[str, object]]
+FailureHandler = Callable[[IngestionJob], Awaitable[None]]
 
 
 class IngestionJobRunner:
@@ -40,6 +42,8 @@ class IngestionJobRunner:
         graph: DeletableGraph | None = None,
         on_started: CompletionHandler | None = None,
         on_completed: CompletionHandler | None = None,
+        on_failed: FailureHandler | None = None,
+        repository_deleter: RepositoryDeleter | None = None,
         pipeline_factory: PipelineFactory,
         event_sink: EventSink | None = None,
         poll_interval_seconds: float = 1.0,
@@ -56,6 +60,10 @@ class IngestionJobRunner:
         self._pipeline_factory: PipelineFactory = pipeline_factory
         self._on_started: CompletionHandler | None = on_started
         self._on_completed: CompletionHandler | None = on_completed
+        self._on_failed: FailureHandler | None = on_failed
+        self._repository_deleter: RepositoryDeleter = (
+            repository_deleter or self._delete_graph_repository
+        )
         self._events: EventSink = event_sink or NullEventSink()
         self._poll_interval_seconds: float = poll_interval_seconds
         self._lease_seconds: float = lease_seconds
@@ -119,6 +127,8 @@ class IngestionJobRunner:
             final = await asyncio.to_thread(
                 self._store.fail_or_retry, job.id, error=str(exc)
             )
+            if final.status == "failed" and self._on_failed is not None:
+                await self._on_failed(final)
             await self._publish(final)
         finally:
             heartbeat.cancel()
@@ -150,8 +160,10 @@ class IngestionJobRunner:
 
     async def _execute(self, job: IngestionJob) -> dict[str, object]:
         repo = Path(job.repo_path)
-        if job.mode != "drop_index":
-            assert_not_user_home_repo(repo)
+        if job.mode == "drop_index":
+            return await asyncio.to_thread(self._repository_deleter, job)
+
+        assert_not_user_home_repo(repo)
         if await asyncio.to_thread(self._store.cancellation_requested, job.id):
             raise IngestionCancelled("ingestion cancelled before graph open")
         # Opening a large native graph can rebuild its vector accelerator. Keep
@@ -193,10 +205,6 @@ class IngestionJobRunner:
                 force_snapshot=snapshot,
                 on_force_batch_acknowledged=acknowledge_snapshot_batch,
             )
-        elif job.mode == "drop_index":
-            graph = self._graph_for_job(job)
-            await asyncio.to_thread(graph.delete_repo_sync, job.repo_path)
-            return {"repo_deleted": True}
         else:
             raise ValueError(f"Unsupported indexing job mode: {job.mode}")
         serialized = asdict(result)
@@ -207,6 +215,13 @@ class IngestionJobRunner:
         if isinstance(degraded, str) and degraded:
             raise RuntimeError(degraded)
         return serialized
+
+    def _delete_graph_repository(self, job: IngestionJob) -> dict[str, object]:
+        """Preserve the legacy graph-only behavior for isolated runner users."""
+
+        graph = self._graph_for_job(job)
+        graph.delete_repo_sync(job.repo_path)
+        return {"repo_deleted": True}
 
     async def _force_snapshot_for_job(
         self,

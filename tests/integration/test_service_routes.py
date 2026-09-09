@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import tempfile
 from pathlib import Path
 from typing import cast
@@ -17,7 +18,10 @@ from scs.indexing.pipeline import IngestionPipeline
 from scs.main import SCSDaemon
 from scs.providers.base import ProviderMetadata, ProviderUnavailableError
 from scs.storage.registry import ProjectStoreRegistry
-from scs.wire.client import SCSClient, SCSConnection
+from scs.wire.client import SCSClient, SCSConnection, SCSWireError
+
+JOB_COMPLETION_TIMEOUT_SECONDS = 10.0
+JOB_POLL_INTERVAL_SECONDS = 0.05
 
 MCP_GATEWAY_METHODS = frozenset(
     {
@@ -31,8 +35,39 @@ MCP_GATEWAY_METHODS = frozenset(
         "lsp.references",
         "repository.index",
         "repository.ingest_files",
+        "repository.drop_index",
     }
 )
+
+
+async def _wait_for_job(
+    client: SCSClient,
+    *,
+    repo_path: str,
+    job_id: object,
+) -> dict[str, object]:
+    """Wait for one durable job and fail with its terminal state."""
+
+    observed: dict[str, object] | None = None
+    try:
+        async with asyncio.timeout(JOB_COMPLETION_TIMEOUT_SECONDS):
+            while True:
+                jobs = cast(
+                    list[dict[str, object]],
+                    (await client.call("jobs.recent", {"repo_path": repo_path}))[
+                        "jobs"
+                    ],
+                )
+                observed = next((job for job in jobs if job["id"] == job_id), None)
+                if observed is not None:
+                    assert observed["status"] not in {"failed", "cancelled"}, (
+                        f"Durable job terminated: {observed}"
+                    )
+                    if observed["status"] == "completed":
+                        return observed
+                await asyncio.sleep(JOB_POLL_INTERVAL_SECONDS)
+    except TimeoutError:
+        pytest.fail(f"Durable job {job_id} did not complete: {observed}")
 
 
 @pytest.mark.asyncio
@@ -143,6 +178,218 @@ class UnavailableEmbeddings:
     async def embed_query(self, text: str) -> list[float]:
         del text
         raise ProviderUnavailableError("disabled in test")
+
+
+class ImmediateEmbeddings:
+    """Keep lifecycle tests independent from external embedding providers."""
+
+    @property
+    def metadata(self) -> ProviderMetadata:
+        return ProviderMetadata("test", "immediate", 2)
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0, 1.0] for _ in texts]
+
+    async def embed_query(self, text: str) -> list[float]:
+        del text
+        return [0.0, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_repository_deletion_is_durable_and_preserves_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "scs.main.OpenAICompatibleEmbeddingProvider",
+        lambda **_kwargs: ImmediateEmbeddings(),
+    )
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    source = repository / "module.py"
+    source.write_text("def retained_source():\n    return 42\n", encoding="utf-8")
+    source_before = (
+        source.read_bytes(),
+        source.stat().st_mode,
+        source.stat().st_mtime_ns,
+    )
+    runtime = Path(tempfile.mkdtemp(prefix="scs-delete-durable-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+    )
+    repo_path = str(repository.resolve())
+    daemon = SCSDaemon(settings)
+
+    try:
+        await daemon.start()
+        client = SCSClient(runtime / "scs.sock")
+        index_acknowledgement = await client.call(
+            "repository.index", {"repo_path": repo_path}
+        )
+        index_job = cast(dict[str, object], index_acknowledgement["job"])
+        await _wait_for_job(client, repo_path=repo_path, job_id=index_job["id"])
+
+        record = daemon._require_stores().catalog.lookup(repo_path)
+        assert record is not None
+        store_path = settings.paths.home / "projects" / record.store_id
+        assert store_path.exists()
+        assert repo_path in daemon._watchers
+
+        deletion = await client.call("repository.drop_index", {"repo_path": repo_path})
+
+        assert deletion["accepted"] is True
+        assert deletion["already_absent"] is False
+        deletion_job = cast(dict[str, object], deletion["job"])
+        await _wait_for_job(client, repo_path=repo_path, job_id=deletion_job["id"])
+
+        assert daemon._require_stores().catalog.lookup(repo_path) is None
+        assert not store_path.exists()
+        assert repo_path not in daemon._watchers
+        assert (
+            source.read_bytes(),
+            source.stat().st_mode,
+            source.stat().st_mtime_ns,
+        ) == (source_before)
+        deleted_stats = await client.call("knowledge.stats", {"repo_path": repo_path})
+        assert deleted_stats["status"] == "empty"
+        assert deleted_stats["total_nodes"] == 0
+        assert deleted_stats["embedding_count"] == 0
+        assert deleted_stats["ingestion_stats"] == {}
+
+        await daemon.stop()
+        daemon = SCSDaemon(settings)
+        await daemon.start()
+        client = SCSClient(runtime / "scs.sock")
+
+        assert daemon._require_stores().catalog.lookup(repo_path) is None
+        assert repo_path not in daemon._watchers
+        assert not store_path.exists()
+        assert (await client.call("knowledge.stats", {"repo_path": repo_path}))[
+            "status"
+        ] == "empty"
+    finally:
+        await daemon.stop()
+        shutil.rmtree(runtime, ignore_errors=True)
+
+
+@pytest.mark.parametrize("source_state", ["moved", "removed"])
+@pytest.mark.asyncio
+async def test_repository_deletion_accepts_an_absent_source_and_repeats_as_a_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_state: str,
+) -> None:
+    monkeypatch.setattr(
+        "scs.main.OpenAICompatibleEmbeddingProvider",
+        lambda **_kwargs: ImmediateEmbeddings(),
+    )
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / "module.py").write_text("value = 1\n", encoding="utf-8")
+    runtime = Path(tempfile.mkdtemp(prefix="scs-delete-absent-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+    )
+    daemon = SCSDaemon(settings)
+
+    try:
+        await daemon.start()
+        client = SCSClient(runtime / "scs.sock")
+        repo_path = str(repository.resolve())
+        acknowledgement = await client.call(
+            "repository.index", {"repo_path": repo_path}
+        )
+        job = cast(dict[str, object], acknowledgement["job"])
+        await _wait_for_job(client, repo_path=repo_path, job_id=job["id"])
+
+        if source_state == "moved":
+            repository.rename(tmp_path / "moved-repository")
+        else:
+            shutil.rmtree(repository)
+        assert not repository.exists()
+
+        deletion = await client.call("repository.drop_index", {"repo_path": repo_path})
+        assert deletion["accepted"] is True
+        assert deletion["already_absent"] is False
+        deletion_job = cast(dict[str, object], deletion["job"])
+        await _wait_for_job(client, repo_path=repo_path, job_id=deletion_job["id"])
+
+        repeated = await client.call("repository.drop_index", {"repo_path": repo_path})
+        assert repeated == {
+            "accepted": True,
+            "already_absent": True,
+            "job": None,
+        }
+    finally:
+        await daemon.stop()
+        shutil.rmtree(runtime, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_active_repository_deletion_rejects_new_indexing_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "scs.main.OpenAICompatibleEmbeddingProvider",
+        lambda **_kwargs: ImmediateEmbeddings(),
+    )
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    source = repository / "module.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    runtime = Path(tempfile.mkdtemp(prefix="scs-delete-blocks-index-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+    )
+    daemon = SCSDaemon(settings)
+
+    try:
+        await daemon.start()
+        client = SCSClient(runtime / "scs.sock")
+        repo_path = str(repository.resolve())
+        acknowledgement = await client.call(
+            "repository.index", {"repo_path": repo_path}
+        )
+        job = cast(dict[str, object], acknowledgement["job"])
+        await _wait_for_job(client, repo_path=repo_path, job_id=job["id"])
+
+        runner = daemon._runner
+        assert runner is not None
+        await runner.stop()
+        deletion = await client.call("repository.drop_index", {"repo_path": repo_path})
+        assert deletion["already_absent"] is False
+
+        blocked_calls = (
+            ("repository.index", {"repo_path": repo_path}),
+            ("repository.reindex", {"repo_path": repo_path}),
+            (
+                "repository.ingest_files",
+                {
+                    "repo_path": repo_path,
+                    "file_paths": [str(source)],
+                    "deleted_paths": [],
+                },
+            ),
+        )
+        for method, params in blocked_calls:
+            with pytest.raises(SCSWireError, match="deletion"):
+                await client.call(method, params)
+    finally:
+        await daemon.stop()
+        shutil.rmtree(runtime, ignore_errors=True)
 
 
 @pytest.mark.asyncio
@@ -296,6 +543,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
                 "repo_path": repo_path,
             },
             "lsp.references": {"file_path": str(source), "line": 1},
+            "repository.drop_index": {"repo_path": repo_path},
         }
         assert params_by_method.keys() == MCP_GATEWAY_METHODS
 
@@ -303,6 +551,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         results = {
             method: await client.call(method, params)
             for method, params in params_by_method.items()
+            if method != "repository.drop_index"
         }
 
         assert "production_symbol" in {
@@ -364,8 +613,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         )
         assert both_context["direction"] == "both"
         assert any(
-            item["node"]["id"] == "file-production"
-            for item in both_context["context"]
+            item["node"]["id"] == "file-production" for item in both_context["context"]
         )
         bounded_file = await client.call(
             "knowledge.inspect_file",
@@ -400,6 +648,14 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         )
         assert stats_empty["status"] == "empty"
         assert stats_empty["total_nodes"] == 0
+
+        # Deletion runs last because every other public route above reads the
+        # project store that this lifecycle operation retires.
+        results["repository.drop_index"] = await client.call(
+            "repository.drop_index",
+            params_by_method["repository.drop_index"],
+        )
+        assert results["repository.drop_index"]["accepted"] is True
     finally:
         await daemon.stop()
 

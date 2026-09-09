@@ -86,6 +86,7 @@ class SCSDaemon:
         self._embeddings: EmbeddingProvider | None = None
         self._reranker: RerankingProvider | None = None
         self._watchers: dict[str, RepositoryWatcher] = {}
+        self._repository_mutation_locks: dict[str, asyncio.Lock] = {}
         self._events: EventBroker = EventBroker()
         self._started: bool = False
         self._shutdown_requested: asyncio.Event = asyncio.Event()
@@ -185,6 +186,27 @@ class SCSDaemon:
                     cancellation_requested=lambda: jobs.cancellation_requested(job.id),
                 )
 
+            def delete_repository(job: IngestionJob) -> dict[str, object]:
+                """Retire the job-bound project store without reading source."""
+
+                if job.store_id is None:
+                    raise RuntimeError("repository deletion job has no store identity")
+                # The unscoped compatibility graph must not retain an open
+                # handle after the registry evicts the job-bound graph.
+                self._graph = None
+                return stores.delete_repository(
+                    job.repo_path,
+                    store_id=job.store_id,
+                    store_generation=job.store_generation,
+                    deletion_id=job.id,
+                )
+
+            async def restore_failed_deletion(job: IngestionJob) -> None:
+                """Resume automatic reconciliation after terminal delete failure."""
+
+                if job.mode == "drop_index":
+                    await self._ensure_watcher(job.repo_path, jobs=jobs)
+
             def mark_job_store_ready(job: IngestionJob) -> None:
                 """Publish readiness only after a bound indexing job has succeeded."""
 
@@ -220,12 +242,19 @@ class SCSDaemon:
                 pipeline_factory=pipeline_factory,
                 on_started=mark_job_store_stale,
                 on_completed=mark_job_store_ready,
+                on_failed=restore_failed_deletion,
+                repository_deleter=delete_repository,
                 event_sink=BrokerEventSink(self._events),
             )
-            await runner.start()
             self._stores = stores
+            self._jobs = jobs
+            await runner.start()
             for record in await asyncio.to_thread(stores.records):
                 if record.active_generation is None:
+                    continue
+                if await asyncio.to_thread(
+                    jobs.active_deletion, record.canonical_root
+                ) is not None:
                     continue
                 await self._ensure_watcher(record.canonical_root, jobs=jobs)
             server = WireServer(
@@ -235,7 +264,6 @@ class SCSDaemon:
             )
             await server.start()
             self._graph = None
-            self._jobs = jobs
             self._runner = runner
             self._embeddings = embeddings
             self._reranker = reranker
@@ -456,21 +484,37 @@ class SCSDaemon:
             jobs = self._require_jobs()
             stores = self._require_stores()
             canonical = canonicalize_repo_path(raw_repo_path)
-            record = stores.catalog.lookup(canonical)
-            if record is None or record.active_generation is None:
-                raise ValueError("repository does not have an indexed project store")
-            job = await asyncio.to_thread(
-                jobs.enqueue,
-                repo_path=canonical,
-                store_id=record.store_id,
-                store_generation=record.active_generation,
-                mode="drop_index",
-                reason="explicit_drop_index",
-            )
-            watcher = self._watchers.pop(canonical, None)
-            if watcher is not None:
-                await watcher.stop()
-            return {"accepted": True, "job": job_to_dict(job)}
+            async with self._repository_mutation_lock(canonical):
+                active = await asyncio.to_thread(jobs.active_deletion, canonical)
+                if active is not None:
+                    return {
+                        "accepted": True,
+                        "already_absent": False,
+                        "job": job_to_dict(active),
+                    }
+                target = await asyncio.to_thread(stores.deletion_target, canonical)
+                if target is None:
+                    return {
+                        "accepted": True,
+                        "already_absent": True,
+                        "job": None,
+                    }
+                job = await asyncio.to_thread(
+                    jobs.enqueue,
+                    repo_path=canonical,
+                    store_id=target.store_id,
+                    store_generation=target.store_generation,
+                    mode="drop_index",
+                    reason="explicit_drop_index",
+                )
+                watcher = self._watchers.pop(canonical, None)
+                if watcher is not None:
+                    await watcher.stop()
+                return {
+                    "accepted": True,
+                    "already_absent": False,
+                    "job": job_to_dict(job),
+                }
 
         @self._router.method("jobs.recent")
         async def jobs_recent(params: dict[str, object]) -> dict[str, object]:
@@ -516,23 +560,27 @@ class SCSDaemon:
             raise ValueError(f"repository directory does not exist: {repo_path}")
         jobs = self._require_jobs()
         stores = self._require_stores()
-        record, graph = await asyncio.to_thread(stores.ensure_graph, str(repo_path))
-        generation = record.active_generation
-        if generation is None:
-            raise RuntimeError(
-                "explicit project store creation did not activate a generation"
+        canonical = str(repo_path)
+        async with self._repository_mutation_lock(canonical):
+            if await asyncio.to_thread(jobs.active_deletion, canonical) is not None:
+                raise ValueError("repository deletion is in progress")
+            record, graph = await asyncio.to_thread(stores.ensure_graph, canonical)
+            generation = record.active_generation
+            if generation is None:
+                raise RuntimeError(
+                    "explicit project store creation did not activate a generation"
+                )
+            self._graph = graph
+            job = await asyncio.to_thread(
+                jobs.enqueue,
+                repo_path=canonical,
+                store_id=record.store_id,
+                store_generation=generation,
+                mode="force_full" if force else "full",
+                reason="explicit_reindex" if force else "explicit_index",
             )
-        self._graph = graph
-        job = await asyncio.to_thread(
-            jobs.enqueue,
-            repo_path=str(repo_path),
-            store_id=record.store_id,
-            store_generation=generation,
-            mode="force_full" if force else "full",
-            reason="explicit_reindex" if force else "explicit_index",
-        )
-        await self._ensure_watcher(str(repo_path))
-        return {"accepted": True, "job": job_to_dict(job)}
+            await self._ensure_watcher(canonical)
+            return {"accepted": True, "job": job_to_dict(job)}
 
     def _require_jobs(self) -> IngestionJobStore:
         jobs = self._jobs
@@ -566,10 +614,22 @@ class SCSDaemon:
         stores = self._stores
         if stores is None:
             return None
+        jobs = self._jobs
+        if jobs is not None and jobs.active_deletion(repo_path) is not None:
+            raise ValueError("repository deletion is in progress")
         record = stores.catalog.lookup(repo_path)
         if record is None or record.active_generation is None:
             return None
         return str(record.store_id), str(record.active_generation)
+
+    def _repository_mutation_lock(self, repo_path: str) -> asyncio.Lock:
+        """Serialize enrollment and deletion decisions for one root."""
+
+        lock = self._repository_mutation_locks.get(repo_path)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._repository_mutation_locks[repo_path] = lock
+        return lock
 
     def _require_embeddings(self) -> EmbeddingProvider:
         embeddings = self._embeddings

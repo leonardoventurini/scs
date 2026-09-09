@@ -13,13 +13,22 @@ from scs.storage.models import (
     canonical_repository_root,
     store_id_for_root,
 )
-from scs.storage.paths import ProjectStorePaths, StorePathError
-from scs.storage.registry import ProjectStoreRegistry, StoreBinding
+from scs.storage.paths import (
+    ProjectStorePaths,
+    StorePathError,
+    retired_project_store_path,
+)
+from scs.storage.registry import (
+    ProjectStoreRegistry,
+    RepositoryDeletionTarget,
+    StoreBinding,
+)
 
 __all__ = [
     "CatalogRecord",
     "ProjectStoreCatalog",
     "ProjectStoreRegistry",
+    "RepositoryDeletionTarget",
     "ProjectStorePaths",
     "StoreGeneration",
     "StoreId",
@@ -28,4 +37,5 @@ __all__ = [
     "StoreState",
     "canonical_repository_root",
     "store_id_for_root",
+    "retired_project_store_path",
 ]

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import shutil
 import stat
 from pathlib import Path
 
 import pytest
 
+from scs.providers.base import ProviderMetadata
 from scs.storage import (
     ProjectStoreCatalog,
     ProjectStorePaths,
+    ProjectStoreRegistry,
     StoreState,
     StoreGeneration,
     StoreId,
@@ -125,3 +128,154 @@ def test_catalog_state_update_requires_the_active_generation(tmp_path: Path) -> 
             expected_generation=StoreGeneration("g00000002"),
             state=StoreState.SEMANTIC_READY,
         )
+
+
+def test_catalog_unregister_is_conditional_idempotent_and_isolated(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "scs-home"
+    repository = tmp_path / "repository"
+    sibling = tmp_path / "sibling"
+    repository.mkdir()
+    sibling.mkdir()
+    catalog = ProjectStoreCatalog(home)
+    record = catalog.register(repository)
+    sibling_record = catalog.register(sibling)
+    generation = StoreGeneration("g00000001")
+    catalog.activate(
+        repository,
+        generation=generation,
+        state=StoreState.SEMANTIC_STALE,
+    )
+    sibling_record = catalog.activate(
+        sibling,
+        generation=generation,
+        state=StoreState.SEMANTIC_STALE,
+    )
+
+    assert (
+        catalog.unregister(
+            repository,
+            expected_store_id=record.store_id,
+            expected_generation=StoreGeneration("g00000002"),
+        )
+        is False
+    )
+    assert catalog.lookup(repository) is not None
+
+    assert (
+        catalog.unregister(
+            repository,
+            expected_store_id=record.store_id,
+            expected_generation=generation,
+        )
+        is True
+    )
+    assert catalog.lookup(repository) is None
+    retained_sibling = catalog.lookup(sibling)
+    assert retained_sibling is not None
+    assert retained_sibling.store_id == sibling_record.store_id
+
+    assert (
+        catalog.unregister(
+            repository,
+            expected_store_id=record.store_id,
+            expected_generation=generation,
+        )
+        is False
+    )
+
+
+def test_repository_retirement_preserves_source_and_sibling_store(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "scs-home"
+    repository = tmp_path / "repository"
+    sibling = tmp_path / "sibling"
+    repository.mkdir()
+    sibling.mkdir()
+    source = repository / "source.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    source_bytes = source.read_bytes()
+    registry = ProjectStoreRegistry(
+        home=home,
+        provider=ProviderMetadata("test", "unavailable", 2, False, "disabled"),
+    )
+    record, _graph = registry.ensure_graph(repository)
+    sibling_record, _sibling_graph = registry.ensure_graph(sibling)
+    assert record.active_generation is not None
+    assert sibling_record.active_generation is not None
+    paths = ProjectStorePaths.resolve(home, record.store_id, record.active_generation)
+    sibling_paths = ProjectStorePaths.resolve(
+        home,
+        sibling_record.store_id,
+        sibling_record.active_generation,
+    )
+
+    registry.delete_repository(
+        repository,
+        store_id=str(record.store_id),
+        store_generation=str(record.active_generation),
+        deletion_id="ingest_123456789abc",
+    )
+
+    assert registry.catalog.lookup(repository) is None
+    assert not paths.store.exists()
+    assert set(paths.projects.iterdir()) == {sibling_paths.store}
+    assert source.read_bytes() == source_bytes
+    assert sibling_paths.store.is_dir()
+    assert registry.catalog.lookup(sibling) == sibling_record
+
+
+def test_repository_retirement_resumes_from_a_contained_tombstone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "scs-home"
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    source = repository / "source.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    registry = ProjectStoreRegistry(
+        home=home,
+        provider=ProviderMetadata("test", "unavailable", 2, False, "disabled"),
+    )
+    record, _graph = registry.ensure_graph(repository)
+    assert record.active_generation is not None
+    paths = ProjectStorePaths.resolve(home, record.store_id, record.active_generation)
+    original_rmtree = shutil.rmtree
+    removals = 0
+
+    def fail_first_removal(path: Path) -> None:
+        nonlocal removals
+        removals += 1
+        if removals == 1:
+            raise OSError("synthetic tombstone removal failure")
+        original_rmtree(path)
+
+    monkeypatch.setattr("scs.storage.registry.shutil.rmtree", fail_first_removal)
+    with pytest.raises(OSError, match="synthetic tombstone removal failure"):
+        registry.delete_repository(
+            repository,
+            store_id=str(record.store_id),
+            store_generation=str(record.active_generation),
+            deletion_id="ingest_123456789abc",
+        )
+
+    tombstones = list(paths.projects.iterdir())
+    assert len(tombstones) == 1
+    assert tombstones[0].parent == paths.projects
+    assert tombstones[0] != paths.store
+    assert registry.catalog.lookup(repository) is None
+    assert not paths.store.exists()
+    assert source.read_text(encoding="utf-8") == "value = 1\n"
+
+    registry.delete_repository(
+        repository,
+        store_id=str(record.store_id),
+        store_generation=str(record.active_generation),
+        deletion_id="ingest_123456789abc",
+    )
+
+    assert list(paths.projects.iterdir()) == []
+    assert source.read_text(encoding="utf-8") == "value = 1\n"

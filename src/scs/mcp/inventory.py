@@ -8,6 +8,7 @@ MCP_TOOL_NAMES = frozenset(
         "list_symbols",
         "ingest_files",
         "ingest_project",
+        "delete_repository",
         "get_graph_stats",
         "inspect_file",
         "regression_risk_report",

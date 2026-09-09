@@ -17,6 +17,7 @@ from scs.mcp.contracts import (
     ListSymbolsOutput,
     ReferencesOutput,
     RegressionRiskOutput,
+    RepositoryDeletionOutput,
     RelatedOutput,
     SearchCodeOutput,
 )
@@ -24,6 +25,7 @@ from scs.mcp.gateway import ServiceGateway
 from scs.mcp.observability import ObservedMCPServer, ToolRecorder
 from scs.mcp.paths import (
     canonical_repo_path,
+    canonical_repository_identity,
     contained_deleted_path,
     contained_file_path,
 )
@@ -45,6 +47,12 @@ READ_ONLY_LOCAL = ToolAnnotations(
 INDEX_MUTATING_LOCAL = ToolAnnotations(
     read_only_hint=False,
     destructive_hint=True,
+    open_world_hint=False,
+)
+DELETE_LOCAL = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=True,
     open_world_hint=False,
 )
 
@@ -200,6 +208,22 @@ def build_mcp(
             await gateway.call(
                 "repository.index",
                 {"repo_path": _validated(lambda: canonical_repo_path(repo_path))},
+            ),
+        )
+
+    @mcp.tool(annotations=DELETE_LOCAL)
+    async def delete_repository(repo_path: str) -> RepositoryDeletionOutput:
+        """Durably forget one repository while preserving its source files."""
+
+        return cast(
+            RepositoryDeletionOutput,
+            await gateway.call(
+                "repository.drop_index",
+                {
+                    "repo_path": _validated(
+                        lambda: canonical_repository_identity(repo_path)
+                    )
+                },
             ),
         )
 

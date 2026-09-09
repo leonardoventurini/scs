@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from scs.indexing.jobs import IngestionJobStore
-from scs.indexing.pipeline import IngestionCancelled
-from scs.indexing.runner import IngestionJobRunner
+from scs.indexing.jobs import IngestionJob, IngestionJobStore
+from scs.indexing.pipeline import IngestionCancelled, IngestionPipeline
+from scs.indexing.runner import DeletableGraph, IngestionJobRunner
 
 
 @dataclass
@@ -216,6 +216,93 @@ async def test_runner_marks_store_stale_before_executing_pipeline(tmp_path: Path
     assert await runner.run_once()
 
     assert transitions == [f"started:{job.id}", f"completed:{job.id}"]
+
+
+@pytest.mark.asyncio
+async def test_repository_deletion_bypasses_ingestion_pipeline(tmp_path: Path) -> None:
+    missing_repository = tmp_path / "missing-repository"
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    job = store.enqueue(
+        repo_path=str(missing_repository),
+        store_id="a" * 64,
+        store_generation="g00000001",
+        mode="drop_index",
+        reason="explicit_delete",
+    )
+    deleted_jobs: list[str] = []
+
+    def delete_repository(active_job: IngestionJob) -> dict[str, object]:
+        deleted_jobs.append(active_job.id)
+        return {"repository_deleted": True}
+
+    def unexpected_graph(_job: IngestionJob) -> DeletableGraph:
+        raise AssertionError("repository deletion resolved a graph")
+
+    def unexpected_pipeline(_job: IngestionJob) -> IngestionPipeline:
+        raise AssertionError("repository deletion constructed an ingestion pipeline")
+
+    runner = IngestionJobRunner(
+        store=store,
+        graph_for_job=unexpected_graph,
+        pipeline_factory=unexpected_pipeline,
+        repository_deleter=delete_repository,
+    )
+
+    assert await runner.run_once() is True
+
+    completed = store.get(job.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.result == {"repository_deleted": True}
+    assert deleted_jobs == [job.id]
+
+
+@pytest.mark.asyncio
+async def test_repository_deletion_retries_a_transient_retirement_failure(
+    tmp_path: Path,
+) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    job = store.enqueue(
+        repo_path=str(tmp_path / "missing-repository"),
+        store_id="a" * 64,
+        store_generation="g00000001",
+        mode="drop_index",
+        reason="explicit_delete",
+    )
+    attempts: list[str] = []
+
+    def delete_repository(active_job: IngestionJob) -> dict[str, object]:
+        attempts.append(active_job.id)
+        if len(attempts) == 1:
+            raise OSError("synthetic store retirement failure")
+        return {"repository_deleted": True}
+
+    def unexpected_graph(_job: IngestionJob) -> DeletableGraph:
+        raise AssertionError("repository deletion resolved a graph")
+
+    def unexpected_pipeline(_job: IngestionJob) -> IngestionPipeline:
+        raise AssertionError("repository deletion constructed an ingestion pipeline")
+
+    runner = IngestionJobRunner(
+        store=store,
+        graph_for_job=unexpected_graph,
+        pipeline_factory=unexpected_pipeline,
+        repository_deleter=delete_repository,
+    )
+
+    assert await runner.run_once() is True
+    retry = store.get(job.id)
+    assert retry is not None
+    assert retry.status == "queued"
+    assert retry.attempts == 1
+    assert retry.error == "synthetic store retirement failure"
+
+    assert await runner.run_once() is True
+    completed = store.get(job.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.result == {"repository_deleted": True}
+    assert attempts == [job.id, job.id]
 
 
 @pytest.mark.asyncio

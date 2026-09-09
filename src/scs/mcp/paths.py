@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.source_paths import validated_source_path
 
 
@@ -20,6 +21,14 @@ def canonical_repo_path(repo_path: str | None) -> str | None:
     if not resolved.is_dir():
         raise ValueError(f"repository path is not a directory: {resolved}")
     return str(resolved)
+
+
+def canonical_repository_identity(repo_path: str) -> str:
+    """Normalize a prior repository root without requiring source existence."""
+
+    if not repo_path:
+        raise ValueError("repo_path must be a non-empty string")
+    return canonicalize_repo_path(Path(repo_path).expanduser())
 
 
 def contained_file_path(file_path: str, repo_path: str | None = None) -> str:

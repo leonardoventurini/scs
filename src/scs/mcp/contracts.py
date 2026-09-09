@@ -51,6 +51,14 @@ class IngestionOutput(TypedDict):
     job: dict[str, object]
 
 
+class RepositoryDeletionOutput(TypedDict):
+    """Acknowledgement or idempotent no-op for repository deletion."""
+
+    accepted: bool
+    already_absent: bool
+    job: dict[str, object] | None
+
+
 class GraphStatsOutput(TypedDict):
     """Stable readiness and storage statistics for an optional repository scope."""
 

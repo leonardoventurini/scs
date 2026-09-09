@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -114,3 +115,20 @@ class ProjectStorePaths:
         _ensure_private_directory(self.store, container=self.projects)
         _ensure_private_directory(self.generations, container=self.store)
         _ensure_private_directory(self.active, container=self.generations)
+
+
+def retired_project_store_path(
+    home: Path,
+    store_id: StoreId,
+    deletion_id: str,
+) -> Path:
+    """Return a contained, deterministic tombstone for one deletion job."""
+
+    safe_home = validate_scs_home(home)
+    safe_store_id = validate_store_id(store_id)
+    projects = _assert_contained(safe_home, safe_home / "projects")
+    deletion_digest = hashlib.sha256(deletion_id.encode("utf-8")).hexdigest()[:16]
+    return _assert_contained(
+        projects,
+        projects / f".deleted-{safe_store_id}-{deletion_digest}",
+    )

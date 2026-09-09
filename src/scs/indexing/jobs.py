@@ -335,6 +335,26 @@ class IngestionJobStore:
         now = utc_now()
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
+            active_deletion = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    """
+                    SELECT * FROM ingestion_jobs
+                    WHERE repo_path = ?
+                      AND mode = 'drop_index'
+                      AND status IN ('queued', 'retrying', 'running', 'cancelling')
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (repo_path,),
+                ).fetchone(),
+            )
+            if active_deletion is not None:
+                if mode == "drop_index":
+                    conn.commit()
+                    return self._row_to_job(active_deletion)
+                conn.rollback()
+                raise ValueError("repository deletion is in progress")
             existing = cast(
                 sqlite3.Row | None,
                 conn.execute(
@@ -730,7 +750,7 @@ class IngestionJobStore:
             return self._get_locked(conn, job_id)
 
     def request_cancel_all(self) -> list[IngestionJob]:
-        """Cancel queued work and request cancellation of every running job."""
+        """Cancel index work while preserving durable repository deletions."""
 
         now = utc_now()
         with closing(self._connect()) as conn:
@@ -742,6 +762,7 @@ class IngestionJobStore:
                     SELECT id
                     FROM ingestion_jobs
                     WHERE status IN ('queued', 'retrying', 'running', 'cancelling')
+                      AND mode != 'drop_index'
                     ORDER BY created_at, id
                     """
                 ).fetchall(),
@@ -753,6 +774,7 @@ class IngestionJobStore:
                     lease_owner = NULL, lease_expires_at = NULL,
                     updated_at = ?, finished_at = ?
                 WHERE status IN ('queued', 'retrying')
+                  AND mode != 'drop_index'
                 """,
                 (now, now),
             )
@@ -761,11 +783,33 @@ class IngestionJobStore:
                 UPDATE ingestion_jobs
                 SET status = 'cancelling', phase = 'cancelling', updated_at = ?
                 WHERE status = 'running'
+                  AND mode != 'drop_index'
                 """,
                 (now,),
             )
             conn.commit()
             return [self._get_locked(conn, _row_str(row, "id")) for row in rows]
+
+    def active_deletion(self, repo_path: str) -> IngestionJob | None:
+        """Return the durable deletion currently owning a repository root."""
+
+        placeholders = ", ".join("?" for _ in ACTIVE_JOB_STATUSES)
+        with closing(self._connect()) as conn, conn:
+            row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    f"""
+                    SELECT * FROM ingestion_jobs
+                    WHERE repo_path = ?
+                      AND mode = 'drop_index'
+                      AND status IN ({placeholders})
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (repo_path, *ACTIVE_JOB_STATUSES),
+                ).fetchone(),
+            )
+        return self._row_to_job(row) if row is not None else None
 
     def cancellation_requested(self, job_id: str) -> bool:
         """Return whether a running job should stop at its next safe boundary."""

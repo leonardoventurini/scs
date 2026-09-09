@@ -235,6 +235,50 @@ class ProjectStoreCatalog:
             connection.close()
         return _record_from_row(row)
 
+    def unregister(
+        self,
+        root: str | Path,
+        *,
+        expected_store_id: StoreId,
+        expected_generation: StoreGeneration,
+    ) -> bool:
+        """Remove exactly the project-store binding owned by a deletion job.
+
+        A recovered job must never unregister a replacement generation created
+        for the same repository root. Returning ``False`` for an absent or
+        different binding makes the durable deletion boundary idempotent.
+        """
+
+        canonical_root = canonical_repository_root(root)
+        store_id = validate_store_id(expected_store_id)
+        generation = validate_store_generation(expected_generation)
+        if not self._database.exists():
+            return False
+        connection = sqlite3.connect(self._database, isolation_level=None)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                DELETE FROM project_stores
+                WHERE canonical_root = ?
+                  AND store_id = ?
+                  AND active_generation = ?
+                """,
+                (canonical_root, store_id, generation),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error as exc:
+            connection.execute("ROLLBACK")
+            raise CatalogError(
+                f"Could not unregister project store for {canonical_root}"
+            ) from exc
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+        return cursor.rowcount == 1
+
     def list_records(self) -> list[CatalogRecord]:
         """List registered stores without creating a catalog or project data."""
 
