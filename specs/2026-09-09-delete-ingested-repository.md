@@ -129,27 +129,27 @@ the watcher; partial retirement stays recoverable by another idempotent delete.
 
 Tests are added before or alongside implementation.
 
-- [ ] The exact MCP inventory contains eleven tools including
+- [x] The exact MCP inventory contains eleven tools including
   `delete_repository`.
-- [ ] Its schema and safety annotations match the public contract.
-- [ ] MCP normalizes a prior repository identity without requiring the source
+- [x] Its schema and safety annotations match the public contract.
+- [x] MCP normalizes a prior repository identity without requiring the source
   directory and rejects an empty path before gateway dispatch.
-- [ ] Repeated deletion is a successful no-op when no SCS state remains.
-- [ ] Catalog unregister is conditional, idempotent, and isolated from sibling
+- [x] Repeated deletion is a successful no-op when no SCS state remains.
+- [x] Catalog unregister is conditional, idempotent, and isolated from sibling
   repositories.
-- [ ] Store retirement is contained under `SCS_HOME`, preserves source and
+- [x] Store retirement is contained under `SCS_HOME`, preserves source and
   sibling stores, and resumes from tombstone/catalog crash windows.
-- [ ] The deletion runner never constructs an ingestion pipeline and retries a
+- [x] The deletion runner never constructs an ingestion pipeline and retries a
   transient failure to convergence.
-- [ ] Queue tests cover full-before-delete, delete-before-full, duplicate
+- [x] Queue tests cover full-before-delete, delete-before-full, duplicate
   deletion, and running-work ordering.
-- [ ] Index and incremental-ingestion requests cannot resurrect a repository
+- [x] Index and incremental-ingestion requests cannot resurrect a repository
   while deletion is active.
-- [ ] A daemon integration test proves catalog, graph, vectors, ingestion
+- [x] A daemon integration test proves catalog, graph, vectors, ingestion
   records, watcher, and store files remain absent after restart.
-- [ ] A moved or removed source repository can be deleted.
-- [ ] Repository source fingerprints are unchanged.
-- [ ] Targeted tests, strict type checking, and `just verify` pass.
+- [x] A moved or removed source repository can be deleted.
+- [x] Repository source fingerprints are unchanged.
+- [x] Targeted tests, strict type checking, and `just verify` pass.
 
 ## Documentation and decision
 
@@ -171,9 +171,9 @@ only by a later explicit index request.
 
 ## Direct rollout
 
-- [ ] Implement and verify the feature on `main`.
-- [ ] Update all version identities to `0.1.14` and add the changelog entry.
-- [ ] Run `python3 scripts/check-release-version.py v0.1.14` and `just verify`.
+- [x] Implement and verify the feature on `main`.
+- [x] Update all version identities to `0.1.14` and add the changelog entry.
+- [x] Run `python3 scripts/check-release-version.py v0.1.14` and `just verify`.
 - [ ] Push `main` and wait for its GitHub CI run to succeed.
 - [ ] Create and push annotated tag `v0.1.14`.
 - [ ] Wait for the GitHub release workflow and verify the seven expected
@@ -183,5 +183,17 @@ only by a later explicit index request.
 
 ## Verification record
 
-Execution results, skipped checks, warnings, and release URLs will be recorded
-here before final handoff.
+Executed locally on 2026-09-09:
+
+- focused repository-deletion suite: 80 passed;
+- follow-up uninitialized-store and daemon suite: 24 passed;
+- `basedpyright`: 0 errors, 0 warnings;
+- `ruff check src tests`: passed;
+- full Python suite through `just verify`: 317 passed with 86.56% coverage;
+- Rust workspace through `just verify`: 99 tests passed;
+- `scripts/check-release-version.py v0.1.14`: returned `0.1.14`;
+- `uv lock --check`, locked Cargo metadata, and whitespace checks: passed.
+
+The GitHub `main` CI run, tag release run, release assets, checksums,
+attestations, and installed-release checks remain pending until the verified
+commit is pushed.
