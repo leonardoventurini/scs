@@ -143,4 +143,18 @@ existing SCS installation is unchanged.
 - [x] Update documentation.
 - [x] Run targeted tests and `just verify`.
 - [x] Record the decision and commit the verified unit.
-- [ ] Publish, install, and validate the patch release locally.
+- [x] Publish, install, and validate the patch release locally.
+
+## Verification evidence
+
+- `just verify` passed for v0.1.13 with 299 Python tests, 85.99% coverage,
+  strict Basedpyright, Ruff, the native build, and 99 Rust tests.
+- CI run `34292343781` passed on Ubuntu and macOS, including the supply-chain
+  audit. Release run `34292353799` built, smoke-tested, attested, and published
+  all v0.1.13 artifacts.
+- The checksum-verified public installer upgraded the active v0.1.11 daemon
+  through the reproduced live MCP bridge handoff and preserved the `0600`
+  machine-local oMLX configuration.
+- The installed v0.1.13 bridge initialized in 1.25 seconds. `find_references`
+  returned both available and typed-unavailable results without MCP errors, and
+  the configured Qwen reranker produced `semantic_reranked` search results.
