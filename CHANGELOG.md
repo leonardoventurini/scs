@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.14 - 2026-09-09
+
+- feat(mcp): durably forget indexed repositories through an idempotent deletion
+  operation
+
 ## 0.1.13 - 2026-09-08
 
 - fix: allow upgrades to proceed after an exited daemon remains as a zombie
