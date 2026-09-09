@@ -37,7 +37,7 @@ Download the versioned installer and `SHA256SUMS` from the same release. Verify
 before execution:
 
 ```bash
-VERSION=0.1.13
+VERSION=0.1.14
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/scs-installer-${VERSION}.sh"
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/SHA256SUMS"
 shasum -a 256 -c SHA256SUMS --ignore-missing
@@ -131,7 +131,17 @@ uv tool uninstall scs
 ```
 
 This intentionally preserves user data and logs. There is no automatic purge
-command.
+command. To remove only one repository from SCS while leaving its source and all
+other indexed repositories intact, call the idempotent MCP
+`delete_repository(repo_path=...)` tool. It durably removes that repository's
+SCS-owned index and catalog registration, stops its watcher, supersedes pending
+indexing work, and also works after the source directory has been removed.
+
+Deleting `SCS_HOME` is a separate, manual uninstall purge that removes all
+persisted SCS configuration, indexes, project-store registrations, and durable
+jobs. Stop the daemon and uninstall the executable before manually removing that
+directory. Neither per-repository deletion nor a global SCS data purge changes
+repository source files.
 
 ## Maintainer release procedure
 

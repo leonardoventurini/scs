@@ -16,7 +16,7 @@ Stable releases support Apple Silicon macOS and x86-64 Linux with CPython
 script, then run it:
 
 ```bash
-VERSION=0.1.13
+VERSION=0.1.14
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/scs-installer-${VERSION}.sh"
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/SHA256SUMS"
 shasum -a 256 -c SHA256SUMS --ignore-missing
@@ -209,12 +209,20 @@ SCSWire, or MCP index statistics for operational visibility.
 
 ## MCP tools
 
-SCS exposes ten model-facing operations with distinct code-intelligence jobs:
+SCS exposes eleven model-facing operations with distinct code-intelligence jobs:
 `search_code`, `graph_context`, `get_related`, `list_symbols`, `inspect_file`,
 `find_references`, `regression_risk_report`, `ingest_project`, `ingest_files`,
-and `get_graph_stats`. Repository-query tools are annotated read-only and
-closed-world. Ingestion tools are marked destructive because reconciliation can
-remove stale SCS-owned index state; SCS never mutates repository source.
+`delete_repository`, and `get_graph_stats`. Repository-query tools are annotated
+read-only and closed-world. Ingestion tools are marked destructive because
+reconciliation can remove stale SCS-owned index state.
+
+`delete_repository(repo_path=...)` durably removes one repository's SCS-owned
+index and catalog registration, stops its watcher, and supersedes pending
+indexing work without reading, changing, or deleting repository source. The
+source directory does not need to exist. The operation is annotated
+non-read-only, destructive, closed-world, and idempotent; deleting an already
+absent repository succeeds with `already_absent=true` and no queued job. All SCS
+tools preserve repository source.
 
 Operational diagnostics remain available through the CLI and SCSWire instead
 of occupying the model's tool catalog.
