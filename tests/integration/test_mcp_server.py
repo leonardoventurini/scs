@@ -40,6 +40,11 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
     "knowledge.nodes.list": {"nodes": [], "total": 0, "limit": 50, "offset": 0},
     "repository.ingest_files": {"accepted": True, "job": {"id": "job-1"}},
     "repository.index": {"accepted": True, "job": {"id": "job-2"}},
+    "repository.drop_index": {
+        "accepted": True,
+        "already_absent": False,
+        "job": {"id": "job-3"},
+    },
     "knowledge.stats": {
         "repo_path": None,
         "status": "empty",
@@ -85,6 +90,7 @@ EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
     "list_symbols": {"nodes", "total", "limit", "offset"},
     "ingest_files": {"accepted", "job"},
     "ingest_project": {"accepted", "job"},
+    "delete_repository": {"accepted", "already_absent", "job"},
     "get_graph_stats": {
         "repo_path",
         "status",
@@ -200,6 +206,11 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
             "ingest_project",
             {"repo_path": repo},
             ("repository.index", {"repo_path": repo}),
+        ),
+        (
+            "delete_repository",
+            {"repo_path": repo},
+            ("repository.drop_index", {"repo_path": repo}),
         ),
         (
             "get_graph_stats",
@@ -353,6 +364,35 @@ async def test_explicit_project_ingestion_is_acknowledged_without_waiting(
     ]
 
 
+async def test_repository_deletion_serializes_an_already_absent_result(
+    tmp_path: Path,
+) -> None:
+    class AlreadyAbsentGateway(RecordingGateway):
+        @override
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            self.calls.append((method, params))
+            return {"accepted": True, "already_absent": True, "job": None}
+
+    gateway = AlreadyAbsentGateway()
+    result = await build_mcp(gateway).call_tool(
+        "delete_repository",
+        {"repo_path": str(tmp_path)},
+    )
+
+    assert result.structured_content == {
+        "accepted": True,
+        "already_absent": True,
+        "job": None,
+    }
+    assert gateway.calls == [
+        ("repository.drop_index", {"repo_path": str(tmp_path.resolve())})
+    ]
+
+
 @pytest.mark.parametrize(
     "retired_name",
     [
@@ -378,12 +418,19 @@ async def test_mcp_application_lists_exact_inventory() -> None:
     tools = await build_mcp(RecordingGateway()).list_tools()
 
     assert {tool.name for tool in tools} == MCP_TOOL_NAMES
-    assert len(tools) == 10
+    assert len(tools) == 11
     assert all(tool.annotations is not None for tool in tools)
     for tool in tools:
         annotations = tool.annotations
         assert annotations is not None
-        if tool.name in {"ingest_project", "ingest_files"}:
+        if tool.name == "delete_repository":
+            assert (
+                annotations.read_only_hint,
+                annotations.destructive_hint,
+                annotations.idempotent_hint,
+                annotations.open_world_hint,
+            ) == (False, True, True, False)
+        elif tool.name in {"ingest_project", "ingest_files"}:
             assert (
                 annotations.read_only_hint,
                 annotations.destructive_hint,

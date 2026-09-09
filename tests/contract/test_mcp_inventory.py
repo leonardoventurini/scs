@@ -26,6 +26,7 @@ def test_inventory_contains_only_code_intelligence_tools() -> None:
         "regression_risk_report",
         "ingest_project",
         "ingest_files",
+        "delete_repository",
         "get_graph_stats",
     }
 

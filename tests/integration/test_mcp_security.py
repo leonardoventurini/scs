@@ -23,6 +23,17 @@ class RecordingGateway:
         return {"accepted": True}
 
 
+@dataclass(slots=True)
+class DeleteGateway(RecordingGateway):
+    async def call(
+        self,
+        method: str,
+        params: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        self.calls.append((method, params))
+        return {"accepted": True, "already_absent": True, "job": None}
+
+
 @pytest.mark.asyncio
 async def test_incremental_ingestion_rejects_source_escape(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
@@ -50,6 +61,40 @@ async def test_incremental_ingestion_rejects_deleted_path_escape(
         await build_mcp(gateway).call_tool(
             "ingest_files",
             {"repo_path": str(tmp_path), "deleted_paths": ["../outside.py"]},
+        )
+
+    assert gateway.calls == []
+
+
+@pytest.mark.asyncio
+async def test_repository_deletion_accepts_a_missing_source_directory(
+    tmp_path: Path,
+) -> None:
+    missing_repository = tmp_path / "removed-repository"
+    gateway = DeleteGateway()
+
+    result = await build_mcp(gateway).call_tool(
+        "delete_repository",
+        {"repo_path": str(missing_repository)},
+    )
+
+    assert result.is_error is False
+    assert gateway.calls == [
+        (
+            "repository.drop_index",
+            {"repo_path": str(missing_repository.resolve())},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_repository_deletion_rejects_an_empty_path() -> None:
+    gateway = DeleteGateway()
+
+    with pytest.raises(Exception, match="repo_path must be a non-empty string"):
+        await build_mcp(gateway).call_tool(
+            "delete_repository",
+            {"repo_path": ""},
         )
 
     assert gateway.calls == []
