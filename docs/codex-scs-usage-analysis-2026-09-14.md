@@ -70,6 +70,11 @@ The following facts were aggregated:
 - Repeated readiness and ingestion checks.
 - Failure categories without retaining or reproducing unrelated chat content.
 
+A second, cross-tool pass covered 289,630 history items, 892 threads, and 5,709
+turns in the same window. It compared SCS activity with command execution, file
+changes, verification, context compaction, and conservative user-correction
+signals. This pass emitted no message or source content.
+
 This report does not evaluate whether every returned result was semantically
 correct. Search-quality conclusions are therefore limited to observable use,
 empty-result rates, retrieval modes, and repeated agent behavior. Recall, MRR,
@@ -158,6 +163,33 @@ The omitted group has a smaller median because callers often requested fewer
 results, but it produced the largest individual response. Full records contain
 timestamps, repository IDs, parser metadata, and other fields that are rarely
 needed during initial discovery.
+
+### Cross-tool productivity context
+
+The wider Codex workflow reinforces the need to keep SCS responses compact and
+composable:
+
+- 1,337 of 5,709 turns contained at least 50 recorded items.
+- 775 context compactions occurred during the 30-day window.
+- In the recent seven-day slice, the median turn contained 25 items, 308 of 927
+  turns contained at least 50 items, and 203 compactions occurred.
+- Over 30 days, 17.9% of turns containing SCS calls were compacted, compared
+  with 11.0% of turns without SCS. In the recent slice the rates converged to
+  18.7% and 16.6%, so this is evidence of shared workflow pressure rather than
+  proof that SCS causes compaction.
+
+Direct source discovery remained common: commands classified as `rg`, `find`,
+`sed`, or similar reads accounted for 41,981 executions. This is not inherently
+waste. SCS is a discovery and structural-analysis layer, while current source
+remains authoritative. Product changes should therefore optimize the handoff
+from SCS results to exact file and line reads instead of trying to eliminate
+direct inspection.
+
+Verification was also central to the workflow. Of 2,091 turns with a completed
+file change, 1,970, or 94.2%, contained a test or static-analysis command. At
+least one such command failed in 937 change turns, although many later recovered
+within the same task. This supports better test targeting and failure
+explanation, but it does not show that verification quality is poor.
 
 ## Findings and recommendations
 
@@ -276,6 +308,10 @@ Recommended behavior:
 - Bound dependent and test-dependent results.
 - Return truncation and completeness metadata.
 - Measure file lookup, edge traversal, and node hydration separately.
+- Return deduplicated test-file targets with the dependency path that explains
+  why each test is relevant.
+- Preserve stable file and line coordinates so agents can move directly from
+  the report to authoritative source and test reads.
 
 Acceptance criteria:
 
@@ -284,6 +320,9 @@ Acceptance criteria:
   occurrences.
 - Truncated reports never imply completeness.
 - Existing dependency and test classification remains deterministic.
+- Each suggested test target includes inspectable relationship evidence.
+- Representative change tasks require fewer manual discovery commands to select
+  relevant tests, without reducing the tests ultimately executed.
 
 ### P1: Return actionable search diagnostics
 
@@ -411,6 +450,21 @@ Acceptance criteria:
 - The fixed MCP inventory should remain small; improvements should consolidate
   behavior into existing tools where the task remains coherent.
 
+## Additional limitations
+
+- The cross-tool command categories are lexical heuristics. For example, a
+  source-discovery command may be required verification rather than rework.
+- A failed test or static-analysis command is an intermediate workflow event,
+  not evidence that the final result was incorrect.
+- Conservative message analysis found no reportable cohort of explicit user
+  correction phrases. This does not prove the absence of quality issues; it
+  means the available high-precision heuristic did not support a claim.
+- Context compaction correlates with long, complex turns. The history does not
+  establish that any one tool caused it.
+- Repository metadata was unavailable for a substantial portion of the broader
+  history, so cross-project conclusions rely on aggregate recurrence rather
+  than complete per-repository attribution.
+
 ## Review order
 
 Reviewers should examine the proposals in this order:
@@ -419,7 +473,8 @@ Reviewers should examine the proposals in this order:
 2. Compact-result compatibility and response-size evidence.
 3. Multi-query bounds and deterministic fusion semantics.
 4. Ingestion progress ownership and durable job linkage.
-5. Regression-risk completeness and truncation semantics.
+5. Regression-risk completeness, explainable test targets, and truncation
+   semantics.
 6. Privacy and retention properties of durable metrics.
 
 No implementation decision is made by this report. Each public contract change
