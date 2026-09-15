@@ -611,6 +611,22 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         risk = results["knowledge.composite.regression_risk"]
         assert {node["id"] for node in risk["dependents"]} == {"symbol-test"}
         assert {node["id"] for node in risk["test_dependents"]} == {"symbol-test"}
+        assert risk["total_dependents"] == 1
+        assert risk["dependents_truncated"] is False
+        assert risk["complete"] is True
+        assert risk["test_targets"] == [
+            {
+                "file_path": "tests/test_sample.py",
+                "evidence": [
+                    {
+                        "dependent_node_id": "symbol-test",
+                        "affected_node_id": "symbol-production",
+                        "relationship": "references",
+                    }
+                ],
+            }
+        ]
+        assert all(value >= 0 for value in risk["timings"].values())
         related_by_name = await client.call(
             "knowledge.related",
             {"symbol_name": "production_symbol", "repo_path": repo_path},

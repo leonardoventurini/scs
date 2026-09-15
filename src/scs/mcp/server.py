@@ -283,9 +283,12 @@ def build_mcp(
 
     @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def regression_risk_report(
-        repo_path: str, file_paths: list[str]
+        repo_path: str,
+        file_paths: list[str],
+        dependent_limit: int = 200,
+        test_target_limit: int = 50,
     ) -> RegressionRiskOutput:
-        """Estimate dependent and test blast radius for changed source files."""
+        """Estimate a bounded blast radius with explicit test-target evidence."""
         repo = _validated(lambda: canonical_repo_path(repo_path))
         assert repo is not None
         paths = [
@@ -296,7 +299,12 @@ def build_mcp(
             RegressionRiskOutput,
             await gateway.call(
                 "knowledge.composite.regression_risk",
-                {"file_paths": paths, "repo_path": repo},
+                {
+                    "file_paths": paths,
+                    "repo_path": repo,
+                    "dependent_limit": _limit(dependent_limit),
+                    "test_target_limit": _limit(test_target_limit),
+                },
             ),
         )
 

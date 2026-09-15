@@ -131,6 +131,13 @@ class RegressionRiskOutput(TypedDict):
     affected_node_ids: list[str]
     dependents: list[dict[str, object]]
     test_dependents: list[dict[str, object]]
+    total_dependents: int
+    dependents_truncated: bool
+    test_targets: list[dict[str, object]]
+    total_test_targets: int
+    test_targets_truncated: bool
+    complete: bool
+    timings: dict[str, float]
 
 
 class _ReferenceOutput(BaseModel):

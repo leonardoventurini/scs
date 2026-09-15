@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from time import perf_counter
 from typing import cast
 
 from scs.graph.models import Edge, Node, NodeType, RelationshipType
@@ -57,6 +58,13 @@ COMPACT_CONTENT_CHARACTERS = 1_024
 MAX_JOB_WAIT_SECONDS = 10.0
 JOB_WAIT_POLL_SECONDS = 0.1
 ACTIVE_JOB_RETRY_AFTER_MS = 250
+DEFAULT_DEPENDENT_LIMIT = 200
+DEFAULT_TEST_TARGET_LIMIT = 50
+MAX_REGRESSION_RISK_LIMIT = 1_000
+
+
+def _elapsed_ms(started: float) -> float:
+    return (perf_counter() - started) * 1_000
 
 
 def _search_diagnostics(response: CodeSearchResponse) -> dict[str, object]:
@@ -806,9 +814,19 @@ class SCSServiceRoutes:
         repo_path = _string(params, "repo_path", required=True)
         assert repo_path is not None
         root = Path(canonicalize_repo_path(repo_path))
+        dependent_limit = min(
+            MAX_REGRESSION_RISK_LIMIT,
+            _integer(params, "dependent_limit", DEFAULT_DEPENDENT_LIMIT, minimum=1),
+        )
+        test_target_limit = min(
+            MAX_REGRESSION_RISK_LIMIT,
+            _integer(params, "test_target_limit", DEFAULT_TEST_TARGET_LIMIT, minimum=1),
+        )
+        started = perf_counter()
         graph = self._read_graph(repo_path)
         if graph is None:
-            return {"file_paths": raw_paths, "affected_node_ids": [], "dependents": [], "test_dependents": []}
+            return self._empty_regression_risk(raw_paths, started)
+        lookup_started = perf_counter()
         affected_ids: list[str] = []
         for raw_path in raw_paths:
             source = Path(validated_source_path(raw_path, str(root), require_file=False))
@@ -818,42 +836,122 @@ class SCSServiceRoutes:
                     graph.get_node_ids_for_file_sync, str(root), rel_path
                 )
             )
+        affected_ids = list(dict.fromkeys(affected_ids))
+        file_lookup_ms = _elapsed_ms(lookup_started)
+        edge_started = perf_counter()
         edges = (
-            await asyncio.to_thread(graph.batch_get_edges_sync, affected_ids)
+            await asyncio.to_thread(
+                graph.batch_get_edges_sync,
+                affected_ids,
+                direction="incoming",
+            )
             if affected_ids
             else {}
         )
+        edge_traversal_ms = _elapsed_ms(edge_started)
         affected_id_set = set(affected_ids)
-        dependent_ids = sorted(
+        relevant_edges = sorted(
             {
-                edge.source_id
+                (edge.source_id, edge.target_id, edge.relationship): edge
                 for values in edges.values()
                 for edge in values
-                if (
-                    edge.target_id in affected_id_set
-                    and edge.source_id not in affected_id_set
-                    and edge.relationship in DEPENDENCY_RELATIONSHIPS
-                )
+                if edge.target_id in affected_id_set
+                and edge.source_id not in affected_id_set
+                and edge.relationship in DEPENDENCY_RELATIONSHIPS
+            }.values(),
+            key=lambda edge: (edge.source_id, edge.target_id, edge.relationship),
+        )
+        dependent_ids = sorted({edge.source_id for edge in relevant_edges})
+        selected_dependent_ids = dependent_ids[:dependent_limit]
+        hydration_started = perf_counter()
+        dependents = await asyncio.to_thread(
+            graph.batch_get_nodes_sync,
+            selected_dependent_ids,
+        )
+        node_hydration_ms = _elapsed_ms(hydration_started)
+        projection_started = perf_counter()
+        evidence_by_dependent: dict[str, list[dict[str, object]]] = {}
+        for edge in relevant_edges:
+            evidence_by_dependent.setdefault(edge.source_id, []).append(
+                {
+                    "dependent_node_id": edge.source_id,
+                    "affected_node_id": edge.target_id,
+                    "relationship": edge.relationship,
+                }
+            )
+        test_dependents = [
+            node
+            for node in dependents
+            if any(
+                marker in str(node.metadata.get("file_path", ""))
+                for marker in TEST_PATH_MARKERS
+            )
+        ]
+        test_target_paths = sorted(
+            {
+                str(node.metadata.get("file_path"))
+                for node in test_dependents
+                if node.metadata.get("file_path")
             }
         )
-        dependents = [
-            node
-            for node_id in dependent_ids
-            if (node := await asyncio.to_thread(graph.get_node_sync, node_id))
-            is not None
+        selected_test_paths = test_target_paths[:test_target_limit]
+        test_targets = [
+            {
+                "file_path": path,
+                "evidence": [
+                    evidence
+                    for node in test_dependents
+                    if str(node.metadata.get("file_path")) == path
+                    for evidence in evidence_by_dependent.get(node.id, [])
+                ],
+            }
+            for path in selected_test_paths
         ]
+        projection_ms = _elapsed_ms(projection_started)
+        dependents_truncated = len(dependent_ids) > len(selected_dependent_ids)
+        test_targets_truncated = len(test_target_paths) > len(selected_test_paths)
         return {
             "file_paths": raw_paths,
             "affected_node_ids": affected_ids,
             "dependents": [_node_dict(node) for node in dependents],
-            "test_dependents": [
-                _node_dict(node)
-                for node in dependents
-                if any(
-                    marker in str(node.metadata.get("file_path", ""))
-                    for marker in TEST_PATH_MARKERS
-                )
-            ],
+            "test_dependents": [_node_dict(node) for node in test_dependents],
+            "total_dependents": len(dependent_ids),
+            "dependents_truncated": dependents_truncated,
+            "test_targets": test_targets,
+            "total_test_targets": len(test_target_paths),
+            "test_targets_truncated": test_targets_truncated,
+            "complete": not dependents_truncated and not test_targets_truncated,
+            "timings": {
+                "file_lookup_ms": file_lookup_ms,
+                "edge_traversal_ms": edge_traversal_ms,
+                "node_hydration_ms": node_hydration_ms,
+                "projection_ms": projection_ms,
+                "total_ms": _elapsed_ms(started),
+            },
+        }
+
+    @staticmethod
+    def _empty_regression_risk(
+        file_paths: list[str], started: float
+    ) -> dict[str, object]:
+        return {
+            "file_paths": file_paths,
+            "affected_node_ids": [],
+            "dependents": [],
+            "test_dependents": [],
+            "total_dependents": 0,
+            "dependents_truncated": False,
+            "test_targets": [],
+            "total_test_targets": 0,
+            "test_targets_truncated": False,
+            "complete": True,
+            "timings": {
+                "file_lookup_ms": 0.0,
+                "edge_traversal_ms": 0.0,
+                "node_hydration_ms": 0.0,
+                "projection_ms": 0.0,
+                "total_ms": _elapsed_ms(started),
+            },
         }
 
     async def lsp_references(self, params: dict[str, object]) -> dict[str, object]:

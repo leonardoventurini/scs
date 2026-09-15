@@ -97,6 +97,19 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
         "affected_node_ids": [],
         "dependents": [],
         "test_dependents": [],
+        "total_dependents": 0,
+        "dependents_truncated": False,
+        "test_targets": [],
+        "total_test_targets": 0,
+        "test_targets_truncated": False,
+        "complete": True,
+        "timings": {
+            "file_lookup_ms": 0.0,
+            "edge_traversal_ms": 0.0,
+            "node_hydration_ms": 0.0,
+            "projection_ms": 0.0,
+            "total_ms": 0.0,
+        },
     },
     "lsp.references": {
         "available": False,
@@ -162,6 +175,13 @@ EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
         "affected_node_ids",
         "dependents",
         "test_dependents",
+        "total_dependents",
+        "dependents_truncated",
+        "test_targets",
+        "total_test_targets",
+        "test_targets_truncated",
+        "complete",
+        "timings",
     },
 }
 
@@ -289,7 +309,12 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
             {"repo_path": repo, "file_paths": [source_path]},
             (
                 "knowledge.composite.regression_risk",
-                {"repo_path": repo, "file_paths": [source_path]},
+                {
+                    "repo_path": repo,
+                    "file_paths": [source_path],
+                    "dependent_limit": 200,
+                    "test_target_limit": 50,
+                },
             ),
         ),
         (
