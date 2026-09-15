@@ -20,6 +20,7 @@ from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
 from scs.identity import IdentityPublisher
+from scs.metrics import AggregateMetrics
 from scs.providers.base import EmbeddingProvider, RerankingProvider
 from scs.providers.mlx import MLXEmbeddingProvider
 from scs.providers.omlx_reranking import OMLXRerankingProvider
@@ -75,7 +76,7 @@ class SCSDaemon:
     def __init__(self, settings: SCSSettings | None = None) -> None:
         self.settings: SCSSettings = settings or SCSSettings()
         self._generation: str = uuid.uuid4().hex
-        self._router: Router = Router()
+        self._router: Router = Router(observer=self._record_metric)
         self._server: WireServer | None = None
         self._identity: IdentityPublisher | None = None
         self._lock: ProcessLock | None = None
@@ -85,6 +86,7 @@ class SCSDaemon:
         self._runner: IngestionJobRunner | None = None
         self._embeddings: EmbeddingProvider | None = None
         self._reranker: RerankingProvider | None = None
+        self._metrics: AggregateMetrics | None = None
         self._watchers: dict[str, RepositoryWatcher] = {}
         self._repository_mutation_locks: dict[str, asyncio.Lock] = {}
         self._events: EventBroker = EventBroker()
@@ -115,6 +117,11 @@ class SCSDaemon:
         server: WireServer | None = None
         identity: IdentityPublisher | None = None
         try:
+            self._metrics = await asyncio.to_thread(
+                self._open_metrics_fail_open,
+                paths.metrics_database,
+                paths.metrics_key,
+            )
             embeddings: EmbeddingProvider
             if self.settings.embedding_provider in {"openai", "omlx"}:
                 is_openai = self.settings.embedding_provider == "openai"
@@ -532,6 +539,20 @@ class SCSDaemon:
             )
             return {"jobs": [job_to_dict(job) for job in recent]}
 
+        @self._router.method("metrics.report")
+        async def metrics_report(params: dict[str, object]) -> dict[str, object]:
+            raw_days = params.get("days", 7)
+            if not isinstance(raw_days, int) or isinstance(raw_days, bool):
+                raise ValueError("days must be an integer")
+            metrics = self._metrics
+            if metrics is None:
+                return {
+                    "days": max(1, min(raw_days, 30)),
+                    "totals": {"calls": 0, "errors": 0},
+                    "operations": [],
+                }
+            return await asyncio.to_thread(metrics.report, days=raw_days)
+
         service_methods = {
             "knowledge.search": self._services.search,
             "knowledge.related": self._services.related,
@@ -545,6 +566,36 @@ class SCSDaemon:
         }
         for method_name, handler in service_methods.items():
             self._router.method(method_name)(handler)
+
+    def _record_metric(
+        self,
+        method: str,
+        params: dict[str, object],
+        status: str,
+        duration_ms: float,
+    ) -> None:
+        """Persist daemon-wide aggregates without affecting request outcomes."""
+
+        metrics = self._metrics
+        if metrics is not None:
+            metrics.record(
+                method,
+                params,
+                status=status,
+                duration_ms=duration_ms,
+            )
+
+    @staticmethod
+    def _open_metrics_fail_open(
+        database_path: Path,
+        key_path: Path,
+    ) -> AggregateMetrics | None:
+        """Keep optional observation from becoming a daemon dependency."""
+
+        try:
+            return AggregateMetrics(database_path, key_path)
+        except Exception:
+            return None
 
     async def _enqueue(
         self,

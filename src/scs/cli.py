@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser("doctor", help="validate storage and daemon health")
     subcommands.add_parser("status", help="show daemon state")
     subcommands.add_parser("version", help="show the installed SCS version")
+    metrics = subcommands.add_parser(
+        "metrics", help="show privacy-preserving aggregate operation metrics"
+    )
+    metrics.add_argument("--days", type=int, default=7)
+    metrics.add_argument("--json", action="store_true", dest="json")
 
     index = subcommands.add_parser("index", help="explicitly index a repository")
     index.add_argument("repo_path", type=Path)
@@ -149,6 +154,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         daemon_status = asyncio.run(DaemonController().status())
         print(json.dumps({"daemon": asdict(daemon_status)}, sort_keys=True))
         return 0 if daemon_status.ready else 1
+    if command == "metrics":
+        raw_days = values.get("days", 7)
+        if not isinstance(raw_days, int):
+            raise AssertionError("metrics days must be an integer")
+        result = asyncio.run(_call_daemon("metrics.report", {"days": raw_days}))
+        # The command is intentionally machine-readable by default; --json is
+        # retained as an explicit stable contract for automation.
+        print(json.dumps(result, sort_keys=True))
+        return 0
     if command in {"index", "reindex"}:
         repo_path = values.get("repo_path")
         if not isinstance(repo_path, Path):

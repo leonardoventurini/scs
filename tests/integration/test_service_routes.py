@@ -196,6 +196,35 @@ class ImmediateEmbeddings:
 
 
 @pytest.mark.asyncio
+async def test_metrics_initialization_failure_does_not_block_daemon(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = Path(tempfile.mkdtemp(prefix="scs-metrics-fail-open-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+        auto_reindex_enabled=False,
+    )
+
+    def unavailable_metrics(*_args: object, **_kwargs: object) -> object:
+        raise PermissionError("metrics unavailable")
+
+    monkeypatch.setattr("scs.main.AggregateMetrics", unavailable_metrics)
+    daemon = SCSDaemon(settings)
+
+    try:
+        await daemon.start()
+        health = await SCSClient(runtime / "scs.sock").call("system.health")
+        assert health["ready"] is True
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
 async def test_repository_deletion_is_durable_and_preserves_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -688,6 +717,14 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         )
         assert stats_empty["status"] == "empty"
         assert stats_empty["total_nodes"] == 0
+
+        metrics = await client.call("metrics.report", {"days": 1})
+        assert metrics["totals"]["calls"] >= len(results)
+        observed_methods = {row["method"] for row in metrics["operations"]}
+        assert "knowledge.search" in observed_methods
+        assert "knowledge.composite.regression_risk" in observed_methods
+        assert settings.paths.metrics_database.stat().st_mode & 0o777 == 0o600
+        assert settings.paths.metrics_key.stat().st_mode & 0o777 == 0o600
 
         # Deletion runs last because every other public route above reads the
         # project store that this lifecycle operation retires.

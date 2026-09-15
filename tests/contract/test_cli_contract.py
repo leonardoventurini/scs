@@ -20,6 +20,10 @@ def test_operational_commands_are_parseable() -> None:
     assert parser.parse_args(["version"]).command == "version"
     assert parser.parse_args(["index", "."]).command == "index"
     assert parser.parse_args(["reindex", "."]).command == "reindex"
+    metrics = parser.parse_args(["metrics", "--days", "14", "--json"])
+    assert metrics.command == "metrics"
+    assert metrics.days == 14
+    assert metrics.json is True
     for action in ("start", "stop", "restart", "status"):
         assert parser.parse_args(["daemon", action]).action == action
     stop = parser.parse_args(["daemon", "stop", "--cancel-active"])
@@ -45,6 +49,21 @@ def test_mcp_command_runs_installed_stdio_bridge(
 
     assert main(["mcp"]) == 0
     assert calls == [True]
+
+
+def test_metrics_command_reads_daemon_aggregates(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def report(method: str, params: dict[str, object]) -> dict[str, object]:
+        assert method == "metrics.report"
+        assert params == {"days": 14}
+        return {"days": 14, "totals": {"calls": 2, "errors": 0}, "operations": []}
+
+    monkeypatch.setattr("scs.cli._call_daemon", report)
+
+    assert main(["metrics", "--days", "14", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["totals"]["calls"] == 2
 
 
 @dataclass(frozen=True)

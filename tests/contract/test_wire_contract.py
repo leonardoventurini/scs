@@ -79,6 +79,34 @@ async def test_invalid_params_return_bad_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_operation_observation_is_daemon_wide_and_fail_open() -> None:
+    observed: list[tuple[str, str]] = []
+
+    def observer(
+        method: str,
+        params: dict[str, object],
+        status: str,
+        duration_ms: float,
+    ) -> None:
+        del params
+        assert duration_ms >= 0
+        observed.append((method, status))
+        raise RuntimeError("metrics unavailable")
+
+    router = Router(observer=observer)
+
+    @router.method("health")
+    async def health(params: dict[str, object]) -> dict[str, object]:
+        del params
+        return {"ready": True}
+
+    result = await router.dispatch("health", {})
+
+    assert result.value == {"ready": True}
+    assert observed == [("health", "ok")]
+
+
+@pytest.mark.asyncio
 async def test_incompatible_protocol_is_rejected_before_dispatch() -> None:
     dispatched = False
     router = Router()
