@@ -292,7 +292,7 @@ configuration without affecting code intelligence.
 - [x] Update README, evaluation artifacts, and operational documentation.
 - [x] Run targeted checks after each unit and commit it separately.
 - [x] Run search quality/performance evaluations.
-- [ ] Run `just verify` and report every acceptance criterion.
+- [x] Run `just verify` and report every acceptance criterion.
 
 ## Verification targets
 
