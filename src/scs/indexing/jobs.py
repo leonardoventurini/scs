@@ -71,6 +71,14 @@ class IngestionJob:
 
 
 @dataclass(frozen=True)
+class RepositoryJobState:
+    """Current and most recently updated durable work for one repository."""
+
+    active: IngestionJob | None
+    latest: IngestionJob | None
+
+
+@dataclass(frozen=True)
 class DatabaseQuarantine:
     """Corrupt SQLite files moved aside so a durable queue can be rebuilt."""
 
@@ -1011,6 +1019,42 @@ class IngestionJobStore:
                 ).fetchall(),
             )
         return [self._row_to_job(row) for row in rows]
+
+    def repository_job_state(self, repo_path: str) -> RepositoryJobState:
+        """Return focused durable-job state without scanning recent history."""
+
+        active_placeholders = ", ".join("?" for _ in ACTIVE_JOB_STATUSES)
+        with closing(self._connect()) as conn, conn:
+            conn.execute("BEGIN")
+            latest_row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    """
+                    SELECT * FROM ingestion_jobs
+                    WHERE repo_path = ?
+                    ORDER BY updated_at DESC, created_at DESC, rowid DESC
+                    LIMIT 1
+                    """,
+                    (repo_path,),
+                ).fetchone(),
+            )
+            active_row = cast(
+                sqlite3.Row | None,
+                conn.execute(
+                    f"""
+                    SELECT * FROM ingestion_jobs
+                    WHERE repo_path = ? AND status IN ({active_placeholders})
+                    ORDER BY updated_at DESC, created_at DESC, rowid DESC
+                    LIMIT 1
+                    """,
+                    (repo_path, *ACTIVE_JOB_STATUSES),
+                ).fetchone(),
+            )
+
+        return RepositoryJobState(
+            active=self._row_to_job(active_row) if active_row is not None else None,
+            latest=self._row_to_job(latest_row) if latest_row is not None else None,
+        )
 
     def has_active(self) -> bool:
         """Return whether durable work still requires a live daemon."""

@@ -34,6 +34,45 @@ def test_active_work_tracks_nonterminal_queue_states(tmp_path: Path) -> None:
     assert store.has_active() is False
 
 
+def test_repository_job_state_returns_latest_active_and_latest_overall(
+    tmp_path: Path,
+) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    completed = store.enqueue(repo_path="/repo", mode="full", reason="explicit")
+    store.complete(completed.id)
+    active = store.enqueue(repo_path="/repo", mode="files", reason="watch")
+
+    state = store.repository_job_state("/repo")
+
+    assert state.active is not None
+    assert state.active.id == active.id
+    assert state.latest is not None
+    assert state.latest.id == active.id
+
+
+def test_repository_job_state_retains_latest_terminal_job(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    completed = store.enqueue(repo_path="/repo", mode="full", reason="explicit")
+    store.complete(completed.id)
+
+    state = store.repository_job_state("/repo")
+
+    assert state.active is None
+    assert state.latest is not None
+    assert state.latest.id == completed.id
+    assert state.latest.status == "completed"
+
+
+def test_repository_job_state_is_isolated_by_repository(tmp_path: Path) -> None:
+    store = IngestionJobStore(tmp_path / "jobs.db")
+    store.enqueue(repo_path="/other", mode="full", reason="explicit")
+
+    state = store.repository_job_state("/repo")
+
+    assert state.active is None
+    assert state.latest is None
+
+
 def test_queue_merges_incremental_paths(tmp_path: Path) -> None:
     store = IngestionJobStore(tmp_path / "jobs.db")
     first = store.enqueue(
