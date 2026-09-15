@@ -11,7 +11,13 @@ from scs.graph.models import Edge, Node, NodeType, RelationshipType
 from scs.graph.native import NativeGraph
 from scs.indexing.jobs import IngestionJobStore, job_to_dict
 from scs.indexing.repository_paths import canonicalize_repo_path
-from scs.indexing.search import CodeSearchMatch, CodeSearchService
+from scs.indexing.search import (
+    MAX_SEARCH_QUERIES,
+    CodeSearchMatch,
+    CodeSearchResponse,
+    CodeSearchService,
+    SearchMode,
+)
 from scs.providers.base import EmbeddingProvider, RerankingProvider
 from scs.source_paths import validated_source_path
 
@@ -43,6 +49,31 @@ DEFAULT_INSPECT_EDGE_LIMIT = 100
 MAX_INSPECT_NODE_LIMIT = 200
 MAX_INSPECT_EDGE_LIMIT = 500
 COMPACT_CONTENT_CHARACTERS = 1_024
+
+
+def _search_diagnostics(response: CodeSearchResponse) -> dict[str, object]:
+    """Serialize content-free search execution facts and query evidence."""
+
+    timings = response.timings
+    return {
+        "queries": list(response.queries),
+        "query_matches": {
+            match.node.id: list(match.matched_query_indexes)
+            for match in response.matches
+        },
+        "semantic_available": response.semantic_available,
+        "reranker_applied": response.reranker_applied,
+        "degraded_stage": response.degraded_stage,
+        "timed_out": response.timed_out,
+        "degraded_reason": response.degraded_reason,
+        "timings": {
+            "lexical_ms": timings.lexical_ms,
+            "embedding_ms": timings.embedding_ms,
+            "vector_ms": timings.vector_ms,
+            "rerank_ms": timings.rerank_ms,
+            "total_ms": timings.total_ms,
+        },
+    }
 
 
 def _node_dict(node: Node) -> dict[str, object]:
@@ -128,6 +159,23 @@ def _dict_list(value: object, *, key: str) -> list[dict[str, object]]:
     return [cast(dict[str, object], item) for item in items]
 
 
+def _search_queries(params: dict[str, object], primary: str) -> list[str]:
+    queries = _string_list(params, "queries")
+    requested = [primary, *queries]
+    if len(requested) > MAX_SEARCH_QUERIES:
+        raise ValueError(f"search accepts at most {MAX_SEARCH_QUERIES} queries")
+    if any(not query.strip() for query in requested):
+        raise ValueError("search queries cannot be blank")
+    return queries
+
+
+def _search_mode(params: dict[str, object]) -> SearchMode:
+    value = _string(params, "search_mode") or "thorough"
+    if value not in {"fast", "balanced", "thorough"}:
+        raise ValueError("search_mode must be fast, balanced, or thorough")
+    return cast(SearchMode, value)
+
+
 def _integer_metadata(value: object, *, key: str, default: int) -> int:
     """Convert graph metadata that originated outside Python's type boundary."""
 
@@ -192,6 +240,8 @@ class SCSServiceRoutes:
         if result_detail not in {"full", "compact"}:
             raise ValueError("result_detail must be full or compact")
         node_type = _node_type(params.get("node_type"))
+        queries = _search_queries(params, query)
+        search_mode = _search_mode(params)
         repo_path = params.get("repo_path")
         repo_id = self._repo_id(repo_path)
         if repo_path is not None and repo_id is None:
@@ -201,6 +251,7 @@ class SCSServiceRoutes:
                 "neighbors": [],
                 "total": 0,
                 "retrieval_mode": "none",
+                **self._empty_search_diagnostics(query, queries),
             }
         graph = self._read_graph(repo_path)
         if graph is None:
@@ -210,12 +261,20 @@ class SCSServiceRoutes:
                 "neighbors": [],
                 "total": 0,
                 "retrieval_mode": "none",
+                **self._empty_search_diagnostics(query, queries),
             }
         response = await CodeSearchService(
             graph,
             self._embeddings(),
             self._reranker(),
-        ).search(query, node_type=node_type, limit=limit, repo_id=repo_id)
+        ).search(
+            query,
+            node_type=node_type,
+            limit=limit,
+            repo_id=repo_id,
+            queries=queries,
+            search_mode=search_mode,
+        )
         results = (
             [_compact_match_dict(match) for match in response.matches]
             if result_detail == "compact"
@@ -241,6 +300,29 @@ class SCSServiceRoutes:
             "neighbors": neighbors,
             "total": len(results),
             "retrieval_mode": response.retrieval_mode,
+            **_search_diagnostics(response),
+        }
+
+    @staticmethod
+    def _empty_search_diagnostics(
+        query: str, queries: list[str]
+    ) -> dict[str, object]:
+        effective_queries = list(dict.fromkeys((query, *queries)))
+        return {
+            "queries": effective_queries,
+            "query_matches": {},
+            "semantic_available": False,
+            "reranker_applied": False,
+            "degraded_stage": "semantic",
+            "timed_out": False,
+            "degraded_reason": "repository is not indexed",
+            "timings": {
+                "lexical_ms": 0.0,
+                "embedding_ms": 0.0,
+                "vector_ms": 0.0,
+                "rerank_ms": 0.0,
+                "total_ms": 0.0,
+            },
         }
 
     async def nodes_list(self, params: dict[str, object]) -> dict[str, object]:
@@ -449,7 +531,25 @@ class SCSServiceRoutes:
         direction = _string(params, "direction") or "both"
         graph = self._read_graph(params.get("repo_path"))
         if graph is None:
-            return {"query": seeds["query"], "direction": direction, "seeds": [], "context": []}
+            return {
+                "query": seeds["query"],
+                "direction": direction,
+                "seeds": [],
+                "context": [],
+                "search": {
+                    key: seeds[key]
+                    for key in (
+                        "queries",
+                        "query_matches",
+                        "semantic_available",
+                        "reranker_applied",
+                        "degraded_stage",
+                        "timed_out",
+                        "degraded_reason",
+                        "timings",
+                    )
+                },
+            }
         if direction not in {"outgoing", "incoming", "both"}:
             raise ValueError("direction must be outgoing, incoming, or both")
         directions = ("outgoing", "incoming") if direction == "both" else (direction,)
@@ -480,6 +580,19 @@ class SCSServiceRoutes:
             "direction": direction,
             "seeds": seed_results,
             "context": context,
+            "search": {
+                key: seeds[key]
+                for key in (
+                    "queries",
+                    "query_matches",
+                    "semantic_available",
+                    "reranker_applied",
+                    "degraded_stage",
+                    "timed_out",
+                    "degraded_reason",
+                    "timings",
+                )
+            },
         }
 
     async def inspect_file(self, params: dict[str, object]) -> dict[str, object]:

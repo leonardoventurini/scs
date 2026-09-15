@@ -7,7 +7,30 @@ from typing import Annotated, ClassVar, Literal, TypeAlias, TypedDict
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class SearchCodeOutput(TypedDict):
+class SearchTimingsOutput(TypedDict):
+    """Caller-visible milliseconds spent in material search stages."""
+
+    lexical_ms: float
+    embedding_ms: float
+    vector_ms: float
+    rerank_ms: float
+    total_ms: float
+
+
+class SearchDiagnosticsOutput(TypedDict):
+    """Truthful enrichment and query evidence for one search operation."""
+
+    queries: list[str]
+    query_matches: dict[str, list[int]]
+    semantic_available: bool
+    reranker_applied: bool
+    degraded_stage: str | None
+    timed_out: bool
+    degraded_reason: str | None
+    timings: SearchTimingsOutput
+
+
+class SearchCodeOutput(SearchDiagnosticsOutput):
     """Stable top-level shape returned by semantic and lexical code search."""
 
     query: str
@@ -33,6 +56,7 @@ class GraphContextOutput(TypedDict):
     direction: str
     seeds: list[dict[str, object]]
     context: list[dict[str, object]]
+    search: SearchDiagnosticsOutput
 
 
 class ListSymbolsOutput(TypedDict):

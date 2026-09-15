@@ -86,8 +86,10 @@ def build_mcp(
         limit: int = 10,
         result_detail: Literal["full", "compact"] = "full",
         repo_path: str | None = None,
+        queries: list[str] | None = None,
+        search_mode: Literal["fast", "balanced", "thorough"] = "thorough",
     ) -> SearchCodeOutput:
-        """Search indexed code using semantic and lexical retrieval."""
+        """Find code; use result node IDs with get_related for dependencies."""
         return cast(
             SearchCodeOutput,
             await gateway.call(
@@ -98,6 +100,8 @@ def build_mcp(
                     "limit": _limit(limit),
                     "result_detail": result_detail,
                     "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
+                    "queries": queries,
+                    "search_mode": search_mode,
                 },
             ),
         )
@@ -111,7 +115,7 @@ def build_mcp(
         direction: str = "outgoing",
         repo_path: str | None = None,
     ) -> RelatedOutput:
-        """Traverse relationships from exactly one symbol name or node ID."""
+        """Traverse dependencies from one search result node ID or symbol name."""
         return cast(
             RelatedOutput,
             await gateway.call(
@@ -135,6 +139,8 @@ def build_mcp(
         hop_limit: int = 2,
         direction: str = "both",
         repo_path: str | None = None,
+        queries: list[str] | None = None,
+        search_mode: Literal["fast", "balanced", "thorough"] = "thorough",
     ) -> GraphContextOutput:
         """Combine code search seeds with bounded graph traversal."""
         return cast(
@@ -148,6 +154,8 @@ def build_mcp(
                     "hop_limit": max(1, min(hop_limit, MAX_TRAVERSAL_DEPTH)),
                     "direction": direction,
                     "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
+                    "queries": queries,
+                    "search_mode": search_mode,
                 },
             ),
         )
@@ -159,7 +167,7 @@ def build_mcp(
         offset: int = 0,
         repo_path: str | None = None,
     ) -> ListSymbolsOutput:
-        """List indexed code symbols with stable pagination."""
+        """List an exhaustive page of indexed symbols of one code node type."""
         return cast(
             ListSymbolsOutput,
             await gateway.call(
@@ -245,7 +253,7 @@ def build_mcp(
         node_limit: int = 50,
         edge_limit: int = 100,
     ) -> InspectFileOutput:
-        """Inspect a bounded set of indexed entities and edges for one source file."""
+        """Inspect indexed symbols and edges after search identifies a source file."""
         repo = _validated(lambda: canonical_repo_path(repo_path))
         assert repo is not None
         source = _validated(lambda: contained_file_path(file_path, repo))
@@ -283,7 +291,7 @@ def build_mcp(
 
     @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def find_references(file_path: str, line: int) -> ReferencesOutput:
-        """Find indexed references to the narrowest symbol containing a source line."""
+        """Find references to the narrowest symbol containing a zero-based line."""
         return cast(
             ReferencesOutput,
             await gateway.call(

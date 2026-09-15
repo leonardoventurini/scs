@@ -557,6 +557,17 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         assert "production_symbol" in {
             item["name"] for item in results["knowledge.search"]["results"]
         }
+        assert results["knowledge.search"]["queries"] == ["production_symbol"]
+        assert results["knowledge.search"]["semantic_available"] is False
+        assert results["knowledge.search"]["degraded_stage"] == "semantic"
+        assert results["knowledge.search"]["timed_out"] is False
+        assert set(results["knowledge.search"]["timings"]) == {
+            "lexical_ms",
+            "embedding_ms",
+            "vector_ms",
+            "rerank_ms",
+            "total_ms",
+        }
         full_search = results["knowledge.search"]["results"][0]
         assert "created_at" in full_search
         compact_search = await client.call(
@@ -609,9 +620,20 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         ]
         both_context = await client.call(
             "knowledge.graph_context",
-            {"query": "production_symbol", "repo_path": repo_path, "direction": "both"},
+            {
+                "query": "production_symbol",
+                "queries": ["sample helper"],
+                "search_mode": "fast",
+                "repo_path": repo_path,
+                "direction": "both",
+            },
         )
         assert both_context["direction"] == "both"
+        assert both_context["search"]["queries"] == [
+            "production_symbol",
+            "sample helper",
+        ]
+        assert both_context["search"]["reranker_applied"] is False
         assert any(
             item["node"]["id"] == "file-production" for item in both_context["context"]
         )
@@ -638,6 +660,8 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         )
         assert scoped_empty["results"] == []
         assert scoped_empty["retrieval_mode"] == "none"
+        assert scoped_empty["queries"] == ["production_symbol"]
+        assert scoped_empty["degraded_reason"] == "repository is not indexed"
         listing_empty = await client.call(
             "knowledge.nodes.list",
             {"node_type": "function", "repo_path": unindexed_path},

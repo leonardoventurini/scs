@@ -16,6 +16,23 @@ from scs.mcp.server import build_mcp
 
 pytestmark = pytest.mark.asyncio
 
+SEARCH_DIAGNOSTICS: dict[str, object] = {
+    "queries": ["retained"],
+    "query_matches": {},
+    "semantic_available": False,
+    "reranker_applied": False,
+    "degraded_stage": "semantic",
+    "timed_out": False,
+    "degraded_reason": "disabled in test",
+    "timings": {
+        "lexical_ms": 1.0,
+        "embedding_ms": 0.0,
+        "vector_ms": 0.0,
+        "rerank_ms": 0.0,
+        "total_ms": 1.0,
+    },
+}
+
 
 ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
     "knowledge.search": {
@@ -24,6 +41,7 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
         "neighbors": [],
         "total": 0,
         "retrieval_mode": "lexical",
+        **SEARCH_DIAGNOSTICS,
     },
     "knowledge.related": {
         "symbol_name": None,
@@ -36,6 +54,7 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
         "direction": "both",
         "seeds": [],
         "context": [],
+        "search": SEARCH_DIAGNOSTICS,
     },
     "knowledge.nodes.list": {"nodes": [], "total": 0, "limit": 50, "offset": 0},
     "repository.ingest_files": {"accepted": True, "job": {"id": "job-1"}},
@@ -84,9 +103,23 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
 }
 
 EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
-    "search_code": {"query", "results", "neighbors", "total", "retrieval_mode"},
+    "search_code": {
+        "query",
+        "results",
+        "neighbors",
+        "total",
+        "retrieval_mode",
+        "queries",
+        "query_matches",
+        "semantic_available",
+        "reranker_applied",
+        "degraded_stage",
+        "timed_out",
+        "degraded_reason",
+        "timings",
+    },
     "get_related": {"symbol_name", "node_id", "matches", "related"},
-    "graph_context": {"query", "direction", "seeds", "context"},
+    "graph_context": {"query", "direction", "seeds", "context", "search"},
     "list_symbols": {"nodes", "total", "limit", "offset"},
     "ingest_files": {"accepted", "job"},
     "ingest_project": {"accepted", "job"},
@@ -152,6 +185,8 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
                         "node_type": None,
                         "limit": 10,
                         "result_detail": "full",
+                        "queries": None,
+                        "search_mode": "thorough",
                         "repo_path": repo,
                 },
             ),
@@ -182,6 +217,8 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
                     "vector_limit": 5,
                     "hop_limit": 2,
                     "direction": "both",
+                    "queries": None,
+                    "search_mode": "thorough",
                     "repo_path": repo,
                 },
             ),
@@ -272,6 +309,8 @@ async def test_search_dispatches_through_public_service_gateway(tmp_path) -> Non
                 "node_type": None,
                 "limit": 200,
                 "result_detail": "full",
+                "queries": None,
+                "search_mode": "thorough",
                 "repo_path": str(tmp_path.resolve()),
             },
         )
@@ -342,6 +381,37 @@ async def test_search_dispatches_opt_in_compact_result_detail(tmp_path) -> None:
                 "node_type": None,
                 "limit": 10,
                 "result_detail": "compact",
+                "queries": None,
+                "search_mode": "thorough",
+                "repo_path": str(tmp_path.resolve()),
+            },
+        )
+    ]
+
+
+async def test_search_dispatches_multi_query_mode(tmp_path: Path) -> None:
+    gateway = RecordingGateway()
+
+    await build_mcp(gateway).call_tool(
+        "search_code",
+        {
+            "query": "router contract",
+            "queries": ["gateway dispatch", "wire route"],
+            "search_mode": "balanced",
+            "repo_path": str(tmp_path),
+        },
+    )
+
+    assert gateway.calls == [
+        (
+            "knowledge.search",
+            {
+                "query": "router contract",
+                "node_type": None,
+                "limit": 10,
+                "result_detail": "full",
+                "queries": ["gateway dispatch", "wire route"],
+                "search_mode": "balanced",
                 "repo_path": str(tmp_path.resolve()),
             },
         )
