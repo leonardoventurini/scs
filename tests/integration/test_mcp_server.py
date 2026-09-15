@@ -76,8 +76,13 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
         "database_size_bytes": 0,
         "vector_available": False,
         "vector_unavailable_reason": "disabled in test",
+        "structural_search_ready": False,
         "semantic_search_ready": False,
         "semantic_search_unavailable_reason": "disabled in test",
+        "active_job": None,
+        "latest_job": None,
+        "retry_after_ms": None,
+        "wait": None,
     },
     "knowledge.inspect_file": {
         "repo_path": "/repo",
@@ -136,8 +141,13 @@ EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
         "database_size_bytes",
         "vector_available",
         "vector_unavailable_reason",
+        "structural_search_ready",
         "semantic_search_ready",
         "semantic_search_unavailable_reason",
+        "active_job",
+        "latest_job",
+        "retry_after_ms",
+        "wait",
     },
     "inspect_file": {
         "repo_path",
@@ -252,7 +262,14 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
         (
             "get_graph_stats",
             {"repo_path": repo},
-            ("knowledge.stats", {"repo_path": repo}),
+            (
+                "knowledge.stats",
+                {
+                    "repo_path": repo,
+                    "wait_job_id": None,
+                    "wait_timeout_seconds": 0.0,
+                },
+            ),
         ),
         (
             "inspect_file",

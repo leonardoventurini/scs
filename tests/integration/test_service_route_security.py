@@ -39,6 +39,93 @@ async def test_search_rejects_unknown_result_detail_before_graph_reads(
 
 
 @pytest.mark.asyncio
+async def test_stats_reports_scoped_job_state_without_opening_a_graph(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    queued = jobs.enqueue(
+        repo_path=str(repo.resolve()),
+        mode="full",
+        reason="test",
+    )
+    routes = SCSServiceRoutes(
+        graph=lambda: cast(NativeGraph, object()),
+        jobs=lambda: jobs,
+        embeddings=lambda: cast(EmbeddingProvider, object()),
+        graph_for_repository=lambda _repo_path: None,
+    )
+
+    response = await routes.stats({"repo_path": str(repo)})
+
+    assert response["structural_search_ready"] is False
+    assert response["semantic_search_ready"] is False
+    assert response["active_job"]["id"] == queued.id
+    assert response["latest_job"]["id"] == queued.id
+    assert response["retry_after_ms"] == 250
+    assert "payload" not in response["active_job"]
+
+
+@pytest.mark.asyncio
+async def test_stats_wait_is_repository_scoped_and_reports_terminal_job(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    other_repo = tmp_path / "other"
+    repo.mkdir()
+    other_repo.mkdir()
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    terminal = jobs.enqueue(
+        repo_path=str(repo.resolve()),
+        mode="full",
+        reason="test",
+    )
+    jobs.complete(terminal.id)
+    foreign = jobs.enqueue(
+        repo_path=str(other_repo.resolve()),
+        mode="full",
+        reason="test",
+    )
+    routes = SCSServiceRoutes(
+        graph=lambda: cast(NativeGraph, object()),
+        jobs=lambda: jobs,
+        embeddings=lambda: cast(EmbeddingProvider, object()),
+        graph_for_repository=lambda _repo_path: None,
+    )
+
+    completed = await routes.stats(
+        {
+            "repo_path": str(repo),
+            "wait_job_id": terminal.id,
+            "wait_timeout_seconds": 0,
+        }
+    )
+    missing = await routes.stats(
+        {
+            "repo_path": str(repo),
+            "wait_job_id": foreign.id,
+            "wait_timeout_seconds": 0,
+        }
+    )
+
+    assert completed["wait"] == {
+        "outcome": "terminal",
+        "job": completed["latest_job"],
+    }
+    assert missing["wait"] == {"outcome": "not_found", "job": None}
+
+
+@pytest.mark.asyncio
+async def test_stats_wait_requires_repository_scope(tmp_path: Path) -> None:
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = build_routes(tmp_path, jobs)
+
+    with pytest.raises(ValueError, match="repo_path is required"):
+        await routes.stats({"wait_job_id": "job-1"})
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalid_changes",
     [

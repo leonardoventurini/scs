@@ -236,13 +236,24 @@ def build_mcp(
         )
 
     @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def get_graph_stats(repo_path: str | None = None) -> GraphStatsOutput:
-        """Return index readiness and graph statistics, optionally for one repository."""
+    async def get_graph_stats(
+        repo_path: str | None = None,
+        wait_job_id: str | None = None,
+        wait_timeout_seconds: float = 0.0,
+    ) -> GraphStatsOutput:
+        """Return readiness and progress; optionally wait up to 10s for one job."""
         return cast(
             GraphStatsOutput,
             await gateway.call(
                 "knowledge.stats",
-                {"repo_path": _validated(lambda: canonical_repo_path(repo_path))},
+                {
+                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
+                    "wait_job_id": wait_job_id,
+                    "wait_timeout_seconds": min(
+                        10.0,
+                        max(0.0, wait_timeout_seconds),
+                    ),
+                },
             ),
         )
 

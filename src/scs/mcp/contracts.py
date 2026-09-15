@@ -83,6 +83,13 @@ class RepositoryDeletionOutput(TypedDict):
     job: dict[str, object] | None
 
 
+class JobWaitOutput(TypedDict):
+    """Outcome of bounded observation for one repository-scoped job."""
+
+    outcome: Literal["terminal", "timeout", "not_found"]
+    job: dict[str, object] | None
+
+
 class GraphStatsOutput(TypedDict):
     """Stable readiness and storage statistics for an optional repository scope."""
 
@@ -97,8 +104,13 @@ class GraphStatsOutput(TypedDict):
     database_size_bytes: int
     vector_available: bool
     vector_unavailable_reason: str | None
+    structural_search_ready: bool
     semantic_search_ready: bool
     semantic_search_unavailable_reason: str | None
+    active_job: dict[str, object] | None
+    latest_job: dict[str, object] | None
+    retry_after_ms: int | None
+    wait: JobWaitOutput | None
 
 
 class InspectFileOutput(TypedDict):

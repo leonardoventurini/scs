@@ -9,7 +9,12 @@ from typing import cast
 
 from scs.graph.models import Edge, Node, NodeType, RelationshipType
 from scs.graph.native import NativeGraph
-from scs.indexing.jobs import IngestionJobStore, job_to_dict
+from scs.indexing.jobs import (
+    ACTIVE_JOB_STATUSES,
+    IngestionJob,
+    IngestionJobStore,
+    job_to_dict,
+)
 from scs.indexing.repository_paths import canonicalize_repo_path
 from scs.indexing.search import (
     MAX_SEARCH_QUERIES,
@@ -49,6 +54,9 @@ DEFAULT_INSPECT_EDGE_LIMIT = 100
 MAX_INSPECT_NODE_LIMIT = 200
 MAX_INSPECT_EDGE_LIMIT = 500
 COMPACT_CONTENT_CHARACTERS = 1_024
+MAX_JOB_WAIT_SECONDS = 10.0
+JOB_WAIT_POLL_SECONDS = 0.1
+ACTIVE_JOB_RETRY_AFTER_MS = 250
 
 
 def _search_diagnostics(response: CodeSearchResponse) -> dict[str, object]:
@@ -121,6 +129,36 @@ def _integer(
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"{key} must be an integer")
     return max(minimum, value)
+
+
+def _bounded_seconds(params: dict[str, object], key: str) -> float:
+    value = params.get(key, 0.0)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"{key} must be a number")
+    if value < 0:
+        raise ValueError(f"{key} must be non-negative")
+    return min(float(value), MAX_JOB_WAIT_SECONDS)
+
+
+def _job_summary(job: IngestionJob | None) -> dict[str, object] | None:
+    """Project safe-to-share durable progress without stored job internals."""
+
+    if job is None:
+        return None
+    return {
+        "id": job.id,
+        "mode": job.mode,
+        "status": job.status,
+        "phase": job.phase,
+        "current": job.current,
+        "total": job.total,
+        "message": job.message,
+        "attempts": job.attempts,
+        "error": job.error,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "finished_at": job.finished_at,
+    }
 
 
 def _string(
@@ -359,11 +397,42 @@ class SCSServiceRoutes:
 
     async def stats(self, params: dict[str, object]) -> dict[str, object]:
         repo_path = _string(params, "repo_path")
+        wait_job_id = _string(params, "wait_job_id")
+        wait_timeout = _bounded_seconds(params, "wait_timeout_seconds")
+        if wait_job_id is not None and repo_path is None:
+            raise ValueError("repo_path is required when wait_job_id is provided")
+
+        canonical_repo = canonicalize_repo_path(repo_path) if repo_path else None
+        job_state = (
+            await asyncio.to_thread(
+                self._jobs().repository_job_state,
+                canonical_repo,
+            )
+            if canonical_repo is not None
+            else None
+        )
+        wait = await self._wait_for_job(
+            repo_path=canonical_repo,
+            job_id=wait_job_id,
+            timeout_seconds=wait_timeout,
+        )
+        job_fields = {
+            "active_job": _job_summary(job_state.active) if job_state else None,
+            "latest_job": _job_summary(job_state.latest) if job_state else None,
+            "retry_after_ms": (
+                ACTIVE_JOB_RETRY_AFTER_MS
+                if job_state is not None and job_state.active is not None
+                else None
+            ),
+            "wait": wait,
+        }
         graph = self._read_graph(repo_path)
         if graph is None:
             return {
-                "repo_path": canonicalize_repo_path(repo_path) if repo_path else None,
-                "status": "empty",
+                "repo_path": canonical_repo,
+                "status": "indexing"
+                if job_state is not None and job_state.active is not None
+                else "empty",
                 "total_nodes": 0,
                 "nodes_by_type": {},
                 "embedding_count": 0,
@@ -373,8 +442,10 @@ class SCSServiceRoutes:
                 "database_size_bytes": 0,
                 "vector_available": False,
                 "vector_unavailable_reason": "repository is not indexed",
+                "structural_search_ready": False,
                 "semantic_search_ready": False,
                 "semantic_search_unavailable_reason": "repository is not indexed",
+                **job_fields,
             }
         repo_id = self._repo_id(repo_path)
         if repo_path is not None and repo_id is None:
@@ -416,7 +487,6 @@ class SCSServiceRoutes:
             semantic_search_unavailable_reason = (
                 "no indexed embeddings are available for this scope"
             )
-        canonical_repo = canonicalize_repo_path(repo_path) if repo_path else None
         ingestion = (
             {canonical_repo: all_ingestion.get(canonical_repo, {})}
             if canonical_repo is not None
@@ -439,9 +509,35 @@ class SCSServiceRoutes:
             else 0,
             "vector_available": graph.vector_state.available,
             "vector_unavailable_reason": graph.vector_state.reason,
+            "structural_search_ready": total_nodes > 0,
             "semantic_search_ready": semantic_search_ready,
             "semantic_search_unavailable_reason": semantic_search_unavailable_reason,
+            **job_fields,
         }
+
+    async def _wait_for_job(
+        self,
+        *,
+        repo_path: str | None,
+        job_id: str | None,
+        timeout_seconds: float,
+    ) -> dict[str, object] | None:
+        """Observe one scoped durable job without changing queue state."""
+
+        if job_id is None:
+            return None
+        assert repo_path is not None
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while True:
+            job = await asyncio.to_thread(self._jobs().get, job_id)
+            if job is None or job.repo_path != repo_path:
+                return {"outcome": "not_found", "job": None}
+            if job.status not in ACTIVE_JOB_STATUSES:
+                return {"outcome": "terminal", "job": _job_summary(job)}
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return {"outcome": "timeout", "job": _job_summary(job)}
+            await asyncio.sleep(min(JOB_WAIT_POLL_SECONDS, remaining))
 
     async def related(self, params: dict[str, object]) -> dict[str, object]:
         symbol = _string(params, "symbol_name")
