@@ -46,6 +46,8 @@ class SCSPaths:
     database: Path
     vector_index: Path
     jobs_database: Path
+    metrics_database: Path
+    metrics_key: Path
     provider_metadata: Path
     model_cache: Path
     runtime: Path
@@ -68,6 +70,8 @@ class SCSPaths:
             database=safe_home / "index.db",
             vector_index=safe_home / "index.usearch",
             jobs_database=safe_home / "jobs.db",
+            metrics_database=safe_home / "metrics.db",
+            metrics_key=safe_home / "metrics.key",
             provider_metadata=safe_home / "provider.json",
             model_cache=_resolved(model_cache or (Path.home() / ".cache" / "scs" / "models")),
             runtime=_resolved(
