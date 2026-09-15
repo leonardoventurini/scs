@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.1.15 - 2026-09-14
+
+- feat(search): add bounded multi-query retrieval, explicit search modes,
+  per-result query evidence, stage timings, and truthful enrichment degradation
+- feat(readiness): expose structural and semantic readiness, redacted scoped
+  job progress, retry guidance, and bounded read-only job observation
+- feat(risk): batch dependent hydration and return bounded completeness,
+  timings, and direct evidence for deduplicated test targets
+- feat(metrics): persist content-free daemon operation aggregates with HMAC
+  repository identities, owner-only storage, retention bounds, corruption
+  recovery, fail-open behavior, and a machine-readable CLI report
+- docs: add a reusable SCS-first workflow skill and evidence-backed analysis of
+  recent Codex productivity patterns
+
 ## 0.1.14 - 2026-09-09
 
 - feat(mcp): durably forget indexed repositories through an idempotent deletion
