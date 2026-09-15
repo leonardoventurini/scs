@@ -587,6 +587,11 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
             item["name"] for item in results["knowledge.search"]["results"]
         }
         assert results["knowledge.search"]["queries"] == ["production_symbol"]
+        search_with_null_queries = await client.call(
+            "knowledge.search",
+            {"query": "production_symbol", "repo_path": repo_path, "queries": None},
+        )
+        assert search_with_null_queries["queries"] == ["production_symbol"]
         assert results["knowledge.search"]["semantic_available"] is False
         assert results["knowledge.search"]["degraded_stage"] == "semantic"
         assert results["knowledge.search"]["timed_out"] is False

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.16 - 2026-09-15
+
+- fix(search): accept omitted or null optional query lists at the public service
+  boundary, so default MCP search calls succeed while invalid list values remain
+  rejected
+
 ## 0.1.15 - 2026-09-14
 
 - feat(search): add bounded multi-query retrieval, explicit search modes,

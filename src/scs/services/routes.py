@@ -185,7 +185,9 @@ def _string_list(
 ) -> list[str]:
     """Validate an untrusted route parameter as a concrete string list."""
 
-    value = params.get(key, []) if default else params.get(key)
+    value = params.get(key)
+    if default and value is None:
+        value = []
     if not isinstance(value, list):
         raise ValueError(f"{key} must be a list of strings")
     items = cast(list[object], value)
