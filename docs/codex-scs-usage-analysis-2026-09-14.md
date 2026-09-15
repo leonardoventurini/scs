@@ -4,6 +4,32 @@ Date: 2026-09-14
 
 Status: Analysis and recommendations
 
+## Implementation status
+
+The report's product recommendations were implemented on 2026-09-14:
+
+- `search_code` and `graph_context` accept bounded query angles and explicit
+  search modes, and report evidence, timings, and enrichment degradation.
+- `get_graph_stats` reports structural/semantic readiness, redacted scoped job
+  state, retry guidance, and optional bounded job observation.
+- `regression_risk_report` uses incoming-edge traversal and batch hydration,
+  bounds its output, and reports completeness, timing, and direct test-target
+  evidence.
+- daemon-wide, content-free hourly metrics persist under `SCS_HOME` with HMAC
+  repository identities, owner-only files, retention and row bounds, corruption
+  recovery, and fail-open behavior. `scs metrics --days N --json` reads them.
+- MCP descriptions now guide callers toward the intended search, traversal,
+  inspection, and reference workflow without expanding the tool inventory.
+
+The existing full-result and thorough-search defaults remain unchanged for
+compatibility. The fixed MCP inventory remains eleven tools.
+
+The post-change `scs-search-v1` evaluation completed successfully against this
+repository with Recall@10 `0.667`, MRR `0.431`, nDCG@10 `0.432`, mean latency
+`1.164s`, and p95 latency `1.388s`. These live-model values are observational;
+they establish the review baseline for later same-suite comparisons rather
+than a portable CI threshold.
+
 ## Executive summary
 
 Recent Codex history shows that SCS is broadly useful across repositories and

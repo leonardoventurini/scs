@@ -205,7 +205,11 @@ The idle interval must be at least the active interval. Disabling automatic
 reindexing does not affect explicit `scs index` or `scs reindex` requests.
 
 The service has no graphical interface. Use `scs status`, `scs doctor`, logs,
-SCSWire, or MCP index statistics for operational visibility.
+SCSWire, or MCP index statistics for operational visibility. `scs metrics
+--days 7 --json` reports daemon-wide hourly operation aggregates without query
+text, source text, file paths, job payloads, or results. Metrics use an HMAC
+repository identity, retain at most 30 days, and live in owner-only
+`metrics.db` and `metrics.key` files under `SCS_HOME`.
 
 ## MCP tools
 
@@ -230,7 +234,19 @@ of occupying the model's tool catalog.
 The search tool returns the existing full node records by default. Consumers
 can set result detail to compact to retain stable symbol identity, source
 location, signature, bounded content, and semantic distance while omitting
-timestamps, repository IDs, and unrelated parser metadata.
+timestamps, repository IDs, and unrelated parser metadata. Up to four optional
+query angles can be supplied through `queries`; `search_mode` selects `fast`,
+`balanced`, or the default `thorough` policy. Responses expose query-match
+evidence, stage timings, and truthful semantic/reranker degradation.
+
+`get_graph_stats` separately reports structural and semantic readiness. With a
+repository path it also includes redacted active/latest durable jobs and a
+retry hint. `wait_job_id` can observe one job for up to 10 seconds without
+running, retrying, or cancelling it.
+
+`regression_risk_report` uses bounded incoming dependency analysis. It returns
+total counts and truncation/completeness flags, stage timings, and deduplicated
+test-file targets with the direct dependency edge supporting each suggestion.
 
 ## Runtime ownership
 

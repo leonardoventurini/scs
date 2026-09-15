@@ -277,21 +277,21 @@ configuration without affecting code intelligence.
 
 - [x] Validate every architectural assumption against current code and sign off
   this spec.
-- [ ] Add stage timing and typed search policy tests.
-- [ ] Implement bounded search modes and additive diagnostics.
-- [ ] Add multi-query tests and deterministic merged retrieval.
-- [ ] Extend graph-context policy and diagnostics.
-- [ ] Add focused durable-job queries and readiness tests.
-- [ ] Implement scoped job summaries and bounded waiting.
-- [ ] Expose native batch node hydration in the Python adapter.
-- [ ] Add regression-risk bounds, evidence, completeness, and timing tests.
-- [ ] Implement optimized regression-risk analysis.
-- [ ] Improve MCP descriptions without expanding inventory.
-- [ ] Add metrics persistence and privacy/security tests.
-- [ ] Implement daemon aggregation and `scs metrics`.
-- [ ] Update README, evaluation artifacts, and operational documentation.
-- [ ] Run targeted checks after each unit and commit it separately.
-- [ ] Run search quality/performance evaluations.
+- [x] Add stage timing and typed search policy tests.
+- [x] Implement bounded search modes and additive diagnostics.
+- [x] Add multi-query tests and deterministic merged retrieval.
+- [x] Extend graph-context policy and diagnostics.
+- [x] Add focused durable-job queries and readiness tests.
+- [x] Implement scoped job summaries and bounded waiting.
+- [x] Expose native batch node hydration in the Python adapter.
+- [x] Add regression-risk bounds, evidence, completeness, and timing tests.
+- [x] Implement optimized regression-risk analysis.
+- [x] Improve MCP descriptions without expanding inventory.
+- [x] Add metrics persistence and privacy/security tests.
+- [x] Implement daemon aggregation and `scs metrics`.
+- [x] Update README, evaluation artifacts, and operational documentation.
+- [x] Run targeted checks after each unit and commit it separately.
+- [x] Run search quality/performance evaluations.
 - [ ] Run `just verify` and report every acceptance criterion.
 
 ## Verification targets
