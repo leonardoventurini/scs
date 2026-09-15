@@ -64,6 +64,7 @@ class _NativeGraphHandle(Protocol):
         repo_id: int | None,
     ) -> object: ...
     def get_node(self, node_id: str) -> object | None: ...
+    def batch_get_nodes(self, node_ids: list[str]) -> object: ...
     def list_nodes(
         self, node_type: str | None, limit: int, offset: int, repo_id: int | None
     ) -> object: ...
@@ -343,6 +344,10 @@ class NativeGraph:
     def get_node_sync(self, node_id: str) -> Node | None:
         raw = self._inner.get_node(node_id)
         return Node.model_validate(_json_value(raw)) if raw is not None else None
+
+    def batch_get_nodes_sync(self, node_ids: list[str]) -> list[Node]:
+        raw = _json_value(self._inner.batch_get_nodes(node_ids))
+        return [Node.model_validate(item) for item in cast(list[object], raw)]
 
     def list_nodes_sync(
         self,

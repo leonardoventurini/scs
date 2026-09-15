@@ -13,6 +13,53 @@ class FakeHandle:
     pass
 
 
+class BatchNodeHandle:
+    def __init__(self) -> None:
+        self.requested_node_ids: list[str] | None = None
+
+    def batch_get_nodes(self, node_ids: list[str]) -> str:
+        self.requested_node_ids = node_ids
+        return json.dumps(
+            [
+                {
+                    "id": "node-2",
+                    "type": "function",
+                    "name": "second",
+                    "content": "def second(): pass",
+                    "metadata": {"file_path": "second.py"},
+                    "repo_id": 7,
+                },
+                {
+                    "id": "node-1",
+                    "type": "class",
+                    "name": "First",
+                    "metadata": {"file_path": "first.py"},
+                    "repo_id": 7,
+                },
+            ]
+        )
+
+
+def test_batch_get_nodes_validates_native_results(tmp_path: Path) -> None:
+    handle = BatchNodeHandle()
+    graph = NativeGraph(
+        database_path=tmp_path / "index.db",
+        vector_path=tmp_path / "index.usearch",
+        provider_metadata_path=tmp_path / "provider.json",
+        provider=ProviderMetadata(
+            "disabled", "structural-only", 2, available=False
+        ),
+        native_handle=handle,
+    )
+
+    nodes = graph.batch_get_nodes_sync(["node-2", "missing", "node-1"])
+
+    assert handle.requested_node_ids == ["node-2", "missing", "node-1"]
+    assert [node.id for node in nodes] == ["node-2", "node-1"]
+    assert nodes[0].metadata == {"file_path": "second.py"}
+    assert nodes[1].content == ""
+
+
 def test_ambiguous_vector_sidecar_is_quarantined(tmp_path: Path) -> None:
     vector = tmp_path / "index.usearch"
     vector.write_bytes(b"torn")
