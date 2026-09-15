@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 
 import pytest
@@ -83,6 +84,17 @@ class UnavailableReranker:
         raise ProviderUnavailableError("disabled")
 
 
+class HangingReranker:
+    metadata = RerankerMetadata("fake", "hanging")
+
+    async def rerank(
+        self, query: str, documents: Sequence[str], *, limit: int
+    ) -> list[RankedDocument]:
+        del query, documents, limit
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
 @pytest.mark.asyncio
 async def test_hybrid_search_fuses_semantic_and_lexical_results() -> None:
     graph = Graph()
@@ -146,3 +158,84 @@ async def test_candidate_generation_obeys_global_result_ceiling() -> None:
     await CodeSearchService(graph, Provider()).search("run", limit=200)
 
     assert graph.lexical_limit == graph.semantic_limit == 200
+
+
+@pytest.mark.asyncio
+async def test_fast_search_skips_configured_reranker() -> None:
+    reranker = Reranker()
+
+    response = await CodeSearchService(Graph(), Provider(), reranker).search(
+        "run", limit=2, search_mode="fast"
+    )
+
+    assert response.retrieval_mode == "hybrid"
+    assert [match.node.id for match in response.matches] == ["shared", "lexical"]
+    assert response.reranker_applied is False
+    assert reranker.documents == []
+
+
+@pytest.mark.asyncio
+async def test_balanced_search_times_out_to_deterministic_fused_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("scs.indexing.search.BALANCED_RERANK_TIMEOUT_SECONDS", 0.001)
+
+    response = await CodeSearchService(Graph(), Provider(), HangingReranker()).search(
+        "run", limit=2, search_mode="balanced"
+    )
+
+    assert response.retrieval_mode == "hybrid"
+    assert [match.node.id for match in response.matches] == ["shared", "lexical"]
+    assert response.reranker_applied is False
+    assert response.degraded_stage == "rerank"
+    assert response.timed_out is True
+    assert response.degraded_reason == "reranking timed out"
+
+
+@pytest.mark.asyncio
+async def test_default_search_preserves_thorough_reranking() -> None:
+    response = await CodeSearchService(Graph(), Provider(), Reranker()).search(
+        "run", limit=2
+    )
+
+    assert response.retrieval_mode == "hybrid_reranked"
+    assert response.reranker_applied is True
+    assert response.timed_out is False
+
+
+@pytest.mark.asyncio
+async def test_multi_query_search_deduplicates_matches_and_tracks_evidence() -> None:
+    reranker = Reranker()
+
+    response = await CodeSearchService(Graph(), Provider(), reranker).search(
+        "run", queries=["execute", "invoke"], limit=2
+    )
+
+    assert response.queries == ("run", "execute", "invoke")
+    assert [match.node.id for match in response.matches] == ["semantic", "shared"]
+    assert response.matches[0].matched_query_indexes == (0, 1, 2)
+    assert response.matches[1].matched_query_indexes == (0, 1, 2)
+    assert len(reranker.documents) == 3
+
+
+@pytest.mark.asyncio
+async def test_multi_query_search_removes_exact_duplicate_queries() -> None:
+    response = await CodeSearchService(Graph(), Provider()).search(
+        "run", queries=["run", "execute", "execute"]
+    )
+
+    assert response.queries == ("run", "execute")
+    assert response.matches[0].matched_query_indexes == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_search_reports_nonnegative_stage_timings() -> None:
+    response = await CodeSearchService(Graph(), Provider(), Reranker()).search(
+        "run", limit=2
+    )
+
+    assert response.timings.lexical_ms >= 0
+    assert response.timings.embedding_ms >= 0
+    assert response.timings.vector_ms >= 0
+    assert response.timings.rerank_ms >= 0
+    assert response.timings.total_ms >= 0
