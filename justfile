@@ -1,5 +1,7 @@
 set shell := ["sh", "-cu"]
 
+repository := "leonardoventurini/scs"
+
 setup:
     uv sync --all-groups
     ./scripts/build-native.sh
@@ -29,3 +31,16 @@ eval-search suite="evals/scs-search-v1.json" repo="." k="10" repeats="1":
     uv run python scripts/evaluate-search.py --suite "{{suite}}" --repo "{{repo}}" --k "{{k}}" --repeats "{{repeats}}" --result-detail compact
 
 verify: typecheck lint coverage native-test
+
+# Install or upgrade the local SCS tool from a GitHub release (default: latest).
+install version="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="${version:-}"
+    if [ -z "{{version}}" ]; then
+        tag="$(gh release view --repo {{repository}} --json tagName --jq .tagName)"
+        version="${tag#v}"
+    fi
+    scripts/install.sh --version "$version"
+
+alias upgrade := install
