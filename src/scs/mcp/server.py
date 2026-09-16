@@ -81,7 +81,7 @@ def build_mcp(
 
     @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def search_code(
-        query: str,
+        query: str | None = None,
         node_type: str | None = None,
         limit: int = 10,
         result_detail: Literal["full", "compact"] = "full",
@@ -90,6 +90,13 @@ def build_mcp(
         search_mode: Literal["fast", "balanced", "thorough"] = "thorough",
     ) -> SearchCodeOutput:
         """Find code; use result node IDs with get_related for dependencies."""
+        # Some clients send only the supplemental `queries` list; promote its
+        # first entry to the primary query so schema confusion stays recoverable.
+        if query is None and queries:
+            query = queries[0]
+        if query is None:
+            raise ToolError("query is required; pass a string, or `queries`")
+
         return cast(
             SearchCodeOutput,
             await gateway.call(

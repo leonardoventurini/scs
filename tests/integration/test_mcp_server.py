@@ -460,6 +460,41 @@ async def test_search_dispatches_multi_query_mode(tmp_path: Path) -> None:
     ]
 
 
+async def test_search_accepts_queries_without_primary_query(tmp_path: Path) -> None:
+    gateway = RecordingGateway()
+
+    await build_mcp(gateway).call_tool(
+        "search_code",
+        {
+            "queries": ["router contract", "gateway dispatch"],
+            "repo_path": str(tmp_path),
+        },
+    )
+
+    assert gateway.calls == [
+        (
+            "knowledge.search",
+            {
+                "query": "router contract",
+                "node_type": None,
+                "limit": 10,
+                "result_detail": "full",
+                "queries": ["router contract", "gateway dispatch"],
+                "search_mode": "thorough",
+                "repo_path": str(tmp_path.resolve()),
+            },
+        )
+    ]
+
+
+async def test_search_rejects_call_without_any_query(tmp_path: Path) -> None:
+    with pytest.raises(ToolError, match="query is required"):
+        await build_mcp(RecordingGateway()).call_tool(
+            "search_code",
+            {"repo_path": str(tmp_path)},
+        )
+
+
 async def test_explicit_project_ingestion_is_acknowledged_without_waiting(
     tmp_path,
 ) -> None:
