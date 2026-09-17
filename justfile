@@ -36,8 +36,8 @@ verify: typecheck lint coverage native-test
 install version="":
     #!/usr/bin/env bash
     set -euo pipefail
-    version="${version:-}"
-    if [ -z "{{version}}" ]; then
+    version="{{version}}"
+    if [ -z "$version" ]; then
         tag="$(gh release view --repo {{repository}} --json tagName --jq .tagName)"
         version="${tag#v}"
     fi
