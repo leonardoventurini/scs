@@ -1095,7 +1095,7 @@ dependencies = [
 [[package]]
 name = "tsg"
 version = "0.2.4"
-source = "git+https://github.com/leonardoventurini/tsg.git?tag=v0.2.4#83a2b2ebdb71fcef6ad6f585b74f1ae775415e1f"
+source = "git+https://github.com/leonardoventurini/tsg.git?tag=v0.2.4#0a217114043274fdba0473533ee49a8c6435954b"
 dependencies = [
  "fs2",
  "rusqlite",
