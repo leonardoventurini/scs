@@ -687,6 +687,19 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         assert any(
             item["node"]["id"] == "file-production" for item in both_context["context"]
         )
+        dependency_context = await client.call(
+            "knowledge.graph_context",
+            {
+                "query": "test_production_symbol",
+                "repo_path": repo_path,
+                "direction": "dependencies",
+            },
+        )
+        assert dependency_context["direction"] == "outgoing"
+        assert any(
+            item["node"]["id"] == "symbol-production"
+            for item in dependency_context["context"]
+        )
         bounded_file = await client.call(
             "knowledge.inspect_file",
             {

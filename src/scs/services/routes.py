@@ -58,6 +58,11 @@ COMPACT_CONTENT_CHARACTERS = 1_024
 MAX_JOB_WAIT_SECONDS = 10.0
 JOB_WAIT_POLL_SECONDS = 0.1
 ACTIVE_JOB_RETRY_AFTER_MS = 250
+TRAVERSAL_DIRECTIONS = frozenset({"outgoing", "incoming", "both"})
+TRAVERSAL_DIRECTION_ALIASES = {
+    "dependencies": "outgoing",
+    "dependents": "incoming",
+}
 DEFAULT_DEPENDENT_LIMIT = 200
 DEFAULT_TEST_TARGET_LIMIT = 50
 MAX_REGRESSION_RISK_LIMIT = 1_000
@@ -222,6 +227,23 @@ def _search_mode(params: dict[str, object]) -> SearchMode:
     if value not in {"fast", "balanced", "thorough"}:
         raise ValueError("search_mode must be fast, balanced, or thorough")
     return cast(SearchMode, value)
+
+
+def _traversal_direction(
+    params: dict[str, object],
+    *,
+    key: str = "direction",
+    default: str,
+) -> str:
+    """Normalize dependency vocabulary onto graph traversal edges."""
+
+    value = _string(params, key) or default
+    value = TRAVERSAL_DIRECTION_ALIASES.get(value, value)
+    if value not in TRAVERSAL_DIRECTIONS:
+        raise ValueError(
+            "direction must be outgoing, incoming, both, dependencies, or dependents"
+        )
+    return value
 
 
 def _integer_metadata(value: object, *, key: str, default: int) -> int:
@@ -559,9 +581,7 @@ class SCSServiceRoutes:
         if graph is None:
             return {"symbol_name": symbol, "node_id": node_id, "matches": [], "related": []}
         repo_id = self._repo_id(repo_path)
-        direction = _string(params, "direction") or "outgoing"
-        if direction not in {"outgoing", "incoming", "both"}:
-            raise ValueError("direction must be outgoing, incoming, or both")
+        direction = _traversal_direction(params, default="outgoing")
         if repo_path is not None and repo_id is None:
             matches = []
         elif node_id is not None:
@@ -634,7 +654,7 @@ class SCSServiceRoutes:
             "include_neighbors": False,
         }
         seeds = await self.search(search_params)
-        direction = _string(params, "direction") or "both"
+        direction = _traversal_direction(params, default="both")
         graph = self._read_graph(params.get("repo_path"))
         if graph is None:
             return {
@@ -656,8 +676,6 @@ class SCSServiceRoutes:
                     )
                 },
             }
-        if direction not in {"outgoing", "incoming", "both"}:
-            raise ValueError("direction must be outgoing, incoming, or both")
         directions = ("outgoing", "incoming") if direction == "both" else (direction,)
         context: list[dict[str, object]] = []
         seen: set[str] = set()
