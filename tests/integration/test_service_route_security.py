@@ -1,14 +1,54 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from scs.graph.gating import GraphBusyError
 from scs.graph.native import NativeGraph
 from scs.indexing.jobs import IngestionJobStore
+from scs.providers.base import ProviderMetadata
 from scs.providers.base import EmbeddingProvider
 from scs.services.routes import SCSServiceRoutes
+
+
+class BlockingDeleteHandle:
+    """Native boundary whose delete can be held across an in-flight read."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def resolve_repo_id(self, _repo_path: str) -> int:
+        return 1
+
+    def delete_nodes(self, _node_ids: list[str]) -> int:
+        self.entered.set()
+        self.release.wait(timeout=2)
+        return 1
+
+
+class GatedGraph(NativeGraph):
+    """Concrete graph adapter used to prove route-level read rejection."""
+
+
+def gated_graph(tmp_path: Path, handle: BlockingDeleteHandle) -> NativeGraph:
+    """Build a disabled-provider graph backed by a controllable native handle."""
+
+    return GatedGraph(
+        database_path=tmp_path / "index.db",
+        vector_path=tmp_path / "index.usearch",
+        provider_metadata_path=tmp_path / "provider.json",
+        provider=ProviderMetadata(
+            "disabled",
+            "structural-only",
+            2,
+            available=False,
+        ),
+        native_handle=handle,
+    )
 
 
 def build_routes(tmp_path: Path, jobs: IngestionJobStore) -> SCSServiceRoutes:
@@ -36,6 +76,38 @@ async def test_search_rejects_unknown_result_detail_before_graph_reads(
 
     with pytest.raises(ValueError, match="result_detail"):
         await routes.search({"query": "symbol", "result_detail": "verbose"})
+
+
+@pytest.mark.asyncio
+async def test_graph_read_returns_busy_while_delete_mutation_is_active(
+    tmp_path: Path,
+) -> None:
+    handle = BlockingDeleteHandle()
+    graph = gated_graph(tmp_path, handle)
+    jobs = IngestionJobStore(tmp_path / "jobs.db")
+    routes = SCSServiceRoutes(
+        graph=lambda: graph,
+        jobs=lambda: jobs,
+        embeddings=lambda: cast(EmbeddingProvider, object()),
+        graph_for_repository=lambda _repo_path: graph,
+    )
+    mutation = threading.Thread(
+        target=graph.delete_nodes_sync,
+        args=(["node-1"],),
+    )
+    mutation.start()
+    assert handle.entered.wait(timeout=2)
+
+    try:
+        with pytest.raises(GraphBusyError, match="temporarily busy"):
+            await routes.related(
+                {"node_id": "node-1", "repo_path": str(tmp_path)}
+            )
+    finally:
+        handle.release.set()
+        mutation.join(timeout=2)
+
+    assert not mutation.is_alive()
 
 
 @pytest.mark.asyncio

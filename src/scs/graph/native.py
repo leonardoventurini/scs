@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import NotRequired, Protocol, TypedDict, Unpack, cast
 
 from scs.graph.models import Edge, Node, NodeType, SearchResult
+from scs.graph.gating import GraphMutationGate, graph_mutation, graph_read
 from scs.providers.base import ProviderMetadata
 
 PROVIDER_METADATA_SCHEMA_VERSION = 1
@@ -168,8 +169,10 @@ class NativeGraph:
         self.vector_path: Path = vector_path
         self.provider_metadata_path: Path = provider_metadata_path
         self.provider: ProviderMetadata = provider
+        self._mutation_gate: GraphMutationGate = GraphMutationGate()
         self.vector_state: VectorState = self._prepare_vector_state()
         self._inner: _NativeGraphHandle = native_handle or self._open_native()
+
         if provider.available:
             _atomic_write_json(
                 provider_metadata_path,
@@ -178,6 +181,12 @@ class NativeGraph:
                     **provider.to_dict(),
                 },
             )
+
+    @property
+    def mutation_gate(self) -> GraphMutationGate:
+        """Expose the gate to graph execution decorators."""
+
+        return self._mutation_gate
 
     def _prepare_vector_state(self) -> VectorState:
         if not self.provider.available:
@@ -277,17 +286,21 @@ class NativeGraph:
     def get_file_paths_for_repo_sync(self, repo_path: str) -> list[str]:
         return self._inner.get_file_paths_for_repo(repo_path)
 
+    @graph_read
     def get_node_ids_for_file_sync(self, repo_path: str, rel_path: str) -> list[str]:
         return self._inner.get_node_ids_for_file(repo_path, rel_path)
 
+    @graph_mutation
     def delete_nodes_sync(self, node_ids: list[str]) -> int:
-        """Delete a replacement set with one native accelerator rebuild."""
+        """Delete a replacement set and persist incremental vector removals."""
 
         return self._inner.delete_nodes(node_ids)
 
+    @graph_mutation
     def delete_node_sync(self, node_id: str) -> bool:
         return self._inner.delete_node(node_id)
 
+    @graph_mutation
     def delete_ingested_file_sync(self, repo_path: str, rel_path: str) -> int:
         self._inner.delete_ingested_file(repo_path, rel_path)
         return 1
@@ -296,6 +309,7 @@ class NativeGraph:
         self._inner.delete_ingestion_record(repo_path, rel_path)
         return True
 
+    @graph_mutation
     def remove_file_graph_and_vector_sync(self, repo_path: str, rel_path: str) -> int:
         """Remove file graph/vector state while retaining its retry checkpoint."""
 
@@ -318,6 +332,7 @@ class NativeGraph:
 
         self._inner.acknowledge_ingested_files_batch(json.dumps(records, default=str))
 
+    @graph_read
     def search_by_name_sync(
         self,
         query: str,
@@ -341,10 +356,12 @@ class NativeGraph:
     ) -> list[Node]:
         return await asyncio.to_thread(self.search_by_name_sync, query, **kwargs)
 
+    @graph_read
     def get_node_sync(self, node_id: str) -> Node | None:
         raw = self._inner.get_node(node_id)
         return Node.model_validate(_json_value(raw)) if raw is not None else None
 
+    @graph_read
     def batch_get_nodes_sync(self, node_ids: list[str]) -> list[Node]:
         raw = _json_value(self._inner.batch_get_nodes(node_ids))
         return [Node.model_validate(item) for item in cast(list[object], raw)]
@@ -402,6 +419,7 @@ class NativeGraph:
             if isinstance((file_path := node.metadata.get("file_path")), str)
         }
 
+    @graph_read
     def get_edges_sync(
         self,
         node_id: str,
@@ -412,6 +430,7 @@ class NativeGraph:
         raw = _json_value(self._inner.get_edges(node_id, relationship, direction))
         return [Edge.model_validate(item) for item in cast(list[object], raw)]
 
+    @graph_read
     def batch_get_edges_sync(
         self, node_ids: list[str], *, direction: str = "both"
     ) -> dict[str, list[Edge]]:
@@ -437,6 +456,7 @@ class NativeGraph:
         )
         return [Node.model_validate(item) for item in cast(list[object], raw)]
 
+    @graph_read
     def traverse_sync(
         self,
         node_id: str,
@@ -450,6 +470,7 @@ class NativeGraph:
             _json_value(self._inner.traverse(node_id, depth, relationship, direction)),
         )
 
+    @graph_read
     def search_by_vector_sync(
         self,
         vector: list[float],
@@ -470,6 +491,7 @@ class NativeGraph:
         )
         return [SearchResult.model_validate(item) for item in cast(list[object], raw)]
 
+    @graph_mutation
     def delete_repo_sync(self, repo_path: str) -> object:
         return _json_value(self._inner.delete_repo(repo_path))
 

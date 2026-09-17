@@ -10,6 +10,7 @@ from typing import TypeAlias
 
 from pydantic import ValidationError
 
+from scs.errors import ServiceBusyError
 from scs.wire.models import ErrorCode, WireError
 
 WireResult: TypeAlias = dict[str, object]
@@ -72,6 +73,14 @@ class Router:
         except (KeyError, TypeError, ValueError, ValidationError) as error:
             result = DispatchResult(
                 error=WireError(code=ErrorCode.BAD_REQUEST, message=str(error))
+            )
+        except ServiceBusyError as error:
+            result = DispatchResult(
+                error=WireError(
+                    code=ErrorCode.UNAVAILABLE,
+                    message=str(error),
+                    retryable=True,
+                )
             )
         except Exception:
             result = DispatchResult(

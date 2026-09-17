@@ -234,7 +234,7 @@ impl KnowledgeGraph {
             .transpose()
     }
 
-    /// Delete a complete replacement set with one transaction and accelerator rebuild.
+    /// Delete a complete replacement set with one transaction and incremental vector removal.
     pub fn delete_nodes(&self, ids: &[String]) -> SCSResult<usize> {
         if ids.is_empty() {
             return Ok(0);

@@ -8,13 +8,48 @@ import uuid
 from pathlib import Path
 
 from scs.wire.framing import read_frame, write_frame
-from scs.wire.models import WireErrorResponse, WireRequest, WireResponse
+from scs.wire.models import (
+    ErrorCode,
+    WireErrorResponse,
+    WireRequest,
+    WireResponse,
+)
 
 DEFAULT_CALL_TIMEOUT_SECONDS = 5.0
 
 
 class SCSWireError(RuntimeError):
     """Raised when SCSWire returns a typed application error."""
+
+
+class SCSUnavailableError(SCSWireError):
+    """Raised for retryable daemon capacity or transient index state."""
+
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable: bool = retryable
+
+
+def _decoded_result(
+    envelope: dict[str, object],
+    request_id: str,
+) -> dict[str, object]:
+    """Validate one response envelope and project typed application failures."""
+
+    if envelope.get("kind") == "error":
+        response = WireErrorResponse.model_validate(envelope)
+        message = f"{response.error.code.value}: {response.error.message}"
+        if response.error.code is ErrorCode.UNAVAILABLE:
+            raise SCSUnavailableError(
+                message,
+                retryable=response.error.retryable,
+            )
+        raise SCSWireError(message)
+
+    response = WireResponse.model_validate(envelope)
+    if response.id != request_id:
+        raise SCSWireError("SCSWire response id does not match request")
+    return response.result
 
 
 class SCSClient:
@@ -53,15 +88,7 @@ class SCSClient:
         try:
             await write_frame(writer, request.model_dump(mode="json"))
             envelope = await read_frame(reader)
-            if envelope.get("kind") == "error":
-                response = WireErrorResponse.model_validate(envelope)
-                raise SCSWireError(
-                    f"{response.error.code.value}: {response.error.message}"
-                )
-            response = WireResponse.model_validate(envelope)
-            if response.id != request.id:
-                raise SCSWireError("SCSWire response id does not match request")
-            return response.result
+            return _decoded_result(envelope, request.id)
         finally:
             writer.close()
             with contextlib.suppress(ConnectionError):
@@ -110,15 +137,7 @@ class SCSConnection:
             )
             await write_frame(writer, request.model_dump(mode="json"))
             envelope = await read_frame(reader)
-            if envelope.get("kind") == "error":
-                response = WireErrorResponse.model_validate(envelope)
-                raise SCSWireError(
-                    f"{response.error.code.value}: {response.error.message}"
-                )
-            response = WireResponse.model_validate(envelope)
-            if response.id != request.id:
-                raise SCSWireError("SCSWire response id does not match request")
-            return response.result
+            return _decoded_result(envelope, request.id)
 
     async def close(self) -> None:
         """Close the socket; the daemon observes this as lease release."""

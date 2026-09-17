@@ -518,7 +518,7 @@ class IngestionPipeline:
                 )
             ]
             # Delete the complete file batch in one native transaction so the
-            # vector accelerator is rebuilt once, not once per source file.
+            # vector accelerator is updated once, not once per source file.
             self._graph.delete_nodes_sync(sorted(set(removed_node_ids)))
             self._graph.flush_vector_index_sync()
             if removed_node_ids and not self._graph.reopened_vectors_absent_sync(

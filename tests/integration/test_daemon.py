@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 
 from scs.wire.client import SCSClient, SCSConnection
+from scs.wire.client import SCSUnavailableError
+from scs.errors import ServiceBusyError
 from scs.models import PROTOCOL_VERSION
 from scs.wire.framing import read_frame, write_frame
 from scs.wire.router import Router
@@ -179,6 +181,29 @@ async def test_attached_client_connection_owns_a_live_lease(
         await server.stop()
 
     assert counts == [1, 0]
+
+
+@pytest.mark.asyncio
+async def test_unavailable_responses_are_typed_and_retryable(
+    short_runtime_path: Path,
+) -> None:
+    socket_path = short_runtime_path / "scs.sock"
+    router = Router()
+
+    @router.method("knowledge.related")
+    async def busy(_params: dict[str, object]) -> dict[str, object]:
+        raise ServiceBusyError("graph index is temporarily busy")
+
+    server = WireServer(router, socket_path=socket_path)
+    await server.start()
+    client = SCSClient(socket_path)
+    try:
+        with pytest.raises(SCSUnavailableError, match="temporarily busy") as raised:
+            await client.call("knowledge.related", {})
+    finally:
+        await server.stop()
+
+    assert raised.value.retryable is True
 
 
 async def _record_count(counts: list[int], count: int) -> None:

@@ -7,6 +7,7 @@ import struct
 
 import pytest
 
+from scs.errors import ServiceBusyError
 from scs.wire.framing import MAX_FRAME_BYTES, FrameError, read_frame, write_frame
 from scs.wire.models import ErrorCode, WireRequest
 from scs.wire.router import Router
@@ -76,6 +77,22 @@ async def test_invalid_params_return_bad_request() -> None:
     result = await router.dispatch("math.increment", {"value": "wrong"})
     assert result.error is not None
     assert result.error.code.value == "bad_request"
+
+
+@pytest.mark.asyncio
+async def test_busy_service_returns_retryable_unavailable() -> None:
+    router = Router()
+
+    @router.method("knowledge.related")
+    async def related(_params: dict[str, object]) -> dict[str, object]:
+        raise ServiceBusyError("graph index is temporarily busy")
+
+    result = await router.dispatch("knowledge.related", {})
+
+    assert result.error is not None
+    assert result.error.code is ErrorCode.UNAVAILABLE
+    assert result.error.retryable is True
+    assert result.error.message == "graph index is temporarily busy"
 
 
 @pytest.mark.asyncio
