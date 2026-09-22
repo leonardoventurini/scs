@@ -767,7 +767,7 @@ checksum = "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2"
 
 [[package]]
 name = "scs-core"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "chrono",
  "serde",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "scs-parser"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "scs-core",
  "serde",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "scs-python"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "log",
  "pyo3",
@@ -809,7 +809,7 @@ dependencies = [
 
 [[package]]
 name = "scs-store"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "chrono",
  "env_logger",

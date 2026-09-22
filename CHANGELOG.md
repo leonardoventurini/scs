@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.19 - 2026-09-21
+
+- feat(parser): add native Go ingestion for packages, imports, types,
+  interfaces, embedding, fields, functions, methods, values, calls,
+  documentation, generics, and cyclomatic complexity
 - build: bound local Cargo artifacts by disabling incremental caches and
   retaining only line-table debug information
 
