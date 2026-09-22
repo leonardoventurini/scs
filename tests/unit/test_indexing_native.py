@@ -82,7 +82,7 @@ def test_ambiguous_vector_sidecar_is_quarantined(tmp_path: Path) -> None:
     ("persisted", "active"),
     [
         (
-            ProviderMetadata("omlx-openai-compatible", "v1", 2),
+            ProviderMetadata("openai-compatible", "v1", 2),
             ProviderMetadata("openai", "v1", 2),
         ),
         (ProviderMetadata("openai", "v1", 2), ProviderMetadata("openai", "v2", 2)),

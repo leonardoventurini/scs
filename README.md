@@ -40,8 +40,8 @@ embedding_dimension = 3072
 openai_api_key = "replace-with-your-key"
 ```
 
-Keep that file owner-readable only (`chmod 600 ~/.scs/config.toml`). Local OMLX
-and in-process MLX examples are documented under
+Keep that file owner-readable only (`chmod 600 ~/.scs/config.toml`). Local
+OpenAI-compatible and in-process MLX examples are documented under
 [Embedding configuration](#embedding-configuration).
 
 Replace any old SCS entry, register the installed stdio MCP bridge with Codex,
@@ -99,8 +99,8 @@ legacy filenames, and run the previous SCS binary. Backup removal is always an
 explicit operator action.
 
 Semantic embeddings are generated from parser-owned entity text. SCS defaults
-to the OpenAI embeddings API, while local OMLX and in-process MLX providers are
-available by explicit configuration. SCS does not send repository files to a
+to the OpenAI embeddings API, while local OpenAI-compatible and in-process MLX
+providers are available by explicit configuration. SCS does not send repository files to a
 summarization service; an embedding provider receives only the entity text used
 to build the semantic index.
 
@@ -123,40 +123,41 @@ openai_base_url = "https://api.openai.com/v1"
 openai_api_key = "replace-with-your-key"
 ```
 
-To use OMLX without an API key:
+To use a local OpenAI-compatible server without an API key:
 
 ```toml
-embedding_provider = "omlx"
+embedding_provider = "openai_compatible"
 embedding_model = "Qwen3-Embedding-8B-4bit-DWQ"
 embedding_dimension = 4096
-omlx_base_url = "http://127.0.0.1:10000/v1"
+openai_compatible_base_url = "http://127.0.0.1:10001/v1"
 ```
 
-OMLX defaults to loopback HTTP URLs. To use an OMLX server on an explicitly
-trusted network host, configure both its URL and exact hostname:
+The compatible provider defaults to loopback HTTP URLs. To use a server on an
+explicitly trusted network host, configure both its URL and exact hostname:
 
 ```toml
-omlx_base_url = "http://m3:10000/v1"
-omlx_trusted_hosts = ["m3"]
+openai_compatible_base_url = "http://m3:10001/v1"
+openai_compatible_trusted_hosts = ["m3"]
 ```
 
 The trust list is empty by default and matches hostnames case-insensitively;
 it does not match subdomains or wildcards. Only opt in to a host and network
 that you trust with source-derived embedding text. SCS continues to run locally.
-The environment equivalent is `SCS_OMLX_TRUSTED_HOSTS='["m3"]'`.
-In OMLX mode, SCS ignores OpenAI credentials and sends no authorization header. Changing the provider, model,
+The environment equivalent is
+`SCS_OPENAI_COMPATIBLE_TRUSTED_HOSTS='["m3"]'`. In compatible-provider mode,
+SCS ignores OpenAI credentials and sends no authorization header. Changing the provider, model,
 or dimension quarantines incompatible vectors; the next indexing pass
 regenerates embeddings while preserving the structural graph.
 
 Search always fuses bounded semantic and lexical candidates. To rerank that
-candidate set through the local oMLX reranking endpoint, opt in explicitly:
+candidate set through the same local reranking endpoint, opt in explicitly:
 
 ~~~toml
-reranking_model = "your-installed-omlx-reranker"
+reranking_model = "your-installed-reranker"
 ~~~
 
 An absent `reranking_model` disables reranking. A configured model uses the
-same validated loopback `omlx_base_url` as oMLX embeddings and sends no
+same validated `openai_compatible_base_url` as local embeddings and sends no
 credentials. An unavailable or malformed reranker degrades to deterministic
 fused retrieval without making search unavailable.
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat(providers): replace product-specific local model-server settings with a
+  single OpenAI-compatible embedding and reranking transport
+
 ## 0.1.19 - 2026-09-21
 
 - feat(parser): add native Go ingestion for packages, imports, types,

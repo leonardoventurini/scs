@@ -23,11 +23,11 @@ class UnavailableEmbeddings:
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         del texts
-        raise ProviderUnavailableError("synthetic OMLX outage")
+        raise ProviderUnavailableError("synthetic provider outage")
 
     async def embed_query(self, text: str) -> list[float]:
         del text
-        raise ProviderUnavailableError("synthetic OMLX outage")
+        raise ProviderUnavailableError("synthetic provider outage")
 
 
 class FailsSecondBatchEmbeddings(FakeEmbeddings):
@@ -350,7 +350,7 @@ def test_embedding_outage_preserves_structure_but_does_not_acknowledge_hash(
         embeddings=UnavailableEmbeddings(),
     ).ingest(repository)
 
-    assert result.semantic_degraded_reason == "synthetic OMLX outage"
+    assert result.semantic_degraded_reason == "synthetic provider outage"
     assert graph.nodes
     assert graph.edges
     assert graph.embeddings == {}
@@ -360,7 +360,7 @@ def test_embedding_outage_preserves_structure_but_does_not_acknowledge_hash(
 def test_second_batch_failure_retries_only_unacknowledged_files(
     repository: Path, monkeypatch
 ) -> None:
-    """Given batch two fails, retrying must not call OMLX for batch one again."""
+    """Given batch two fails, retrying must not call the provider for batch one."""
 
     for name in ("a.py", "b.py"):
         (repository / name).write_text("def run():\n    pass\n")

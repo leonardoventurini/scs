@@ -26,7 +26,7 @@ DEFAULT_OPENAI_EMBEDDING_DIMENSION = 3072
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LOCAL_EMBEDDING_MODEL = "Qwen3-Embedding-8B-4bit-DWQ"
 DEFAULT_LOCAL_EMBEDDING_DIMENSION = 4096
-DEFAULT_OMLX_BASE_URL = "http://127.0.0.1:10000/v1"
+DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "http://127.0.0.1:10000/v1"
 
 
 class SCSSettings(BaseSettings):
@@ -46,7 +46,9 @@ class SCSSettings(BaseSettings):
     log_dir: Path = Field(
         default_factory=default_log_directory
     )
-    embedding_provider: Literal["openai", "omlx", "mlx"] = DEFAULT_EMBEDDING_PROVIDER
+    embedding_provider: Literal[
+        "openai", "openai_compatible", "mlx"
+    ] = DEFAULT_EMBEDDING_PROVIDER
     embedding_model: str = DEFAULT_OPENAI_EMBEDDING_MODEL
     embedding_dimension: int = Field(default=DEFAULT_OPENAI_EMBEDDING_DIMENSION, gt=0)
     embedding_batch_size: int = Field(default=32, ge=1, le=256)
@@ -56,8 +58,8 @@ class SCSSettings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("OPENAI_API_KEY", "openai_api_key"),
     )
-    omlx_base_url: str = DEFAULT_OMLX_BASE_URL
-    omlx_trusted_hosts: list[str] = Field(default_factory=list)
+    openai_compatible_base_url: str = DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+    openai_compatible_trusted_hosts: list[str] = Field(default_factory=list)
     reranking_model: str | None = None
     index_text_fallback: bool = True
     index_max_file_bytes: int = Field(default=1_048_576, ge=1)
@@ -79,7 +81,7 @@ class SCSSettings(BaseSettings):
             return values
         configured = dict(cast(Mapping[str, object], values))
         provider = configured.get("embedding_provider", DEFAULT_EMBEDDING_PROVIDER)
-        if provider in {"omlx", "mlx"}:
+        if provider in {"openai_compatible", "mlx"}:
             configured.setdefault("embedding_model", DEFAULT_LOCAL_EMBEDDING_MODEL)
             configured.setdefault(
                 "embedding_dimension", DEFAULT_LOCAL_EMBEDDING_DIMENSION
@@ -131,32 +133,34 @@ class SCSSettings(BaseSettings):
                     )
         return self
 
-    @field_validator("omlx_base_url")
+    @field_validator("openai_compatible_base_url")
     @classmethod
-    def _validate_omlx_base_url(cls, value: str) -> str:
-        """Validate the OMLX transport before applying the host trust policy."""
+    def _validate_openai_compatible_base_url(cls, value: str) -> str:
+        """Validate the local transport before applying the host trust policy."""
 
         parsed = urlsplit(value)
         if parsed.scheme != "http" or not parsed.hostname:
-            raise ValueError("omlx_base_url must be an absolute http URL")
+            raise ValueError("openai_compatible_base_url must be an absolute http URL")
         return value.rstrip("/")
 
     @model_validator(mode="after")
-    def _validate_omlx_host_trust(self) -> "SCSSettings":
+    def _validate_openai_compatible_host_trust(self) -> "SCSSettings":
         """Require explicit trust before sending entity text off the workstation."""
 
-        host = urlsplit(self.omlx_base_url).hostname
+        host = urlsplit(self.openai_compatible_base_url).hostname
         assert host is not None  # The field validator requires an absolute URL.
         host = host.lower()
         try:
             is_loopback = ip_address(host).is_loopback
         except ValueError:
             is_loopback = host == "localhost"
-        trusted_hosts = {trusted.lower() for trusted in self.omlx_trusted_hosts}
+        trusted_hosts = {
+            trusted.lower() for trusted in self.openai_compatible_trusted_hosts
+        }
         if not is_loopback and host not in trusted_hosts:
             raise ValueError(
-                "omlx_base_url must use a loopback host or an exact host listed "
-                "in omlx_trusted_hosts"
+                "openai_compatible_base_url must use a loopback host or an exact "
+                "host listed in openai_compatible_trusted_hosts"
             )
         return self
 

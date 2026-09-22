@@ -20,7 +20,7 @@ JOB_POLL_INTERVAL_SECONDS = 0.05
 
 
 class _ImmediateEmbeddings:
-    """Keep the storage-isolation test independent from a shared OMLX queue."""
+    """Keep the storage-isolation test independent from a model-server queue."""
 
     @property
     def metadata(self) -> ProviderMetadata:

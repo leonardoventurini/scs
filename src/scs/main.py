@@ -23,7 +23,9 @@ from scs.identity import IdentityPublisher
 from scs.metrics import AggregateMetrics
 from scs.providers.base import EmbeddingProvider, RerankingProvider
 from scs.providers.mlx import MLXEmbeddingProvider
-from scs.providers.omlx_reranking import OMLXRerankingProvider
+from scs.providers.openai_compatible_reranking import (
+    OpenAICompatibleRerankingProvider,
+)
 from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 from scs.service import ProcessLock
 from scs.services import SCSServiceRoutes
@@ -52,8 +54,8 @@ def build_reranker(settings: SCSSettings) -> RerankingProvider | None:
     if model_name is None:
         return None
 
-    return OMLXRerankingProvider(
-        base_url=settings.omlx_base_url,
+    return OpenAICompatibleRerankingProvider(
+        base_url=settings.openai_compatible_base_url,
         model_name=model_name,
     )
 
@@ -123,18 +125,21 @@ class SCSDaemon:
                 paths.metrics_key,
             )
             embeddings: EmbeddingProvider
-            if self.settings.embedding_provider in {"openai", "omlx"}:
+            if self.settings.embedding_provider in {
+                "openai",
+                "openai_compatible",
+            }:
                 is_openai = self.settings.embedding_provider == "openai"
                 embeddings = OpenAICompatibleEmbeddingProvider(
                     base_url=(
                         self.settings.openai_base_url
                         if is_openai
-                        else self.settings.omlx_base_url
+                        else self.settings.openai_compatible_base_url
                     ),
                     model_name=self.settings.embedding_model,
                     dimension=self.settings.embedding_dimension,
                     batch_size=self.settings.embedding_batch_size,
-                    provider_name="openai" if is_openai else "omlx-openai-compatible",
+                    provider_name="openai" if is_openai else "openai-compatible",
                     api_key=self.settings.effective_openai_api_key,
                 )
             else:

@@ -118,10 +118,10 @@ def test_embedding_configuration_loads_from_scs_toml(
     config_path.write_text(
         "\n".join(
             [
-                'embedding_provider = "omlx"',
+                'embedding_provider = "openai_compatible"',
                 'embedding_model = "local-model"',
                 "embedding_dimension = 2048",
-                'omlx_base_url = "http://localhost:9000/v1"',
+                'openai_compatible_base_url = "http://localhost:9000/v1"',
                 'reranking_model = "local-reranker"',
                 'openai_api_key = "config-secret"',
             ]
@@ -133,28 +133,42 @@ def test_embedding_configuration_loads_from_scs_toml(
 
     settings = SCSSettings()
 
-    assert settings.embedding_provider == "omlx"
+    assert settings.embedding_provider == "openai_compatible"
     assert settings.embedding_model == "local-model"
     assert settings.embedding_dimension == 2048
-    assert settings.omlx_base_url == "http://localhost:9000/v1"
+    assert settings.openai_compatible_base_url == "http://localhost:9000/v1"
     assert settings.reranking_model == "local-reranker"
     assert settings.openai_api_key is not None
     assert settings.openai_api_key.get_secret_value() == "config-secret"
 
 
-def test_selecting_omlx_applies_local_model_defaults(
+def test_selecting_openai_compatible_applies_local_model_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     user_home = tmp_path / "user"
     config_dir = user_home / ".scs"
     config_dir.mkdir(parents=True)
-    (config_dir / "config.toml").write_text('embedding_provider = "omlx"\n')
+    (config_dir / "config.toml").write_text(
+        'embedding_provider = "openai_compatible"\n'
+    )
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
 
     settings = SCSSettings()
 
     assert settings.embedding_model == "Qwen3-Embedding-8B-4bit-DWQ"
     assert settings.embedding_dimension == 4096
+
+
+def test_openai_compatible_provider_uses_local_defaults_and_endpoint() -> None:
+    settings = SCSSettings(
+        embedding_provider="openai_compatible",
+        openai_compatible_base_url="http://127.0.0.1:10001/v1",
+    )
+
+    assert settings.embedding_model == "Qwen3-Embedding-8B-4bit-DWQ"
+    assert settings.embedding_dimension == 4096
+    assert settings.openai_compatible_base_url == "http://127.0.0.1:10001/v1"
+    assert settings.effective_openai_api_key is None
 
 
 def test_environment_overrides_embedding_toml(
@@ -165,7 +179,7 @@ def test_environment_overrides_embedding_toml(
     config_dir.mkdir(parents=True)
     config_path = config_dir / "config.toml"
     config_path.write_text(
-        'embedding_provider = "omlx"\nopenai_api_key = "config-secret"\n'
+        'embedding_provider = "openai_compatible"\nopenai_api_key = "config-secret"\n'
     )
     config_path.chmod(0o600)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
@@ -204,12 +218,12 @@ def test_reranking_configuration_rejects_blank_model() -> None:
         SCSSettings(reranking_model="   ")
 
 
-def test_omlx_disables_openai_api_key(
+def test_openai_compatible_disables_openai_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-be-used")
 
-    settings = SCSSettings(embedding_provider="omlx")
+    settings = SCSSettings(embedding_provider="openai_compatible")
 
     assert settings.effective_openai_api_key is None
 
@@ -229,9 +243,19 @@ def test_config_file_rejects_exposed_api_key(
         SCSSettings()
 
 
-def test_omlx_rejects_remote_embedding_endpoint() -> None:
+def test_openai_compatible_rejects_remote_embedding_endpoint() -> None:
     with pytest.raises(ValueError, match="loopback"):
-        SCSSettings(omlx_base_url="http://embeddings.example.com/v1")
+        SCSSettings(
+            openai_compatible_base_url="http://embeddings.example.com/v1"
+        )
+
+
+def test_openai_compatible_rejects_untrusted_remote_endpoint() -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        SCSSettings(
+            embedding_provider="openai_compatible",
+            openai_compatible_base_url="http://mes.example.com:10001/v1",
+        )
 
 
 def test_storage_root_resolves_directory_alias(tmp_path: Path) -> None:
@@ -244,41 +268,41 @@ def test_storage_root_resolves_directory_alias(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("host", ["m3", "M3"])
-def test_omlx_accepts_only_explicitly_trusted_remote_host(host: str) -> None:
+def test_openai_compatible_accepts_only_explicitly_trusted_remote_host(host: str) -> None:
     endpoint = f"http://{host}:10000/v1"
     settings = SCSSettings(
-        embedding_provider="omlx",
-        omlx_base_url=f"{endpoint}/",
-        omlx_trusted_hosts=["m3"],
+        embedding_provider="openai_compatible",
+        openai_compatible_base_url=f"{endpoint}/",
+        openai_compatible_trusted_hosts=["m3"],
     )
 
-    assert settings.omlx_base_url == endpoint
+    assert settings.openai_compatible_base_url == endpoint
     assert settings.effective_openai_api_key is None
 
 
 @pytest.mark.parametrize("trusted", ["m3", "*", "*.example.com"])
-def test_omlx_trust_does_not_allow_other_hosts(trusted: str) -> None:
+def test_openai_compatible_trust_does_not_allow_other_hosts(trusted: str) -> None:
     with pytest.raises(ValueError, match="loopback"):
         SCSSettings(
-            omlx_base_url="http://m3.example.com:10000/v1",
-            omlx_trusted_hosts=[trusted],
+            openai_compatible_base_url="http://m3.example.com:10000/v1",
+            openai_compatible_trusted_hosts=[trusted],
         )
 
 
-def test_omlx_trust_loads_from_toml(
+def test_openai_compatible_trust_loads_from_toml(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_dir = tmp_path / ".scs"
     config_dir.mkdir()
     (config_dir / "config.toml").write_text(
-        'embedding_provider = "omlx"\n'
-        'omlx_base_url = "http://m3:10000/v1"\n'
-        'omlx_trusted_hosts = ["m3"]\n'
+        'embedding_provider = "openai_compatible"\n'
+        'openai_compatible_base_url = "http://m3:10000/v1"\n'
+        'openai_compatible_trusted_hosts = ["m3"]\n'
     )
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
     settings = SCSSettings()
 
-    assert settings.omlx_trusted_hosts == ["m3"]
-    assert settings.omlx_base_url == "http://m3:10000/v1"
+    assert settings.openai_compatible_trusted_hosts == ["m3"]
+    assert settings.openai_compatible_base_url == "http://m3:10000/v1"

@@ -30,7 +30,7 @@ class OpenAICompatibleEmbeddingProvider:
         model_name: str,
         dimension: int,
         batch_size: int = 32,
-        provider_name: str = "omlx-openai-compatible",
+        provider_name: str = "openai-compatible",
         api_key: str | None = None,
         request: ProviderRequest | None = None,
         request_with_headers: ProviderRequestWithHeaders | None = None,

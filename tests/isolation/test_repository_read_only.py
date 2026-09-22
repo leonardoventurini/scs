@@ -16,7 +16,7 @@ from scs.wire.client import SCSClient
 
 
 class _ImmediateEmbeddings:
-    """Keep source-read-only verification independent from a shared OMLX queue."""
+    """Keep source-read-only verification independent from a model-server queue."""
 
     @property
     def metadata(self) -> ProviderMetadata:

@@ -1,4 +1,4 @@
-"""Strict loopback adapter for the oMLX document-reranking endpoint."""
+"""Strict adapter for a local OpenAI-compatible document-reranking endpoint."""
 
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ REQUEST_TIMEOUT_SECONDS: Final[float] = 30.0
 RerankerRequest = Callable[[dict[str, object]], Awaitable[object]]
 
 
-class OMLXRerankingProvider:
-    """Rerank bounded text candidates through an explicitly configured oMLX."""
+class OpenAICompatibleRerankingProvider:
+    """Rerank bounded text candidates through an explicitly trusted endpoint."""
 
     def __init__(
         self,
@@ -41,7 +41,7 @@ class OMLXRerankingProvider:
         """Report configured identity and the most recent availability state."""
 
         return RerankerMetadata(
-            provider="omlx",
+            provider="openai-compatible",
             model=self._model_name,
             available=self._unavailable_reason is None,
             reason=self._unavailable_reason,
@@ -89,7 +89,7 @@ class OMLXRerankingProvider:
         ) as exc:
             self._unavailable_reason = str(exc)
             raise ProviderUnavailableError(
-                f"oMLX reranking provider is unavailable: {exc}"
+                f"OpenAI-compatible reranking provider is unavailable: {exc}"
             ) from exc
 
     async def _post(self, payload: dict[str, object]) -> object:
@@ -151,12 +151,12 @@ class OMLXRerankingProvider:
 
         parsed = urlsplit(value)
         if parsed.scheme != "http" or not parsed.hostname:
-            raise ValueError("oMLX reranking base URL must be absolute HTTP")
+            raise ValueError("reranking base URL must be absolute HTTP")
         host = parsed.hostname.lower()
         try:
             is_loopback = ip_address(host).is_loopback
         except ValueError:
             is_loopback = host == "localhost"
         if not is_loopback:
-            raise ValueError("oMLX reranking base URL must use a loopback host")
+            raise ValueError("reranking base URL must use a loopback host")
         return value.rstrip("/")

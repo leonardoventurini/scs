@@ -7,7 +7,9 @@ import pytest
 
 from scs.providers.base import EmbeddingProvider, ProviderUnavailableError
 from scs.providers.mlx import MLXEmbeddingProvider
-from scs.providers.omlx_reranking import OMLXRerankingProvider
+from scs.providers.openai_compatible_reranking import (
+    OpenAICompatibleRerankingProvider,
+)
 from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 
 
@@ -144,7 +146,7 @@ async def test_openai_provider_without_api_key_is_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_omlx_provider_sends_no_authentication() -> None:
+async def test_openai_compatible_provider_sends_no_authentication() -> None:
     headers_seen: list[dict[str, str]] = []
 
     async def request(_payload: dict[str, object], headers: dict[str, str]) -> object:
@@ -155,7 +157,7 @@ async def test_omlx_provider_sends_no_authentication() -> None:
         base_url="http://127.0.0.1:10000/v1",
         model_name="local-model",
         dimension=2,
-        provider_name="omlx-openai-compatible",
+        provider_name="openai-compatible",
         api_key=None,
         request_with_headers=request,
     )
@@ -212,7 +214,7 @@ async def test_openai_compatible_provider_recovers_and_honors_batch_size() -> No
         attempts += 1
         payloads.append(payload)
         if attempts == 1:
-            raise OSError("OMLX is starting")
+            raise OSError("local provider is starting")
         inputs = payload["input"]
         assert isinstance(inputs, list)
         return {
@@ -243,7 +245,7 @@ async def test_openai_compatible_provider_recovers_and_honors_batch_size() -> No
 
 
 @pytest.mark.asyncio
-async def test_omlx_reranker_preserves_ranked_indexes_and_exact_request() -> None:
+async def test_openai_compatible_reranker_preserves_ranked_indexes_and_exact_request() -> None:
     payloads: list[dict[str, object]] = []
 
     async def request(payload: dict[str, object]) -> object:
@@ -255,7 +257,7 @@ async def test_omlx_reranker_preserves_ranked_indexes_and_exact_request() -> Non
             ]
         }
 
-    provider = OMLXRerankingProvider(
+    provider = OpenAICompatibleRerankingProvider(
         base_url="http://127.0.0.1:10000/v1",
         model_name="test-reranker",
         request=request,
@@ -308,13 +310,13 @@ async def test_omlx_reranker_preserves_ranked_indexes_and_exact_request() -> Non
         },
     ],
 )
-async def test_omlx_reranker_rejects_incomplete_or_invalid_results(
+async def test_openai_compatible_reranker_rejects_incomplete_or_invalid_results(
     response: object,
 ) -> None:
     async def request(_payload: dict[str, object]) -> object:
         return response
 
-    provider = OMLXRerankingProvider(
+    provider = OpenAICompatibleRerankingProvider(
         base_url="http://127.0.0.1:10000/v1",
         model_name="test-reranker",
         request=request,
@@ -327,17 +329,17 @@ async def test_omlx_reranker_rejects_incomplete_or_invalid_results(
 
 
 @pytest.mark.asyncio
-async def test_omlx_reranker_recovers_after_transient_failure() -> None:
+async def test_openai_compatible_reranker_recovers_after_transient_failure() -> None:
     attempts = 0
 
     async def request(_payload: dict[str, object]) -> object:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            raise OSError("oMLX is starting")
+            raise OSError("local provider is starting")
         return {"results": [{"index": 0, "relevance_score": 0.75}]}
 
-    provider = OMLXRerankingProvider(
+    provider = OpenAICompatibleRerankingProvider(
         base_url="http://127.0.0.1:10000/v1",
         model_name="test-reranker",
         request=request,
