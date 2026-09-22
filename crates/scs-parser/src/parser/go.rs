@@ -643,6 +643,7 @@ import (
     "context"
     json "encoding/json"
     _ "net/http/pprof"
+    . "math"
 )
 
 // Entity is stored in the graph.
@@ -707,8 +708,14 @@ func (e *Entity[T]) Save() error {
                 .iter()
                 .filter(|e| e.kind == NodeType::Import)
                 .count(),
-            3
+            4
         );
+        let import_names: HashSet<_> = entities
+            .iter()
+            .filter(|entity| entity.kind == NodeType::Import)
+            .map(|entity| entity.name.as_str())
+            .collect();
+        assert_eq!(import_names, HashSet::from(["context", "json", "_", "."]));
         assert!(entities
             .iter()
             .any(|e| e.kind == NodeType::Variable && e.qualified_name.ends_with("Entity.ID")));
