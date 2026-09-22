@@ -130,6 +130,7 @@ _EXTENSION_TO_LANGUAGE: dict[str, str] = {
     ".sh": "bash",
     ".bash": "bash",
     ".css": "css",
+    ".go": "go",
 }
 
 

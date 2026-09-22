@@ -76,6 +76,35 @@ def test_native_module_is_named_scs() -> None:
     assert native.__name__ == "scs._scs_native"
 
 
+def test_native_parser_exposes_go_entities_and_relationships() -> None:
+    """Go crosses the private native JSON boundary without a parallel parser."""
+
+    native = importlib.import_module("scs._scs_native")
+    assert ".go" in native.parse_file_supported_extensions()
+
+    payload = json.loads(
+        native.parse_file(
+            """package sample
+
+type Item struct { ID string }
+func New() Item { return Item{} }
+""",
+            "sample/item.go",
+        )
+    )
+
+    assert any(
+        entity["kind"] == "module"
+        and entity["qualified_name"] == "sample.sample"
+        for entity in payload["entities"]
+    )
+    assert any(
+        entity["kind"] == "function" and entity["name"] == "New"
+        for entity in payload["entities"]
+    )
+    assert any(edge["relationship"] == "contains" for edge in payload["edges"])
+
+
 def test_python_rust_enum_parity() -> None:
     """Rust and Python reject the same non-code graph vocabulary."""
 

@@ -144,6 +144,37 @@ def test_discover_skips_unreadable_candidate_without_aborting(
     assert [entry.rel_path for entry in entries] == ["good.py"]
 
 
+def test_discover_labels_all_eligible_go_file_kinds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    paths = [
+        "service.go",
+        "service_test.go",
+        "models.generated.go",
+        "vendor_client.go",
+    ]
+    for rel_path in paths:
+        source = repo / rel_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("package sample\n", encoding="utf-8")
+    monkeypatch.setattr(discovery, "_list_git_non_ignored_paths", lambda _repo: paths)
+    policy = discovery.IngestionPolicy(
+        text_fallback=False,
+        large_dir_file_count=100,
+    )
+
+    entries = discovery.discover(
+        repo,
+        extensions=frozenset({".go"}),
+        policy=policy,
+    )
+
+    assert [(entry.rel_path, entry.language) for entry in entries] == [
+        (rel_path, "go") for rel_path in sorted(paths)
+    ]
+
+
 def test_git_ignore_lookup_failure_uses_fallback_spec(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

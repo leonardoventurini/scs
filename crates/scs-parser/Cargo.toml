@@ -17,3 +17,4 @@ tree-sitter-swift = { workspace = true }
 tree-sitter-elixir = { workspace = true }
 tree-sitter-bash = { workspace = true }
 tree-sitter-css = { workspace = true }
+tree-sitter-go = { workspace = true }

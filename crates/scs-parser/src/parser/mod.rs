@@ -14,6 +14,7 @@ use scs_core::node_types::NodeType;
 pub mod bash;
 pub mod css;
 pub mod elixir;
+pub mod go;
 pub mod python;
 pub mod registry;
 pub mod rust;
@@ -84,6 +85,16 @@ pub fn count_complexity(node: &Node, source: &[u8], language: &str) -> u32 {
             "for_expression",
             "while_expression",
             "while_let_expression",
+        ]
+        .into_iter()
+        .collect(),
+
+        "go" => [
+            "if_statement",
+            "for_statement",
+            "expression_case",
+            "type_case",
+            "communication_case",
         ]
         .into_iter()
         .collect(),
@@ -172,6 +183,17 @@ pub fn count_complexity(node: &Node, source: &[u8], language: &str) -> u32 {
                         if text == "&&" || text == "||" {
                             count += 1;
                         }
+                    }
+                }
+            }
+            "go" if n.kind() == "binary_expression" => {
+                let mut child_cursor = n.walk();
+                for child in n.children(&mut child_cursor) {
+                    let text =
+                        std::str::from_utf8(&source[child.start_byte()..child.end_byte()])
+                            .unwrap_or("");
+                    if text == "&&" || text == "||" {
+                        count += 1;
                     }
                 }
             }
@@ -341,6 +363,27 @@ fn extract_callee_name(node: &Node, source: &[u8], language: &str) -> Option<Str
                 _ => None,
             }
         }
+        "go" => {
+            let callee = node.child_by_field_name("function")?;
+            match callee.kind() {
+                "identifier" => Some(text_of(&callee).to_string()),
+                "selector_expression" => callee
+                    .child_by_field_name("field")
+                    .map(|field| text_of(&field).to_string()),
+                "index_expression" | "generic_type" => callee
+                    .child_by_field_name("operand")
+                    .or_else(|| callee.child_by_field_name("function"))
+                    .or_else(|| callee.named_child(0))
+                    .and_then(|inner| match inner.kind() {
+                        "identifier" => Some(text_of(&inner).to_string()),
+                        "selector_expression" => inner
+                            .child_by_field_name("field")
+                            .map(|field| text_of(&field).to_string()),
+                        _ => None,
+                    }),
+                _ => None,
+            }
+        }
         "swift" => {
             // Swift `call_expression`: first child is the callee.
             let callee = node.child(0)?;
@@ -410,6 +453,7 @@ pub fn extract_calls(
         "python" => &["call"],
         "typescript" | "javascript" | "tsx" | "jsx" => &["call_expression", "new_expression"],
         "rust" => &["call_expression"],
+        "go" => &["call_expression"],
         "swift" => &["call_expression"],
         "elixir" => &["call"],
         _ => return HashSet::new(),

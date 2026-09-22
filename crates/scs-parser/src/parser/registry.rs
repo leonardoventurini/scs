@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use super::bash::BashParser;
 use super::css::CssParser;
 use super::elixir::ElixirParser;
+use super::go::GoParser;
 use super::python::PythonParser;
 use super::rust::RustParser;
 use super::swift::SwiftParser;
@@ -33,6 +34,7 @@ fn extension_map() -> &'static HashMap<&'static str, &'static str> {
         m.insert(".sh", "bash");
         m.insert(".bash", "bash");
         m.insert(".css", "css");
+        m.insert(".go", "go");
         m
     })
 }
@@ -66,6 +68,7 @@ pub fn get_parser(extension: &str) -> Option<Arc<dyn LanguageParser>> {
         "elixir" => Arc::new(ElixirParser::new()),
         "bash" => Arc::new(BashParser::new()),
         "css" => Arc::new(CssParser::new()),
+        "go" => Arc::new(GoParser::new()),
         _ => return None,
     };
 
@@ -95,7 +98,28 @@ pub fn extension_to_language(ext: &str) -> &'static str {
         m.insert(".sh", "bash");
         m.insert(".bash", "bash");
         m.insert(".css", "css");
+        m.insert(".go", "go");
         m
     });
     map.get(ext).copied().unwrap_or("unknown")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn go_is_a_supported_native_language() {
+        assert!(supported_extensions().contains(&".go"));
+        assert_eq!(extension_to_language(".go"), "go");
+        assert!(get_parser(".go").is_some());
+    }
+
+    #[test]
+    fn go_parser_is_cached() {
+        let first = get_parser(".go").unwrap();
+        let second = get_parser(".go").unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+    }
 }
