@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.22 - 2026-09-22
+
 - fix(indexing): bound semantic signatures and embedding requests while
   preserving actionable provider error details
 
