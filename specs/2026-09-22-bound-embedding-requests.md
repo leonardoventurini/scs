@@ -1,5 +1,5 @@
 ---
-status: active
+status: implemented
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
@@ -9,7 +9,7 @@ decision: decisions/2026-09-22-use-openai-compatible-local-inference.md
 supersedes:
 superseded-by:
 implementation:
-  commits: []
+  commits: [023f8d9]
   pull-request:
 ---
 
@@ -137,14 +137,46 @@ there is no schema or data migration.
 
 ## Execution checklist
 
-- [ ] Add regression tests that reproduce the large Go composite declaration.
-- [ ] Correct Go variable and constant signature extraction.
-- [ ] Add matching Rust and Python semantic signature bounds.
-- [ ] Add count-and-character-aware provider batching.
-- [ ] Preserve bounded HTTP response details.
-- [ ] Run focused Rust and Python checks, then `just verify`.
-- [ ] Record acceptance evidence and implementation commits.
+- [x] Add regression tests that reproduce the large Go composite declaration.
+- [x] Correct Go variable and constant signature extraction.
+- [x] Add matching Rust and Python semantic signature bounds.
+- [x] Add count-and-character-aware provider batching.
+- [x] Preserve bounded HTTP response details.
+- [x] Run focused Rust and Python checks, then `just verify`.
+- [x] Record acceptance evidence and implementation commits.
 
 ## Verification results
 
-Pending implementation.
+Implemented by `023f8d9`.
+
+### Acceptance criteria
+
+- **Passed:** the rebuilt native parser converts the observed
+  `OperationRegistry` signature to
+  `OperationRegistry = map[OperationID]*OpMeta{…}`. Its prefixed embedding input
+  fell from 280,017 to 126 characters, and the live loopback MES endpoint
+  returned HTTP 200 with 4,096 vector components.
+- **Passed:** Rust and Python cap function, method, variable, and constant
+  signatures at 512 UTF-8 bytes without splitting a code point.
+- **Passed:** provider tests prove count-and-character partitioning preserves
+  source/vector order and every request remains at or below 120,000 characters.
+- **Passed:** an individually oversized input fails before transport, while HTTP
+  error handling reads at most 1,025 bytes and exposes a bounded detail.
+- **Passed:** public contracts, persisted formats, model identity, vector
+  dimension, and MES configuration remain unchanged.
+
+### Executed checks
+
+- `uv run pytest tests/unit/test_parser_base.py tests/unit/test_providers.py -q`
+  — 32 passed.
+- `cargo test -p scs-parser --no-fail-fast` — 96 passed.
+- Focused Ruff and Basedpyright checks — passed with zero findings.
+- `just verify` — passed: Basedpyright and Ruff reported zero findings; 363
+  Python tests passed with 87.02% coverage; all Rust workspace and doc tests
+  passed, including 108 unit tests.
+- Exact `OperationRegistry` native parse plus live MES embedding request — HTTP
+  200 and 4,096 dimensions.
+
+No production deployment, daemon restart, automatic queue drain, persisted
+store migration, or external-network inference check was performed. None is
+required by this source-level compatibility fix.
