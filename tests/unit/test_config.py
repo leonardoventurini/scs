@@ -159,7 +159,11 @@ def test_selecting_openai_compatible_applies_local_model_defaults(
     assert settings.embedding_dimension == 4096
 
 
-def test_openai_compatible_provider_uses_local_defaults_and_endpoint() -> None:
+def test_openai_compatible_provider_uses_local_defaults_and_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
     settings = SCSSettings(
         embedding_provider="openai_compatible",
         openai_compatible_base_url="http://127.0.0.1:10001/v1",
