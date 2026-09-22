@@ -1,5 +1,10 @@
 # Add Evidence-Driven Agent Contracts
 
+> Superseded in part by
+> `decisions/2026-09-22-unify-agent-code-queries.md`. Its search, readiness,
+> risk, and metrics contracts remain authoritative internally; its fixed MCP
+> inventory is replaced after the unified-query retirement gates pass.
+
 ## Context
 
 Recent Codex history showed repeated serial searches, readiness polling without

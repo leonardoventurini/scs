@@ -1,7 +1,12 @@
 # Keep the MCP surface limited to essential code intelligence
 
+> Superseded by
+> `decisions/2026-09-22-unify-agent-code-queries.md`. The individual read tools
+> remain during compatibility validation, then converge on `query_code` after
+> the successor specification's retirement gates pass.
+
 Date: 2026-08-05
-Status: Accepted
+Status: Superseded
 
 ## Context
 
