@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- build: bound local Cargo artifacts by disabling incremental caches and
+  retaining only line-table debug information
+
 ## 0.1.16 - 2026-09-15
 
 - fix(search): accept omitted or null optional query lists at the public service

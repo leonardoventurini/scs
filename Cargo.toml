@@ -14,6 +14,15 @@ rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/leonardoventurini/scs"
 
+# Keep local build artifacts bounded while retaining file-and-line backtraces.
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.test]
+debug = "line-tables-only"
+incremental = false
+
 [workspace.dependencies]
 # Internal crates
 scs-core = { version = "0.1.18", path = "crates/scs-core" }
