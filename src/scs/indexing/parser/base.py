@@ -7,6 +7,18 @@ from typing import Protocol, runtime_checkable
 
 from scs.graph.models import NodeType, RelationshipType
 
+SIGNATURE_LIMIT = 512
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    """Return a stable prefix bounded by UTF-8 bytes and complete characters."""
+
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
 
 def build_embed_text(entity: "ParsedEntity") -> str:
     """Build a stable semantic representation from structural code metadata."""
@@ -17,9 +29,11 @@ def build_embed_text(entity: "ParsedEntity") -> str:
     if entity.kind is NodeType.CLASS:
         return f"class {entity.name}{doc}"
     if entity.kind in {NodeType.FUNCTION, NodeType.METHOD}:
-        return f"{entity.kind.value} {entity.qualified_name} {entity.signature}{doc}"
+        signature = _truncate_utf8(entity.signature, SIGNATURE_LIMIT)
+        return f"{entity.kind.value} {entity.qualified_name} {signature}{doc}"
     if entity.kind in {NodeType.VARIABLE, NodeType.CONSTANT}:
-        return f"{entity.kind.value} {entity.qualified_name}: {entity.signature}"
+        signature = _truncate_utf8(entity.signature, SIGNATURE_LIMIT)
+        return f"{entity.kind.value} {entity.qualified_name}: {signature}"
     if entity.kind is NodeType.IMPORT:
         return f"import {entity.name}"
     if entity.kind is NodeType.TYPE_ALIAS:

@@ -97,6 +97,7 @@ def test_embed_text_contract(entity: ParsedEntity, expected: str) -> None:
 def test_embed_text_bounds_provider_input_without_splitting_unicode() -> None:
     docstring = "á" * 600
     raw_text = "型" * 300
+    signature = "型" * 600
 
     function = ParsedEntity(
         NodeType.FUNCTION,
@@ -104,7 +105,16 @@ def test_embed_text_bounds_provider_input_without_splitting_unicode() -> None:
         "src.run",
         1,
         1,
+        signature=signature,
         docstring=docstring,
+    )
+    variable = ParsedEntity(
+        NodeType.VARIABLE,
+        "payload",
+        "src.payload",
+        1,
+        1,
+        signature=signature,
     )
     alias = ParsedEntity(
         NodeType.TYPE_ALIAS,
@@ -115,5 +125,8 @@ def test_embed_text_bounds_provider_input_without_splitting_unicode() -> None:
         raw_text=raw_text,
     )
 
-    assert function.embed_text() == f"function src.run : {'á' * 512}"
+    bounded_signature = "型" * 170
+
+    assert function.embed_text() == f"function src.run {bounded_signature}: {'á' * 512}"
+    assert variable.embed_text() == f"variable src.payload: {bounded_signature}"
     assert alias.embed_text() == f"type Payload: {'型' * 256}"

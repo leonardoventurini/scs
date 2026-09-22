@@ -377,6 +377,8 @@ impl GoParser {
         entities: &mut Vec<ParsedEntity>,
         edges: &mut Vec<ParsedEdge>,
     ) {
+        let signature = value_spec_signature(spec, source);
+
         for name_node in children_by_field(spec, "name") {
             let name = text(name_node, source).to_string();
             let qualified = format!("{package_qualified}.{name}");
@@ -387,7 +389,7 @@ impl GoParser {
                 spec,
                 source,
                 Some(package_qualified.to_string()),
-                text(spec, source).to_string(),
+                signature.clone(),
                 doc_comment(spec, source),
                 vec![],
                 vec![],
@@ -557,6 +559,52 @@ fn signature_before_body(node: Node, source: &[u8]) -> String {
         .unwrap_or("")
         .trim()
         .to_string()
+}
+
+fn value_spec_signature(spec: Node, source: &[u8]) -> String {
+    let names = children_by_field(spec, "name")
+        .into_iter()
+        .map(|name| text(name, source))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut signature = names;
+
+    if let Some(type_node) = spec.child_by_field_name("type") {
+        signature.push(' ');
+        signature.push_str(text(type_node, source).trim());
+    }
+
+    if let Some(values) = spec.child_by_field_name("value") {
+        signature.push_str(" = ");
+        signature.push_str(&compact_value_list(values, source));
+    }
+
+    signature
+}
+
+fn compact_value_list(values: Node, source: &[u8]) -> String {
+    let mut cursor = values.walk();
+    let expressions = values
+        .named_children(&mut cursor)
+        .map(|value| compact_value(value, source))
+        .collect::<Vec<_>>();
+
+    if expressions.is_empty() {
+        text(values, source).trim().to_string()
+    } else {
+        expressions.join(", ")
+    }
+}
+
+fn compact_value(value: Node, source: &[u8]) -> String {
+    if value.kind() != "composite_literal" {
+        return text(value, source).trim().to_string();
+    }
+
+    value
+        .child_by_field_name("type")
+        .map(|type_node| format!("{}{{…}}", text(type_node, source).trim()))
+        .unwrap_or_else(|| "{…}".to_string())
 }
 
 fn doc_comment(node: Node, source: &[u8]) -> String {
@@ -781,5 +829,63 @@ func (e *Entity[T]) Save() error {
         assert!(entities
             .iter()
             .all(|entity| entity.raw_text.len() <= RAW_TEXT_LIMIT));
+    }
+
+    #[test]
+    fn compacts_large_package_value_signatures() {
+        let entries = (0..10_000)
+            .map(|index| format!("{index}: {{Name: \"operation-{index}\"}},"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!(
+            "package session\n\nvar OperationRegistry = map[OperationID]*OpMeta{{\n{entries}\n}}\n"
+        );
+
+        let (entities, _) = GoParser::new().parse(&source, "internal/session/registry.go");
+        let registry = entities
+            .iter()
+            .find(|entity| entity.name == "OperationRegistry")
+            .expect("OperationRegistry variable should be extracted");
+
+        assert_eq!(
+            registry.signature,
+            "OperationRegistry = map[OperationID]*OpMeta{…}"
+        );
+        assert!(registry.signature.len() < RAW_TEXT_SMALL_LIMIT);
+        assert!(registry.raw_text.len() <= RAW_TEXT_SMALL_LIMIT);
+    }
+
+    #[test]
+    fn preserves_explicit_types_values_and_multi_name_declarations() {
+        let source = r#"package values
+
+const Ready Status = "ready"
+var First, Second int
+var Lower, Upper = 1, calculateUpper()
+"#;
+
+        let (entities, _) = GoParser::new().parse(source, "values.go");
+
+        for name in ["First", "Second"] {
+            let entity = entities
+                .iter()
+                .find(|entity| entity.name == name)
+                .expect("multi-name variable should be extracted");
+            assert_eq!(entity.signature, "First, Second int");
+        }
+
+        for name in ["Lower", "Upper"] {
+            let entity = entities
+                .iter()
+                .find(|entity| entity.name == name)
+                .expect("multi-name initialized variable should be extracted");
+            assert_eq!(entity.signature, "Lower, Upper = 1, calculateUpper()");
+        }
+
+        let ready = entities
+            .iter()
+            .find(|entity| entity.name == "Ready")
+            .expect("typed constant should be extracted");
+        assert_eq!(ready.signature, "Ready Status = \"ready\"");
     }
 }

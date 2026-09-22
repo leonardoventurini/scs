@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from math import isfinite
 from typing import Final, cast
@@ -14,6 +15,10 @@ EMBEDDINGS_PATH: Final[str] = "embeddings"
 DOCUMENT_PREFIX: Final[str] = "search_document"
 QUERY_PREFIX: Final[str] = "search_query"
 REQUEST_TIMEOUT_SECONDS: Final[float] = 30.0
+# MES accepts at most 131,072 characters. Keep explicit headroom for model
+# instructions and future provider-side accounting changes.
+MAX_EMBEDDING_REQUEST_CHARACTERS: Final[int] = 120_000
+MAX_HTTP_ERROR_DETAIL_BYTES: Final[int] = 1_024
 ProviderRequest = Callable[[dict[str, object]], Awaitable[object]]
 ProviderRequestWithHeaders = Callable[
     [dict[str, object], dict[str, str]], Awaitable[object]
@@ -83,18 +88,15 @@ class OpenAICompatibleEmbeddingProvider:
             raise ProviderUnavailableError("OPENAI_API_KEY is not configured")
         try:
             vectors: list[list[float]] = []
-            for offset in range(0, len(texts), self._batch_size):
-                inputs = [
-                    f"{prefix}: {text}"
-                    for text in texts[offset : offset + self._batch_size]
-                ]
+            inputs = [f"{prefix}: {text}" for text in texts]
+            for batch in self._bounded_batches(inputs):
                 payload: dict[str, object] = {
                     "model": self._model_name,
-                    "input": inputs,
+                    "input": batch,
                 }
                 response = await self._post(payload)
                 vectors.extend(
-                    self._parse_embeddings(response, expected_count=len(inputs))
+                    self._parse_embeddings(response, expected_count=len(batch))
                 )
             self._unavailable_reason = None
             return vectors
@@ -109,6 +111,39 @@ class OpenAICompatibleEmbeddingProvider:
             raise ProviderUnavailableError(
                 f"OpenAI-compatible embedding provider is unavailable: {exc}"
             ) from exc
+
+    def _bounded_batches(self, inputs: Sequence[str]) -> list[list[str]]:
+        """Group inputs without exceeding item or provider character limits."""
+
+        batches: list[list[str]] = []
+        batch: list[str] = []
+        batch_characters = 0
+
+        for input_text in inputs:
+            input_characters = len(input_text)
+            if input_characters > MAX_EMBEDDING_REQUEST_CHARACTERS:
+                raise ValueError(
+                    "embedding input is too large: "
+                    f"{input_characters} characters exceeds the "
+                    f"{MAX_EMBEDDING_REQUEST_CHARACTERS} character limit"
+                )
+
+            exceeds_item_limit = len(batch) == self._batch_size
+            exceeds_character_limit = (
+                batch_characters + input_characters > MAX_EMBEDDING_REQUEST_CHARACTERS
+            )
+            if batch and (exceeds_item_limit or exceeds_character_limit):
+                batches.append(batch)
+                batch = []
+                batch_characters = 0
+
+            batch.append(input_text)
+            batch_characters += input_characters
+
+        if batch:
+            batches.append(batch)
+
+        return batches
 
     async def _post(self, payload: dict[str, object]) -> object:
         headers = (
@@ -127,8 +162,42 @@ class OpenAICompatibleEmbeddingProvider:
             async with session.post(
                 f"{self._base_url}/{EMBEDDINGS_PATH}", json=payload, headers=headers
             ) as response:
-                response.raise_for_status()
+                if response.status >= 400:
+                    detail_bytes = await response.content.read(
+                        MAX_HTTP_ERROR_DETAIL_BYTES + 1
+                    )
+                    detail = detail_bytes[:MAX_HTTP_ERROR_DETAIL_BYTES].decode(
+                        errors="replace"
+                    )
+                    if len(detail_bytes) > MAX_HTTP_ERROR_DETAIL_BYTES:
+                        detail = f"{detail}…"
+                    reason = response.reason or f"HTTP {response.status}"
+                    message = self._http_error_message(detail, reason)
+                    raise aiohttp.ClientResponseError(
+                        response.request_info,
+                        response.history,
+                        status=response.status,
+                        message=message,
+                        headers=response.headers,
+                    )
                 return cast(object, await response.json(content_type=None))
+
+    @staticmethod
+    def _http_error_message(detail: str, reason: str) -> str:
+        """Prefer a bounded structured API detail over the generic HTTP reason."""
+
+        stripped_detail = detail.strip()
+        try:
+            body = cast(object, json.loads(stripped_detail))
+        except json.JSONDecodeError, TypeError:
+            return stripped_detail or reason
+
+        if isinstance(body, Mapping):
+            structured_body = cast(Mapping[str, object], body)
+            structured_detail = structured_body.get("detail")
+            if isinstance(structured_detail, str) and structured_detail:
+                return structured_detail
+        return stripped_detail or reason
 
     def _parse_embeddings(
         self, response: object, *, expected_count: int

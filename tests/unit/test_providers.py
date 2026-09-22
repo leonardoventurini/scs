@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -11,6 +13,10 @@ from scs.providers.openai_compatible_reranking import (
     OpenAICompatibleRerankingProvider,
 )
 from scs.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
+from scs.providers.openai_compatible import (
+    MAX_EMBEDDING_REQUEST_CHARACTERS,
+    MAX_HTTP_ERROR_DETAIL_BYTES,
+)
 
 
 class FakeModel:
@@ -105,6 +111,133 @@ async def test_openai_compatible_provider_preserves_response_index_order() -> No
             "input": ["search_document: first", "search_document: second"],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_batches_by_items_and_characters() -> None:
+    requested_batches: list[list[str]] = []
+
+    async def request(payload: dict[str, object]) -> object:
+        raw_inputs = payload["input"]
+        assert isinstance(raw_inputs, list)
+        inputs = cast(list[object], raw_inputs)
+        assert all(isinstance(item, str) for item in inputs)
+        typed_inputs = cast(list[str], inputs)
+        requested_batches.append(typed_inputs)
+        batch_number = len(requested_batches) - 1
+        return {
+            "data": [
+                {"index": index, "embedding": [float(batch_number), 1.0]}
+                for index, _ in enumerate(typed_inputs)
+            ]
+        }
+
+    prefix_length = len("search_document: ")
+    text_length = MAX_EMBEDDING_REQUEST_CHARACTERS // 2 - prefix_length + 1
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="http://127.0.0.1:10000/v1",
+        model_name="test-embedding",
+        dimension=2,
+        batch_size=2,
+        request=request,
+    )
+
+    assert await provider.embed_documents(["a" * text_length] * 3) == [
+        [0.0, 1.0],
+        [1.0, 1.0],
+        [2.0, 1.0],
+    ]
+    assert [len(batch) for batch in requested_batches] == [1, 1, 1]
+    assert all(
+        sum(len(item) for item in batch) <= MAX_EMBEDDING_REQUEST_CHARACTERS
+        for batch in requested_batches
+    )
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_rejects_single_oversized_input() -> None:
+    requested = False
+
+    async def request(_payload: dict[str, object]) -> object:
+        nonlocal requested
+        requested = True
+        return {"data": []}
+
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="http://127.0.0.1:10000/v1",
+        model_name="test-embedding",
+        dimension=2,
+        request=request,
+    )
+
+    oversized = "a" * MAX_EMBEDDING_REQUEST_CHARACTERS
+    with pytest.raises(ProviderUnavailableError, match="embedding input is too large"):
+        await provider.embed_query(oversized)
+
+    assert requested is False
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_surfaces_bounded_http_error_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server_detail = "embedding input is too large"
+    trailing_body = "x" * MAX_HTTP_ERROR_DETAIL_BYTES
+    response_body = (
+        json.dumps({"detail": server_detail}).encode() + trailing_body.encode()
+    )
+    read_sizes: list[int] = []
+
+    class FakeContent:
+        async def read(self, size: int) -> bytes:
+            read_sizes.append(size)
+            return response_body[:size]
+
+    class FakeResponse:
+        status: int = 422
+        reason: str = "Unprocessable Entity"
+        request_info: SimpleNamespace = SimpleNamespace(
+            real_url="http://127.0.0.1:10000/v1/embeddings"
+        )
+        history: tuple[object, ...] = ()
+        headers: dict[str, str] = {}
+        content: FakeContent = FakeContent()
+
+        async def __aenter__(self) -> FakeResponse:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class FakeSession:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeSession:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        def post(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "scs.providers.openai_compatible.aiohttp.ClientSession", FakeSession
+    )
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="http://127.0.0.1:10000/v1",
+        model_name="test-embedding",
+        dimension=2,
+    )
+
+    with pytest.raises(ProviderUnavailableError) as error:
+        await provider.embed_query("query")
+
+    message = str(error.value)
+    assert server_detail in message
+    assert trailing_body not in message
+    assert read_sizes == [MAX_HTTP_ERROR_DETAIL_BYTES + 1]
 
 
 @pytest.mark.asyncio
@@ -215,8 +348,9 @@ async def test_openai_compatible_provider_recovers_and_honors_batch_size() -> No
         payloads.append(payload)
         if attempts == 1:
             raise OSError("local provider is starting")
-        inputs = payload["input"]
-        assert isinstance(inputs, list)
+        raw_inputs = payload["input"]
+        assert isinstance(raw_inputs, list)
+        inputs = cast(list[object], raw_inputs)
         return {
             "data": [
                 {"index": index, "embedding": [float(index), 1.0]}
@@ -245,7 +379,9 @@ async def test_openai_compatible_provider_recovers_and_honors_batch_size() -> No
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_reranker_preserves_ranked_indexes_and_exact_request() -> None:
+async def test_openai_compatible_reranker_preserves_ranked_indexes_and_exact_request() -> (
+    None
+):
     payloads: list[dict[str, object]] = []
 
     async def request(payload: dict[str, object]) -> object:

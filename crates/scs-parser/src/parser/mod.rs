@@ -25,6 +25,8 @@ pub mod typescript;
 pub const RAW_TEXT_LIMIT: usize = 2048;
 /// Max bytes for raw_text on minor entities (variables, constants, signatures).
 pub const RAW_TEXT_SMALL_LIMIT: usize = 512;
+/// Max bytes for signatures in embed_text output.
+pub const SIGNATURE_LIMIT: usize = RAW_TEXT_SMALL_LIMIT;
 /// Max bytes for docstrings in embed_text output.
 pub const DOCSTRING_LIMIT: usize = 1024;
 
@@ -550,19 +552,18 @@ impl ParsedEntity {
                 format!("class {}{doc}", self.name)
             }
             NodeType::Function | NodeType::Method => {
+                let signature = truncate_str(&self.signature, SIGNATURE_LIMIT);
                 let doc = if !self.docstring.is_empty() {
                     let truncated = truncate_str(&self.docstring, DOCSTRING_LIMIT);
                     format!(": {truncated}")
                 } else {
                     String::new()
                 };
-                format!(
-                    "{} {} {}{doc}",
-                    self.kind, self.qualified_name, self.signature
-                )
+                format!("{} {} {signature}{doc}", self.kind, self.qualified_name)
             }
             NodeType::Variable | NodeType::Constant => {
-                format!("{} {}: {}", self.kind, self.qualified_name, self.signature)
+                let signature = truncate_str(&self.signature, SIGNATURE_LIMIT);
+                format!("{} {}: {signature}", self.kind, self.qualified_name)
             }
             NodeType::Import => format!("import {}", self.name),
             NodeType::TypeAlias => {
@@ -618,6 +619,44 @@ pub trait LanguageParser: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entity_with_signature(kind: NodeType, signature: String) -> ParsedEntity {
+        ParsedEntity {
+            kind,
+            name: "item".to_string(),
+            qualified_name: "module.item".to_string(),
+            start_line: 0,
+            end_line: 0,
+            signature,
+            docstring: String::new(),
+            raw_text: String::new(),
+            parent_qualified_name: None,
+            bases: Vec::new(),
+            imports: Vec::new(),
+            cyclomatic_complexity: None,
+        }
+    }
+
+    #[test]
+    fn embed_text_bounds_function_signature_without_splitting_unicode() {
+        let entity = entity_with_signature(NodeType::Function, "型".repeat(300));
+        let expected_signature = "型".repeat(SIGNATURE_LIMIT / "型".len());
+
+        assert_eq!(
+            entity.embed_text(),
+            format!("function module.item {expected_signature}")
+        );
+    }
+
+    #[test]
+    fn embed_text_bounds_variable_signature() {
+        let entity = entity_with_signature(NodeType::Variable, "x".repeat(1_000));
+
+        assert_eq!(
+            entity.embed_text(),
+            format!("variable module.item: {}", "x".repeat(SIGNATURE_LIMIT))
+        );
+    }
 
     #[test]
     fn truncate_str_ascii() {
