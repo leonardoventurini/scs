@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: implemented
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-21
@@ -9,7 +9,7 @@ decision:
 supersedes:
 superseded-by:
 implementation:
-  commits: []
+  commits: [6a00e45, 0f0f237]
   pull-request:
 ---
 
@@ -255,32 +255,61 @@ files.
 
 ## Execution checklist
 
-- [ ] Add failing Go parser unit tests and shared complexity tests.
-- [ ] Add `tree-sitter-go` through Cargo and review the lockfile/license delta.
-- [ ] Implement `GoParser` entity, identity, documentation, signature, call,
+- [x] Add failing Go parser unit tests and shared complexity tests.
+- [x] Add `tree-sitter-go` through Cargo and review the lockfile/license delta.
+- [x] Implement `GoParser` entity, identity, documentation, signature, call,
       embedding, and complexity extraction.
-- [ ] Add failing registry and discovery tests, then register `.go`/`go` in
+- [x] Add failing registry and discovery tests, then register `.go`/`go` in
       Rust and Python.
-- [ ] Add native-boundary and real-store ingestion/search integration tests.
-- [ ] Update supported-language documentation if implementation discovery finds
+- [x] Add native-boundary and real-store ingestion/search integration tests.
+- [x] Update supported-language documentation if implementation discovery finds
       a maintained inventory outside the parser registry.
-- [ ] Run `cargo fmt --check` and focused `cargo test -p scs-parser` checks.
-- [ ] Run focused Python discovery, native-contract, and ingestion tests.
-- [ ] Run `just verify` and record exact results here before implementation
+- [x] Run `cargo fmt --check` and focused `cargo test -p scs-parser` checks.
+- [x] Run focused Python discovery, native-contract, and ingestion tests.
+- [x] Run `just verify` and record exact results here before implementation
       sign-off.
-- [ ] Update lifecycle status and implementation commit metadata after all
+- [x] Update lifecycle status and implementation commit metadata after all
       acceptance criteria pass.
 
 ## Verification results
 
-Planning evidence only:
+Implemented by `6a00e45` with explicit dot-import coverage in `0f0f237`.
 
-- Inspected the current native parser trait, language registry, Rust parser as
-  a representative full-feature implementation, shared node/relationship
-  enums, Python discovery mapping, native contract tests, and ingestion tests.
-- Confirmed the repository SCS index was structurally and semantically ready
-  before code exploration.
-- Confirmed upstream `tree-sitter-go` provides a Rust `LANGUAGE` constant for
-  tree-sitter 0.25 integration.
-- No implementation checks have been executed. All acceptance criteria remain
-  pending until implementation.
+### Acceptance criteria
+
+- **Passed:** `.go` is exposed by the native registry, labeled `go` by Python
+  discovery, parsed structurally, durably ingested, and found by lexical name
+  search without text fallback.
+- **Passed:** parser tests cover packages, all import forms, structs,
+  interfaces, embedding, fields, aliases, defined and generic types, functions,
+  pointer receiver methods, grouped values, docs, direct and selector calls,
+  built-in filtering, branches, malformed syntax, and Unicode bounds.
+- **Passed:** parser and real-store integration tests prove shared package
+  identity across files, directory isolation, and a resolved cross-file call.
+- **Passed:** discovery tests accept ordinary, `_test.go`, generated-name, and
+  vendor-name files. Existing ignored-directory and pruning policies remain
+  unchanged, as required by the discovery contract.
+- **Passed:** tests prove embedding creates `inherits`, built-ins create no call
+  edge, and syntax-only parsing creates no speculative `implements` edge.
+- **Passed:** the unchanged graph enums, MCP inventory, native JSON boundary,
+  and all previously supported parsers pass the full repository gate.
+
+### Executed checks
+
+- `cargo fmt --all -- --check` — passed.
+- `cargo test -p scs-parser --no-fail-fast` — 92 passed.
+- `uv run pytest tests/unit/test_indexing_discovery.py -q` — 13 passed.
+- `uv run pytest tests/contract/test_native_contract.py -q` — 6 passed.
+- `uv run pytest tests/integration/indexing/test_go_ingestion.py -q` — 1
+  passed against the real native graph store.
+- Focused combined Python checks — 20 passed.
+- `just verify` — passed: Basedpyright reported 0 errors/warnings/notes, Ruff
+  passed, 348 Python tests passed with 87.38% coverage, and all Rust workspace
+  and doc tests passed (104 unit tests total).
+- SCS regression-risk analysis completed without truncation. It found no
+  uncovered indexed dependents or test targets beyond the directly exercised
+  changed surface.
+
+No external Go toolchain, network module resolution, production environment,
+or persisted-store migration check was run because none is part of the
+implemented contract. No plan deviation was required.
