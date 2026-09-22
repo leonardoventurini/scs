@@ -11,7 +11,8 @@ superseded-by:
 related-specs:
   - /Users/leonardo/Repositories/mes/specs/2026-09-22-mes-retrieval-model-serving.md
 implementation:
-  commits: []
+  commits:
+    - d62c355
   pull-request:
 ---
 
