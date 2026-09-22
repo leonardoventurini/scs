@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.20 - 2026-09-22
+
 - feat(providers): replace product-specific local model-server settings with a
   single OpenAI-compatible embedding and reranking transport
 
