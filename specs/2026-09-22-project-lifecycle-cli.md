@@ -1,5 +1,5 @@
 ---
-status: approved
+status: implemented
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
@@ -9,7 +9,11 @@ decision:
 supersedes:
 superseded-by:
 implementation:
-  commits: []
+  commits:
+    - fc0612d
+    - 5b852a6
+    - 6a9e603
+    - d2a009f
   pull-request:
 ---
 
@@ -105,15 +109,28 @@ remain rebuildable from repository source.
 
 ## Execution checklist
 
-- [ ] Add catalog migration and identity tests.
-- [ ] Add catalog-wide lifecycle wire contracts and selector tests.
-- [ ] Add CLI parser, table, JSON, and dispatch tests.
-- [ ] Implement the catalog migration and daemon operations.
-- [ ] Implement the three CLI commands and update documentation.
-- [ ] Run focused tests and `just verify`.
-- [ ] Release and install the new SCS version.
-- [ ] Verify the installed CLI against the local catalog.
+- [x] Add catalog migration and identity tests.
+- [x] Add catalog-wide lifecycle wire contracts and selector tests.
+- [x] Add CLI parser, table, JSON, and dispatch tests.
+- [x] Implement the catalog migration and daemon operations.
+- [x] Implement the three CLI commands and update documentation.
+- [x] Run focused tests and `just verify`.
+- [x] Release and install the new SCS version.
+- [x] Verify the installed CLI against the local catalog.
 
 ## Verification results
 
-Not yet executed.
+- Focused lifecycle suite: 42 tests passed.
+- `just verify`: strict Python types and lint passed; 360 Python tests and 104
+  Rust tests passed; native extension and doc tests passed.
+- Release workflow `35767694537`: validation, source distribution, macOS and
+  Linux wheels, attestations, and publication passed.
+- Installed `scs version`: `0.1.21`.
+- Legacy catalog backup:
+  `~/.scs/catalog.db.pre-v0.1.21-project-ids`; SHA-256 matched the original
+  before migration.
+- Migrated catalog: SQLite integrity check passed; all 30 rows received unique,
+  ordered IDs 1 through 30.
+- Installed CLI: table and JSON listings returned the same 30 projects;
+  `scs reingest 26` acknowledged durable forced job `ingest_58bca7d93cc3`;
+  deleting an absent path returned the expected idempotent acknowledgement.
