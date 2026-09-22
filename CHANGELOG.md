@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.21 - 2026-09-22
+
 - feat(cli): list, delete, and fully reingest projects through stable numeric
   catalog IDs or repository paths
 
