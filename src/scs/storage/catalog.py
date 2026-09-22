@@ -20,7 +20,8 @@ from scs.storage.models import (
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS project_stores (
-    canonical_root TEXT PRIMARY KEY NOT NULL,
+    project_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical_root TEXT NOT NULL UNIQUE,
     store_id TEXT NOT NULL UNIQUE,
     active_generation TEXT,
     state TEXT NOT NULL,
@@ -44,6 +45,7 @@ class CatalogError(RuntimeError):
 class CatalogRecord:
     """The durable catalog entry for exactly one canonical repository root."""
 
+    project_id: int
     canonical_root: str
     store_id: StoreId
     active_generation: StoreGeneration | None
@@ -64,6 +66,8 @@ class ProjectStoreCatalog:
     def __init__(self, home: Path) -> None:
         self._home = validate_scs_home(home)
         self._database = self._home / "catalog.db"
+        if self._database.exists():
+            self._migrate_schema()
 
     @property
     def database_path(self) -> Path:
@@ -80,13 +84,36 @@ class ProjectStoreCatalog:
         connection = self._connect_read_only()
         try:
             row = cast(
-                tuple[str, str, str | None, str] | None,
+                tuple[int, str, str, str | None, str] | None,
                 connection.execute(
                     """
-                    SELECT canonical_root, store_id, active_generation, state
+                    SELECT project_id, canonical_root, store_id, active_generation, state
                     FROM project_stores WHERE canonical_root = ?
                     """,
                     (canonical_root,),
+                ).fetchone(),
+            )
+        finally:
+            connection.close()
+        return _record_from_row(row) if row is not None else None
+
+    def lookup_project(self, project_id: int) -> CatalogRecord | None:
+        """Resolve one positive durable project ID without changing state."""
+
+        if project_id < 1:
+            raise ValueError("project_id must be positive")
+        if not self._database.exists():
+            return None
+        connection = self._connect_read_only()
+        try:
+            row = cast(
+                tuple[int, str, str, str | None, str] | None,
+                connection.execute(
+                    """
+                    SELECT project_id, canonical_root, store_id, active_generation, state
+                    FROM project_stores WHERE project_id = ?
+                    """,
+                    (project_id,),
                 ).fetchone(),
             )
         finally:
@@ -118,10 +145,10 @@ class ProjectStoreCatalog:
                 (canonical_root, derived_store_id, StoreState.UNINITIALIZED.value),
             )
             row = cast(
-                tuple[str, str, str | None, str] | None,
+                tuple[int, str, str, str | None, str] | None,
                 connection.execute(
                     """
-                    SELECT canonical_root, store_id, active_generation, state
+                    SELECT project_id, canonical_root, store_id, active_generation, state
                     FROM project_stores WHERE canonical_root = ?
                     """,
                     (canonical_root,),
@@ -169,10 +196,10 @@ class ProjectStoreCatalog:
             if cursor.rowcount != 1:
                 raise CatalogError(f"Project store is not registered: {canonical_root}")
             row = cast(
-                tuple[str, str, str | None, str],
+                tuple[int, str, str, str | None, str],
                 connection.execute(
                     """
-                    SELECT canonical_root, store_id, active_generation, state
+                    SELECT project_id, canonical_root, store_id, active_generation, state
                     FROM project_stores WHERE canonical_root = ?
                     """,
                     (canonical_root,),
@@ -218,10 +245,10 @@ class ProjectStoreCatalog:
                     "project-store generation no longer matches the durable job"
                 )
             row = cast(
-                tuple[str, str, str | None, str],
+                tuple[int, str, str, str | None, str],
                 connection.execute(
                     """
-                    SELECT canonical_root, store_id, active_generation, state
+                    SELECT project_id, canonical_root, store_id, active_generation, state
                     FROM project_stores WHERE canonical_root = ?
                     """,
                     (canonical_root,),
@@ -302,17 +329,51 @@ class ProjectStoreCatalog:
         connection = self._connect_read_only()
         try:
             rows = cast(
-                list[tuple[str, str, str | None, str]],
+                list[tuple[int, str, str, str | None, str]],
                 connection.execute(
                     """
-                    SELECT canonical_root, store_id, active_generation, state
-                    FROM project_stores ORDER BY canonical_root
+                    SELECT project_id, canonical_root, store_id, active_generation, state
+                    FROM project_stores ORDER BY project_id
                     """
                 ).fetchall(),
             )
         finally:
             connection.close()
         return [_record_from_row(row) for row in rows]
+
+    def _migrate_schema(self) -> None:
+        """Atomically add durable numeric identities to a legacy catalog."""
+
+        connection = sqlite3.connect(self._database, isolation_level=None)
+        try:
+            column_rows = cast(
+                list[tuple[int, str, str, int, object, int]],
+                connection.execute("PRAGMA table_info(project_stores)").fetchall(),
+            )
+            columns = {row[1] for row in column_rows}
+            if not columns or "project_id" in columns:
+                return
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("ALTER TABLE project_stores RENAME TO legacy_project_stores")
+            connection.execute(_SCHEMA)
+            connection.execute(
+                """
+                INSERT INTO project_stores (
+                    canonical_root, store_id, active_generation, state
+                )
+                SELECT canonical_root, store_id, active_generation, state
+                FROM legacy_project_stores
+                ORDER BY canonical_root
+                """
+            )
+            connection.execute("DROP TABLE legacy_project_stores")
+            connection.execute("COMMIT")
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
 
     def _connect_read_only(self) -> sqlite3.Connection:
         """Open the existing catalog without SQLite creating sidecar files."""
@@ -323,17 +384,20 @@ class ProjectStoreCatalog:
             raise CatalogError(f"Could not read project-store catalog {self._database}") from exc
 
 
-def _record_from_row(row: tuple[str, str, str | None, str]) -> CatalogRecord:
+def _record_from_row(row: tuple[int, str, str, str | None, str]) -> CatalogRecord:
     """Validate SQLite's untyped row before exposing a typed catalog record."""
 
-    canonical_root, raw_store_id, raw_generation, raw_state = row
+    project_id, canonical_root, raw_store_id, raw_generation, raw_state = row
     try:
+        if project_id < 1:
+            raise ValueError("project ID must be a positive integer")
         generation = (
             validate_store_generation(StoreGeneration(raw_generation))
             if raw_generation is not None
             else None
         )
         return CatalogRecord(
+            project_id=project_id,
             canonical_root=canonical_root,
             store_id=validate_store_id(StoreId(raw_store_id)),
             active_generation=generation,

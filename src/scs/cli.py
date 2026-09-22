@@ -42,6 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
         "reindex", help="explicitly rebuild a repository index"
     )
     reindex.add_argument("repo_path", type=Path)
+    projects = subcommands.add_parser("list", help="list enrolled projects")
+    projects.add_argument("--json", action="store_true", dest="json")
+    delete = subcommands.add_parser("delete", help="delete one enrolled project")
+    delete.add_argument("selector", help="numeric project ID or repository path")
+    reingest = subcommands.add_parser(
+        "reingest", help="fully reingest one enrolled project"
+    )
+    reingest.add_argument("selector", help="numeric project ID or repository path")
 
     daemon = subcommands.add_parser("daemon", help="manage the shared lazy daemon")
     daemon.add_argument(
@@ -62,6 +70,50 @@ async def _call_daemon(
     await DaemonController(settings).ensure_started()
     async with SCSConnection(settings.paths.runtime / "scs.sock") as connection:
         return await connection.call(method, params)
+
+
+def _selector_params(selector: object) -> dict[str, object]:
+    """Parse an unambiguous numeric ID or preserve a path selector."""
+
+    if not isinstance(selector, str) or not selector:
+        raise ValueError("project selector must be a non-empty ID or path")
+    if selector.lstrip("-").isdecimal():
+        project_id = int(selector)
+        if project_id < 1:
+            raise ValueError("project ID must be positive")
+        return {"project_id": project_id}
+    return {"repo_path": selector}
+
+
+def _project_table(payload: dict[str, object]) -> str:
+    """Render stable columns while allowing paths to retain their full value."""
+
+    raw_projects = payload.get("projects")
+    if not isinstance(raw_projects, list):
+        raise ValueError("project listing must contain a projects array")
+    headers = ("ID", "STATE", "FILES", "LAST INDEXED", "PATH")
+    rows: list[tuple[str, str, str, str, str]] = [headers]
+    for raw_project in cast(list[object], raw_projects):
+        if not isinstance(raw_project, dict):
+            raise ValueError("project listing entries must be objects")
+        project = cast(dict[str, object], raw_project)
+        rows.append(
+            (
+                str(project.get("id", "")),
+                str(project.get("state", "")),
+                str(project.get("file_count", 0)),
+                str(project.get("last_indexed") or "-"),
+                str(project.get("repo_path", "")),
+            )
+        )
+    widths = [max(len(row[index]) for row in rows) for index in range(len(headers))]
+    return "\n".join(
+        "  ".join(
+            value.ljust(widths[index]) if index < len(headers) - 1 else value
+            for index, value in enumerate(row)
+        ).rstrip()
+        for row in rows
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -161,6 +213,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = asyncio.run(_call_daemon("metrics.report", {"days": raw_days}))
         # The command is intentionally machine-readable by default; --json is
         # retained as an explicit stable contract for automation.
+        print(json.dumps(result, sort_keys=True))
+        return 0
+    if command == "list":
+        result = asyncio.run(_call_daemon("projects.list"))
+        if values.get("json") is True:
+            print(json.dumps(result, sort_keys=True))
+        else:
+            print(_project_table(result))
+        return 0
+    if command in {"delete", "reingest"}:
+        method = f"project.{command}"
+        result = asyncio.run(
+            _call_daemon(method, _selector_params(values.get("selector")))
+        )
         print(json.dumps(result, sort_keys=True))
         return 0
     if command in {"index", "reindex"}:

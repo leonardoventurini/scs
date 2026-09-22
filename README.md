@@ -55,6 +55,19 @@ scs index "$PWD"
 scs status
 ```
 
+Manage enrolled projects with stable numeric IDs:
+
+```bash
+scs list
+scs list --json
+scs reingest 3
+scs delete 3
+```
+
+`delete` and `reingest` also accept a repository path. Both return a durable
+job acknowledgement immediately. Deletion removes only SCS-owned derived state;
+it never modifies repository source. A deleted numeric ID is never reused.
+
 Indexing is durable background work. `scs status` reports progress, and Codex
 can call `get_graph_stats` once the index is ready. Restart open Codex clients
 after changing MCP configuration. The equivalent manual entry in
@@ -272,7 +285,9 @@ just eval-search
 `just setup` installs Python dependencies, builds the private `scs._scs_native`
 extension, and installs the repository's pre-commit hook. The daemon can then
 be run directly with `scs serve`, while explicit repository enrollment uses
-`scs index <repo>` or `scs reindex <repo>`.
+`scs index <repo>` or `scs reindex <repo>`. Use `scs list` to discover enrolled
+projects and their numeric IDs, `scs reingest ID|PATH` for a forced full
+rebuild, and `scs delete ID|PATH` to retire one project's SCS-owned state.
 
 Operate the lazy daemon explicitly when diagnosing it:
 

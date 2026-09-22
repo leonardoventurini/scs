@@ -528,6 +528,59 @@ class SCSDaemon:
                     "job": job_to_dict(job),
                 }
 
+        def selected_project(
+            params: dict[str, object], *, require_enrolled: bool
+        ) -> str:
+            raw_project_id = params.get("project_id")
+            raw_repo_path = params.get("repo_path")
+            if (raw_project_id is None) == (raw_repo_path is None):
+                raise ValueError("exactly one project_id or repo_path is required")
+            catalog = self._require_stores().catalog
+            if raw_project_id is not None:
+                if (
+                    not isinstance(raw_project_id, int)
+                    or isinstance(raw_project_id, bool)
+                    or raw_project_id < 1
+                ):
+                    raise ValueError("project_id must be a positive integer")
+                record = catalog.lookup_project(raw_project_id)
+                if record is None:
+                    raise ValueError(f"project ID is not enrolled: {raw_project_id}")
+                return record.canonical_root
+            if not isinstance(raw_repo_path, str) or not raw_repo_path:
+                raise ValueError("repo_path must be a non-empty string")
+            canonical = canonicalize_repo_path(raw_repo_path)
+            if require_enrolled and catalog.lookup(canonical) is None:
+                raise ValueError(f"repository is not enrolled: {canonical}")
+            return canonical
+
+        @self._router.method("projects.list")
+        async def projects_list(_params: dict[str, object]) -> dict[str, object]:
+            records = self._require_stores().records()
+            statuses = await repository_statuses(
+                {"repo_paths": [record.canonical_root for record in records]}
+            )
+            raw_statuses = cast(list[dict[str, object]], statuses["repositories"])
+            return {
+                "projects": [
+                    {"id": record.project_id, **status}
+                    for record, status in zip(records, raw_statuses, strict=True)
+                ]
+            }
+
+        @self._router.method("project.delete")
+        async def project_delete(params: dict[str, object]) -> dict[str, object]:
+            return await drop_index(
+                {"repo_path": selected_project(params, require_enrolled=False)}
+            )
+
+        @self._router.method("project.reingest")
+        async def project_reingest(params: dict[str, object]) -> dict[str, object]:
+            return await self._enqueue(
+                {"repo_path": selected_project(params, require_enrolled=True)},
+                force=True,
+            )
+
         @self._router.method("jobs.recent")
         async def jobs_recent(params: dict[str, object]) -> dict[str, object]:
             jobs = self._require_jobs()

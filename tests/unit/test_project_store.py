@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import stat
 from pathlib import Path
 
@@ -48,6 +49,63 @@ def test_catalog_maps_canonical_root_to_one_stable_store_without_creating_it(
     assert first.store_id == store_id_for_root(repository)
     assert catalog.lookup(alias) == first
     assert not (home / "projects" / first.store_id).exists()
+
+
+def test_catalog_assigns_monotonic_project_ids_without_reuse(tmp_path: Path) -> None:
+    home = tmp_path / "scs-home"
+    catalog = ProjectStoreCatalog(home)
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    third_root = tmp_path / "third"
+    for root in (first_root, second_root, third_root):
+        root.mkdir()
+
+    first = catalog.register(first_root)
+    second = catalog.register(second_root)
+    assert (first.project_id, second.project_id) == (1, 2)
+    assert catalog.lookup_project(2) == second
+
+    assert catalog.unregister(
+        second_root,
+        expected_store_id=second.store_id,
+        expected_generation=None,
+    )
+    third = catalog.register(third_root)
+
+    assert third.project_id == 3
+    assert [record.project_id for record in catalog.list_records()] == [1, 3]
+
+
+def test_catalog_migrates_existing_rows_to_stable_project_ids(tmp_path: Path) -> None:
+    home = tmp_path / "scs-home"
+    home.mkdir()
+    database = home / "catalog.db"
+    roots = [str((tmp_path / name).resolve()) for name in ("zeta", "alpha")]
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE project_stores (
+                canonical_root TEXT PRIMARY KEY NOT NULL,
+                store_id TEXT NOT NULL UNIQUE,
+                active_generation TEXT,
+                state TEXT NOT NULL
+            )
+            """
+        )
+        for root in roots:
+            connection.execute(
+                "INSERT INTO project_stores VALUES (?, ?, NULL, 'uninitialized')",
+                (root, str(store_id_for_root(root))),
+            )
+
+    catalog = ProjectStoreCatalog(home)
+    migrated = catalog.list_records()
+
+    assert [(record.project_id, record.canonical_root) for record in migrated] == [
+        (1, min(roots)),
+        (2, max(roots)),
+    ]
+    assert ProjectStoreCatalog(home).list_records() == migrated
 
 
 def test_project_paths_are_contained_and_created_only_explicitly(tmp_path: Path) -> None:

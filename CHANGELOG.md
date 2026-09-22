@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- feat(cli): list, delete, and fully reingest projects through stable numeric
+  catalog IDs or repository paths
+
 ## 0.1.20 - 2026-09-22
 
 - feat(providers): replace product-specific local model-server settings with a

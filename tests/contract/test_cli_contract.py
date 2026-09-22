@@ -20,6 +20,10 @@ def test_operational_commands_are_parseable() -> None:
     assert parser.parse_args(["version"]).command == "version"
     assert parser.parse_args(["index", "."]).command == "index"
     assert parser.parse_args(["reindex", "."]).command == "reindex"
+    assert parser.parse_args(["list"]).command == "list"
+    assert parser.parse_args(["list", "--json"]).json is True
+    assert parser.parse_args(["delete", "12"]).selector == "12"
+    assert parser.parse_args(["reingest", "/tmp/repo"]).selector == "/tmp/repo"
     metrics = parser.parse_args(["metrics", "--days", "14", "--json"])
     assert metrics.command == "metrics"
     assert metrics.days == 14
@@ -64,6 +68,71 @@ def test_metrics_command_reads_daemon_aggregates(
 
     assert main(["metrics", "--days", "14", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["totals"]["calls"] == 2
+
+
+def test_list_renders_table_and_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    response = {
+        "projects": [
+            {
+                "id": 7,
+                "state": "indexed",
+                "file_count": 42,
+                "last_indexed": "2026-09-22T12:00:00Z",
+                "repo_path": "/tmp/example",
+                "active_job_id": None,
+            }
+        ]
+    }
+
+    async def call(method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        assert method == "projects.list"
+        assert params in (None, {})
+        return response
+
+    monkeypatch.setattr("scs.cli._call_daemon", call)
+
+    assert main(["list"]) == 0
+    table = capsys.readouterr().out
+    assert "ID" in table and "STATE" in table and "/tmp/example" in table
+    assert main(["list", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == response
+
+
+@pytest.mark.parametrize(
+    ("command", "selector", "method", "expected"),
+    [
+        ("delete", "7", "project.delete", {"project_id": 7}),
+        ("delete", "/tmp/repo", "project.delete", {"repo_path": "/tmp/repo"}),
+        ("reingest", "7", "project.reingest", {"project_id": 7}),
+        ("reingest", "/tmp/repo", "project.reingest", {"repo_path": "/tmp/repo"}),
+    ],
+)
+def test_project_lifecycle_commands_dispatch_numeric_ids_or_paths(
+    command: str,
+    selector: str,
+    method: str,
+    expected: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def call(actual: str, params: dict[str, object]) -> dict[str, object]:
+        assert actual == method
+        assert params == expected
+        return {"accepted": True, "job": {"id": "job-1"}}
+
+    monkeypatch.setattr("scs.cli._call_daemon", call)
+
+    assert main([command, selector]) == 0
+    assert json.loads(capsys.readouterr().out)["accepted"] is True
+
+
+@pytest.mark.parametrize("selector", ["0", "-1"])
+def test_project_lifecycle_commands_reject_non_positive_ids(selector: str) -> None:
+    with pytest.raises(ValueError, match="project ID must be positive"):
+        main(["delete", selector])
 
 
 @dataclass(frozen=True)

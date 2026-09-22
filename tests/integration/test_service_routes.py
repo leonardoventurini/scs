@@ -363,6 +363,70 @@ async def test_repository_deletion_accepts_an_absent_source_and_repeats_as_a_noo
 
 
 @pytest.mark.asyncio
+async def test_project_lifecycle_routes_use_durable_numeric_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "scs.main.OpenAICompatibleEmbeddingProvider",
+        lambda **_kwargs: ImmediateEmbeddings(),
+    )
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    source = repository / "module.py"
+    source.write_text("def retained_source():\n    return 42\n", encoding="utf-8")
+    source_before = source.read_bytes()
+    runtime = Path(tempfile.mkdtemp(prefix="scs-project-cli-", dir="/tmp"))
+    settings = SCSSettings(
+        home=tmp_path / "home",
+        model_cache=tmp_path / "models",
+        runtime_dir=runtime,
+        log_dir=tmp_path / "logs",
+        embedding_dimension=2,
+        auto_reindex_enabled=False,
+    )
+    repo_path = str(repository.resolve())
+    daemon = SCSDaemon(settings)
+
+    try:
+        await daemon.start()
+        client = SCSClient(runtime / "scs.sock")
+        indexed = await client.call("repository.index", {"repo_path": repo_path})
+        index_job = cast(dict[str, object], indexed["job"])
+        await _wait_for_job(client, repo_path=repo_path, job_id=index_job["id"])
+
+        listing = cast(list[dict[str, object]], (await client.call("projects.list"))["projects"])
+        assert len(listing) == 1
+        project_id = listing[0]["id"]
+        assert isinstance(project_id, int) and project_id > 0
+        assert listing[0]["repo_path"] == repo_path
+        assert listing[0]["state"] == "indexed"
+
+        reingested = await client.call("project.reingest", {"project_id": project_id})
+        reingest_job = cast(dict[str, object], reingested["job"])
+        assert reingest_job["mode"] == "force_full"
+        await _wait_for_job(client, repo_path=repo_path, job_id=reingest_job["id"])
+        after_reingest = cast(
+            list[dict[str, object]],
+            (await client.call("projects.list"))["projects"],
+        )
+        assert after_reingest[0]["id"] == project_id
+        assert after_reingest[0]["repo_path"] == repo_path
+
+        deleted = await client.call("project.delete", {"project_id": project_id})
+        deletion_job = cast(dict[str, object], deleted["job"])
+        await _wait_for_job(client, repo_path=repo_path, job_id=deletion_job["id"])
+
+        assert (await client.call("projects.list"))["projects"] == []
+        assert source.read_bytes() == source_before
+        with pytest.raises(SCSWireError, match="project ID is not enrolled"):
+            await client.call("project.delete", {"project_id": project_id})
+    finally:
+        await daemon.stop()
+        shutil.rmtree(runtime, ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_active_repository_deletion_rejects_new_indexing_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
