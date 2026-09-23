@@ -10,7 +10,7 @@ supersedes:
   - specs/2026-09-22-unified-query-orchestration.md (Laya startup and recovery only)
 superseded-by:
 implementation:
-  commits: []
+  commits: [1c54a6f]
   pull-request:
 ---
 

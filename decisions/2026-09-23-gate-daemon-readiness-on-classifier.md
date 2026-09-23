@@ -10,7 +10,7 @@ superseded-by:
 related-specs:
   - specs/2026-09-23-classifier-daemon-readiness.md
 implementation:
-  commits: []
+  commits: [1c54a6f]
   pull-request:
 ---
 
