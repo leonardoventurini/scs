@@ -9,6 +9,7 @@ decision: decisions/2026-09-22-unify-agent-code-queries.md
 decision-runtime: decisions/2026-09-23-use-native-mlx-for-query-routing.md
 supersedes:
 superseded-by:
+  - specs/2026-09-23-classifier-daemon-readiness.md (Laya startup and recovery only)
 implementation:
   commits: [0eadb87, f0187cd, dd56819, 21803de, 353d35a, d583b94]
   pull-request:
@@ -284,6 +285,9 @@ The shared SCS daemon exclusively owns at most one Laya subprocess. It starts
 the child lazily on the first classified query, serializes initial model load,
 and reuses the ready process. Concurrent requests use a bounded queue and the
 daemon's configured inference concurrency.
+
+The lazy startup and recovery contract in this section is superseded by
+[Classifier-Gated Daemon Readiness](2026-09-23-classifier-daemon-readiness.md).
 
 The daemon starts the runner with an argument vector, never through a shell.
 The child is terminated during normal daemon shutdown after in-flight requests

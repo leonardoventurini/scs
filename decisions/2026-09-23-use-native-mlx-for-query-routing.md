@@ -7,6 +7,7 @@ updated: 2026-09-23
 supersedes:
   - decisions/2026-09-22-unify-agent-code-queries.md (classifier runtime only)
 superseded-by:
+  - decisions/2026-09-23-gate-daemon-readiness-on-classifier.md (lazy worker lifecycle only)
 related-specs:
   - specs/2026-09-22-unified-query-orchestration.md
 implementation:
@@ -44,6 +45,9 @@ The MLX worker performs one synthetic startup inference before its handshake.
 The first caller may still time out during lazy startup; warmed fast requests
 must meet the unchanged 150 ms classifier deadline. The user-facing
 `decision_model = "laya"` configuration and `query_code` contract stay stable.
+
+The lazy worker lifecycle in the paragraph above is superseded by
+[Gate Daemon Readiness on the Configured Classifier](2026-09-23-gate-daemon-readiness-on-classifier.md).
 
 ## Rejected alternatives
 

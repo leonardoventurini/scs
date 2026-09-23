@@ -46,6 +46,7 @@ async def test_daemon_starts_empty_and_indexes_only_after_explicit_request(
     scs_home = tmp_path / "fresh-scs"
     runtime = Path(tempfile.mkdtemp(prefix="scs-test-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=scs_home,
         runtime_dir=runtime,
         log_dir=tmp_path / "logs",

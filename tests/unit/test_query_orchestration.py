@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -146,3 +147,36 @@ async def test_references_include_direct_dependency_edges_only(tmp_path: Path) -
         "direction": "incoming", "file_path": "test_parser.py",
         "start_line": None, "end_line": None, "stage": "references",
     }]
+
+
+@pytest.mark.asyncio
+async def test_recovery_wait_precedes_classifier_deadline(tmp_path: Path) -> None:
+    ready = asyncio.Event()
+    routes = FakeRoutes()
+
+    async def wait_until_ready() -> None:
+        await ready.wait()
+
+    query = QueryOrchestrator(
+        provider=FixedProvider(Playbook.REFERENCES),
+        call=routes.call,
+        classifier_timeout_seconds=0.01,
+        wait_until_ready=wait_until_ready,
+    )
+    task = asyncio.create_task(
+        query.query(
+            {
+                "goal": "Find references to Parser",
+                "repo_path": str(tmp_path),
+                "symbol_name": "Parser",
+            }
+        )
+    )
+    await asyncio.sleep(0.03)
+    assert task.done() is False
+    assert routes.calls == []
+
+    ready.set()
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result["routing"]["playbook"] == Playbook.REFERENCES.value
+    assert result["routing"]["fallback_applied"] is False

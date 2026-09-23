@@ -67,6 +67,7 @@ async def test_index_search_inspection_and_lsp_preserve_source_bytes(
     before = _fingerprint(source)
     runtime = Path(tempfile.mkdtemp(prefix="scs-read-only-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,

@@ -80,6 +80,7 @@ async def test_startup_restores_watchers_without_opening_every_graph(
     repository.mkdir()
     runtime = Path(tempfile.mkdtemp(prefix="scs-lazy-start-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -117,6 +118,7 @@ async def test_references_lazily_open_the_registered_project_graph(
     source.write_text("def indexed_symbol():\n    return 1\n", encoding="utf-8")
     runtime = Path(tempfile.mkdtemp(prefix="scs-lazy-references-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -203,6 +205,7 @@ async def test_metrics_initialization_failure_does_not_block_daemon(
 ) -> None:
     runtime = Path(tempfile.mkdtemp(prefix="scs-metrics-fail-open-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -245,6 +248,7 @@ async def test_repository_deletion_is_durable_and_preserves_source(
     )
     runtime = Path(tempfile.mkdtemp(prefix="scs-delete-durable-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -322,6 +326,7 @@ async def test_repository_deletion_accepts_an_absent_source_and_repeats_as_a_noo
     (repository / "module.py").write_text("value = 1\n", encoding="utf-8")
     runtime = Path(tempfile.mkdtemp(prefix="scs-delete-absent-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -379,6 +384,7 @@ async def test_project_lifecycle_routes_use_durable_numeric_identity(
     source_before = source.read_bytes()
     runtime = Path(tempfile.mkdtemp(prefix="scs-project-cli-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -396,7 +402,9 @@ async def test_project_lifecycle_routes_use_durable_numeric_identity(
         index_job = cast(dict[str, object], indexed["job"])
         await _wait_for_job(client, repo_path=repo_path, job_id=index_job["id"])
 
-        listing = cast(list[dict[str, object]], (await client.call("projects.list"))["projects"])
+        listing = cast(
+            list[dict[str, object]], (await client.call("projects.list"))["projects"]
+        )
         assert len(listing) == 1
         project_id = listing[0]["id"]
         assert isinstance(project_id, int) and project_id > 0
@@ -442,6 +450,7 @@ async def test_active_repository_deletion_rejects_new_indexing_work(
     source.write_text("value = 1\n", encoding="utf-8")
     runtime = Path(tempfile.mkdtemp(prefix="scs-delete-blocks-index-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -498,6 +507,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         "def test_production_symbol():\n    assert True\n", encoding="utf-8"
     )
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=Path(tempfile.mkdtemp(prefix="scs-routes-", dir="/tmp")),
@@ -654,8 +664,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
         }
         assert results["knowledge.query"]["routing"]["playbook"] == "DISCOVER"
         assert "production_symbol" in {
-            item["name"]
-            for item in results["knowledge.query"]["evidence"]["symbols"]
+            item["name"] for item in results["knowledge.query"]["evidence"]["symbols"]
         }
         assert results["knowledge.search"]["queries"] == ["production_symbol"]
         search_with_null_queries = await client.call(
@@ -830,6 +839,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
 async def test_final_attached_client_requests_daemon_shutdown(tmp_path: Path) -> None:
     runtime = Path(tempfile.mkdtemp(prefix="scs-client-lease-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -866,6 +876,7 @@ async def test_final_client_defers_shutdown_until_durable_jobs_are_idle(
 
     runtime = Path(tempfile.mkdtemp(prefix="scs-active-job-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -907,6 +918,7 @@ async def test_unattached_startup_grace_keeps_active_jobs_observable(
 
     runtime = Path(tempfile.mkdtemp(prefix="scs-unattached-job-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -937,6 +949,7 @@ async def test_upgrade_shutdown_requests_cancellation_before_exit(
 ) -> None:
     runtime = Path(tempfile.mkdtemp(prefix="scs-cancel-shutdown-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,

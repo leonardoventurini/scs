@@ -115,6 +115,7 @@ class SCSDaemon:
             LayaDecisionProvider(
                 model_path,
                 max_concurrency=self.settings.decision_max_concurrency,
+                on_unavailable=self.request_shutdown,
             )
             if self.settings.decision_model == "laya"
             else DeterministicDecisionProvider()
@@ -123,6 +124,11 @@ class SCSDaemon:
             provider=self._decision_provider,
             call=self._query_service_call,
             classifier_timeout_seconds=self.settings.decision_timeout_seconds,
+            wait_until_ready=(
+                self._decision_provider.wait_ready
+                if isinstance(self._decision_provider, LayaDecisionProvider)
+                else None
+            ),
         )
         self._register_methods()
 
@@ -171,14 +177,19 @@ class SCSDaemon:
             reranker = build_reranker(self.settings)
             stores = ProjectStoreRegistry(home=paths.home, provider=embeddings.metadata)
             if self.settings.decision_model == "laya":
-                model_path = (self.settings.decision_model_path or (
-                    paths.model_cache / MODEL_CACHE_NAMESPACE / MODEL_REVISION
-                )).resolve()
+                model_path = (
+                    self.settings.decision_model_path
+                    or (paths.model_cache / MODEL_CACHE_NAMESPACE / MODEL_REVISION)
+                ).resolve()
                 if not model_path.is_relative_to(paths.model_cache.resolve()) and any(
                     model_path.is_relative_to(Path(record.canonical_root))
                     for record in stores.records()
                 ):
-                    raise ValueError("decision model may not reside in an indexed repository")
+                    raise ValueError(
+                        "decision model may not reside in an indexed repository"
+                    )
+                assert isinstance(self._decision_provider, LayaDecisionProvider)
+                await self._decision_provider.start()
             jobs = await asyncio.to_thread(IngestionJobStore, paths.jobs_database)
             parser = NativeParser()
             loop = asyncio.get_running_loop()
@@ -293,9 +304,10 @@ class SCSDaemon:
             for record in await asyncio.to_thread(stores.records):
                 if record.active_generation is None:
                     continue
-                if await asyncio.to_thread(
-                    jobs.active_deletion, record.canonical_root
-                ) is not None:
+                if (
+                    await asyncio.to_thread(jobs.active_deletion, record.canonical_root)
+                    is not None
+                ):
                     continue
                 await self._ensure_watcher(record.canonical_root, jobs=jobs)
             server = WireServer(
@@ -326,6 +338,8 @@ class SCSDaemon:
                 await watcher.stop()
             if runner is not None:
                 await runner.stop()
+            if isinstance(self._decision_provider, LayaDecisionProvider):
+                await self._decision_provider.close()
             process_lock.release()
             self._server = None
             self._graph = None
@@ -433,7 +447,11 @@ class SCSDaemon:
                 "service": "scs",
                 "version": __version__,
                 "generation": self._generation,
-                "ready": self._started,
+                "ready": self._started
+                and (
+                    not isinstance(self._decision_provider, LayaDecisionProvider)
+                    or self._decision_provider.is_ready
+                ),
                 "protocol_min": 1,
                 "protocol_max": 1,
             }

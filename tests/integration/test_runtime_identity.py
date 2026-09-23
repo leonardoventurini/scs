@@ -36,7 +36,9 @@ def test_identity_cleanup_preserves_newer_generation(tmp_path: Path) -> None:
     new.publish()
 
     assert old.remove_owned() is False
-    assert json.loads(record.read_text(encoding="utf-8"))["generation"] == "new-generation"
+    assert (
+        json.loads(record.read_text(encoding="utf-8"))["generation"] == "new-generation"
+    )
     assert new.remove_owned() is True
 
 
@@ -44,6 +46,7 @@ def test_identity_cleanup_preserves_newer_generation(tmp_path: Path) -> None:
 async def test_daemon_restart_replaces_only_daemon_identity(tmp_path: Path) -> None:
     runtime = Path(tempfile.mkdtemp(prefix="scs-identity-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,
@@ -84,6 +87,7 @@ async def test_daemon_retains_identity_and_writer_lock_until_runner_stops(
 ) -> None:
     runtime = Path(tempfile.mkdtemp(prefix="scs-identity-stop-", dir="/tmp"))
     settings = SCSSettings(
+        decision_model="disabled",
         home=tmp_path / "home",
         model_cache=tmp_path / "models",
         runtime_dir=runtime,

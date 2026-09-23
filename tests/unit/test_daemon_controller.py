@@ -78,6 +78,56 @@ async def test_ensure_started_serializes_spawn_and_waits_for_readiness(
 
 
 @pytest.mark.asyncio
+async def test_ensure_started_waits_for_recovering_daemon_without_spawning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = DaemonController(_settings(tmp_path))
+    states = iter(
+        [
+            DaemonStatus(True, False, pid=42, generation="recovering"),
+            DaemonStatus(True, False, pid=42, generation="recovering"),
+            DaemonStatus(True, True, pid=42, generation="recovering"),
+        ]
+    )
+
+    async def status(_self: DaemonController) -> DaemonStatus:
+        return next(states)
+
+    monkeypatch.setattr(DaemonController, "status", status)
+    monkeypatch.setattr(
+        DaemonController,
+        "_spawn",
+        lambda _self: pytest.fail("a recovering daemon must not be replaced"),
+    )
+    monkeypatch.setattr("scs.daemon.DAEMON_POLL_SECONDS", 0.0)
+
+    result = await controller.ensure_started()
+    assert result.generation == "recovering"
+
+
+@pytest.mark.asyncio
+async def test_ensure_started_reports_failed_child_before_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = DaemonController(_settings(tmp_path))
+
+    async def absent(_self: DaemonController) -> DaemonStatus:
+        return DaemonStatus(False, False)
+
+    class ExitedProcess:
+        def poll(self) -> int:
+            return 2
+
+    monkeypatch.setattr(DaemonController, "status", absent)
+    monkeypatch.setattr(DaemonController, "_spawn", lambda _self: ExitedProcess())
+
+    with pytest.raises(RuntimeError, match="exited before readiness"):
+        await controller.ensure_started()
+
+
+@pytest.mark.asyncio
 async def test_stop_is_idempotent_when_daemon_is_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -120,9 +170,7 @@ async def test_stop_waits_for_writer_lock_after_socket_disappears(
 
     monkeypatch.setattr(DaemonController, "status", status)
     monkeypatch.setattr("scs.daemon.SCSClient", Client)
-    monkeypatch.setattr(
-        controller, "_writer_lock_available", lambda: next(lock_states)
-    )
+    monkeypatch.setattr(controller, "_writer_lock_available", lambda: next(lock_states))
     monkeypatch.setattr("scs.daemon.DAEMON_POLL_SECONDS", 0.0)
 
     assert await controller.stop(cancel_active=True) is True

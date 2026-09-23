@@ -70,7 +70,9 @@ def test_structural_index_and_warmed_query_budgets(tmp_path: Path) -> None:
     assert p95 <= WARMED_QUERY_P95_BUDGET_SECONDS
 
 
-@pytest.mark.skipif(shutil.which("ps") is None, reason="ps is required for RSS evidence")
+@pytest.mark.skipif(
+    shutil.which("ps") is None, reason="ps is required for RSS evidence"
+)
 def test_pre_embedding_daemon_rss_budget(tmp_path: Path) -> None:
     runtime = Path(tempfile.mkdtemp(prefix="scs-rss-", dir="/tmp"))
     environment = os.environ.copy()
@@ -80,6 +82,7 @@ def test_pre_embedding_daemon_rss_budget(tmp_path: Path) -> None:
             "SCS_MODEL_CACHE": str(tmp_path / "models"),
             "SCS_RUNTIME_DIR": str(runtime),
             "SCS_LOG_DIR": str(tmp_path / "logs"),
+            "SCS_DECISION_MODEL": "disabled",
             "SCS_MCP_INTERNAL_PORT": "0",
             "SCS_EMBEDDING_DIMENSION": "2",
         }
@@ -100,7 +103,9 @@ def test_pre_embedding_daemon_rss_budget(tmp_path: Path) -> None:
                 stderr = process.stderr.read() if process.stderr is not None else ""
                 raise AssertionError(f"SCS daemon exited during RSS setup: {stderr}")
             time.sleep(0.05)
-        assert identity.exists(), "SCS daemon did not publish identity before RSS deadline"
+        assert identity.exists(), (
+            "SCS daemon did not publish identity before RSS deadline"
+        )
         completed = subprocess.run(
             [shutil.which("ps") or "ps", "-o", "rss=", "-p", str(process.pid)],
             capture_output=True,

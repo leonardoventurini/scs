@@ -154,16 +154,20 @@ class QueryOrchestrator:
         provider: DecisionProvider,
         call: ServiceCall,
         classifier_timeout_seconds: float | None = None,
+        wait_until_ready: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._provider: DecisionProvider = provider
         self._call: ServiceCall = call
         self._classifier_timeout: float | None = classifier_timeout_seconds
+        self._wait_until_ready: Callable[[], Awaitable[None]] | None = wait_until_ready
         self._fallback: DeterministicDecisionProvider = DeterministicDecisionProvider()
 
     async def query(self, params: dict[str, object]) -> QueryCodeOutput:
         request = QueryRequest.model_validate(params)
         budget = MODE_BUDGETS[request.mode]
         started = perf_counter()
+        if self._wait_until_ready is not None:
+            await self._wait_until_ready()
         classification_started = perf_counter()
         degraded_reason: str | None = None
         try:

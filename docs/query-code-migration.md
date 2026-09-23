@@ -38,10 +38,11 @@ for orchestration, evaluation, and rollback; they are no longer model-facing MCP
 tools.
 
 The optional local classifier receives the goal and anchors only, never source
-or retrieved evidence. Its failure returns bounded discovery evidence with a
-degradation reason. A first request after daemon restart can take this fallback
-while the lazy classifier starts; check `routing.degraded_reason` and retry if
-the selected playbook is necessary. `ingest_project`, `ingest_files`,
+or retrieved evidence. A configured daemon warms the classifier before it
+reports ready. If the worker exits, SCS restarts it and holds new queries until
+it is ready. An inference failure returns bounded discovery evidence with a
+degradation reason. Check `routing.degraded_reason` when routing matters.
+`ingest_project`, `ingest_files`,
 `delete_repository`, and `get_graph_stats` remain separate MCP operations.
 
 Run `just eval-query` to compare `query_code` with versioned internal-route

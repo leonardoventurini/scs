@@ -15,7 +15,8 @@ from scs.config import SCSSettings
 from scs.service import ProcessLock
 from scs.wire.client import SCSClient
 
-DAEMON_START_TIMEOUT_SECONDS = 15.0
+# Configured classifier startup may use the worker's 30-second handshake budget.
+DAEMON_START_TIMEOUT_SECONDS = 45.0
 DAEMON_STOP_TIMEOUT_SECONDS = 300.0
 DAEMON_POLL_SECONDS = 0.05
 
@@ -43,9 +44,9 @@ class DaemonController:
         """Return daemon readiness without changing process state."""
 
         try:
-            health = await SCSClient(
-                self._socket_path, timeout_seconds=1.0
-            ).call("system.health")
+            health = await SCSClient(self._socket_path, timeout_seconds=1.0).call(
+                "system.health"
+            )
         except Exception as error:
             return DaemonStatus(
                 available=False,
@@ -88,11 +89,17 @@ class DaemonController:
             current = await self.status()
             if current.ready:
                 return current
-            self._spawn()
+            # A live socket can be temporarily unready during worker recovery.
+            # Wait for that generation instead of launching a second contender.
+            spawned: subprocess.Popen[bytes] | None = None
+            if not current.available:
+                spawned = self._spawn()
             while time.monotonic() < deadline:
                 current = await self.status()
                 if current.ready:
                     return current
+                if spawned is not None and spawned.poll() is not None:
+                    raise RuntimeError("SCS daemon exited before readiness")
                 await asyncio.sleep(DAEMON_POLL_SECONDS)
             raise TimeoutError("SCS daemon did not become ready before timeout")
         finally:
@@ -134,11 +141,11 @@ class DaemonController:
         lock.release()
         return True
 
-    def _spawn(self) -> None:
+    def _spawn(self) -> subprocess.Popen[bytes]:
         log_path = self.settings.paths.logs / "daemon.log"
         log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with log_path.open("ab", buffering=0) as log:
-            subprocess.Popen(
+            return subprocess.Popen(
                 (sys.executable, "-m", "scs.cli", "serve"),
                 stdin=subprocess.DEVNULL,
                 stdout=log,
@@ -151,6 +158,6 @@ class DaemonController:
         path = self.settings.paths.runtime / "daemon-service.json"
         try:
             payload = cast(object, json.loads(path.read_text(encoding="utf-8")))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
+        except FileNotFoundError, OSError, json.JSONDecodeError:
             return {}
         return cast(dict[str, object], payload) if isinstance(payload, dict) else {}

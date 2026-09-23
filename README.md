@@ -250,8 +250,10 @@ Apple Silicon, sync the optional dependency with
 The default bundle path is under the SCS model cache; `decision_model_path` can
 override it with an absolute path. The classifier sees only the goal and
 explicit anchors, never repository source or retrieved evidence. Failed
-classification falls back to deterministic routing. Queries never download a
-model.
+inference falls back to deterministic routing. A configured daemon becomes
+ready only after the classifier has loaded and warmed; invalid model material
+prevents startup. If the worker exits, SCS restarts it automatically and waits
+for readiness before routing new queries. Queries never download a model.
 
 For Python projects using a `src/` layout, a full `scs reindex <repo-path>`
 connects previously unresolved imports to indexed symbols. IMPACT then reports

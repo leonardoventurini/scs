@@ -28,6 +28,7 @@ async def test_two_stdio_bridges_share_daemon_until_final_disconnect(
         "SCS_RUNTIME_DIR": str(runtime),
         "SCS_LOG_DIR": str(tmp_path / "logs"),
         "SCS_MODEL_CACHE": str(tmp_path / "models"),
+        "SCS_DECISION_MODEL": "disabled",
         "SCS_EMBEDDING_DIMENSION": "2",
     }
     parameters = StdioServerParameters(
