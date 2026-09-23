@@ -35,15 +35,23 @@ Changelog = "https://github.com/leonardoventurini/scs/blob/main/CHANGELOG.md"
 scs = "scs.cli:main"
 scs-mcp = "scs.mcp.stdio:main"
 
+[project.optional-dependencies]
+laya = [
+    "onnxruntime==1.27.0",
+    "tokenizers==0.23.2",
+]
+
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.9",
     "coverage>=7.15.3",
     "hypothesis>=6.156.6",
+    "numpy==2.5.3",
     "pre-commit>=4.6.1",
     "pytest>=8.4",
     "pytest-asyncio>=1.0",
     "ruff>=0.15.21",
+    "tokenizers==0.23.2",
 ]
 
 [build-system]

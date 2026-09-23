@@ -61,6 +61,10 @@ class SCSSettings(BaseSettings):
     openai_compatible_base_url: str = DEFAULT_OPENAI_COMPATIBLE_BASE_URL
     openai_compatible_trusted_hosts: list[str] = Field(default_factory=list)
     reranking_model: str | None = None
+    decision_model: Literal["disabled", "laya"] = "disabled"
+    decision_model_path: Path | None = None
+    decision_timeout_seconds: float = Field(default=0.5, gt=0, le=1.0)
+    decision_max_concurrency: int = Field(default=1, ge=1, le=4)
     index_text_fallback: bool = True
     index_max_file_bytes: int = Field(default=1_048_576, ge=1)
     index_text_sample_bytes: int = Field(default=8_192, ge=1)
@@ -132,6 +136,15 @@ class SCSSettings(BaseSettings):
                         "owner-only permissions"
                     )
         return self
+
+    @field_validator("decision_model_path")
+    @classmethod
+    def _validate_decision_model_path(cls, path: Path | None) -> Path | None:
+        """Keep configured model loading confined to an explicit absolute path."""
+
+        if path is not None and not path.is_absolute():
+            raise ValueError("decision_model_path must be absolute")
+        return path
 
     @field_validator("openai_compatible_base_url")
     @classmethod

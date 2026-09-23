@@ -21,6 +21,10 @@ from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
 from scs.identity import IdentityPublisher
 from scs.metrics import AggregateMetrics
+from scs.orchestration.bundle import MODEL_REVISION
+from scs.orchestration.decision import DecisionProvider, DeterministicDecisionProvider
+from scs.orchestration.laya_provider import LayaDecisionProvider
+from scs.orchestration.query import QueryOrchestrator
 from scs.providers.base import EmbeddingProvider, RerankingProvider
 from scs.providers.mlx import MLXEmbeddingProvider
 from scs.providers.openai_compatible_reranking import (
@@ -104,6 +108,22 @@ class SCSDaemon:
             binding_for_repository=self._binding_for_repository,
             reranker=lambda: self._reranker,
         )
+        model_path = self.settings.decision_model_path or (
+            self.settings.paths.model_cache / "laya" / MODEL_REVISION
+        )
+        self._decision_provider: DecisionProvider = (
+            LayaDecisionProvider(
+                model_path,
+                max_concurrency=self.settings.decision_max_concurrency,
+            )
+            if self.settings.decision_model == "laya"
+            else DeterministicDecisionProvider()
+        )
+        self._query: QueryOrchestrator = QueryOrchestrator(
+            provider=self._decision_provider,
+            call=self._query_service_call,
+            classifier_timeout_seconds=self.settings.decision_timeout_seconds,
+        )
         self._register_methods()
 
     async def start(self) -> None:
@@ -150,6 +170,15 @@ class SCSDaemon:
                 )
             reranker = build_reranker(self.settings)
             stores = ProjectStoreRegistry(home=paths.home, provider=embeddings.metadata)
+            if self.settings.decision_model == "laya":
+                model_path = (self.settings.decision_model_path or (
+                    paths.model_cache / "laya" / MODEL_REVISION
+                )).resolve()
+                if not model_path.is_relative_to(paths.model_cache.resolve()) and any(
+                    model_path.is_relative_to(Path(record.canonical_root))
+                    for record in stores.records()
+                ):
+                    raise ValueError("decision model may not reside in an indexed repository")
             jobs = await asyncio.to_thread(IngestionJobStore, paths.jobs_database)
             parser = NativeParser()
             loop = asyncio.get_running_loop()
@@ -329,6 +358,8 @@ class SCSDaemon:
         self._runner = None
         if runner is not None:
             await runner.stop()
+        if isinstance(self._decision_provider, LayaDecisionProvider):
+            await self._decision_provider.close()
         graph = self._graph
         self._graph = None
         if graph is not None:
@@ -612,6 +643,7 @@ class SCSDaemon:
             return await asyncio.to_thread(metrics.report, days=raw_days)
 
         service_methods = {
+            "knowledge.query": self._query_route,
             "knowledge.search": self._services.search,
             "knowledge.related": self._services.related,
             "knowledge.graph_context": self._services.graph_context,
@@ -624,6 +656,29 @@ class SCSDaemon:
         }
         for method_name, handler in service_methods.items():
             self._router.method(method_name)(handler)
+
+    async def _query_service_call(
+        self, method: str, params: dict[str, object]
+    ) -> dict[str, object]:
+        """Restrict playbooks to existing read-only service capabilities."""
+
+        handlers = {
+            "knowledge.search": self._services.search,
+            "knowledge.related": self._services.related,
+            "knowledge.nodes.list": self._services.nodes_list,
+            "knowledge.inspect_file": self._services.inspect_file,
+            "knowledge.composite.regression_risk": self._services.composite_regression_risk,
+            "lsp.references": self._services.lsp_references,
+        }
+        handler = handlers.get(method)
+        if handler is None:
+            raise ValueError(f"query playbook route is unsupported: {method}")
+        return await handler(params)
+
+    async def _query_route(self, params: dict[str, object]) -> dict[str, object]:
+        """Adapt the typed query envelope to SCSWire's object result."""
+
+        return dict(await self._query.query(params))
 
     def _record_metric(
         self,

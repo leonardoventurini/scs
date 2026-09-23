@@ -17,6 +17,7 @@ class _UnusedGateway:
 
 def test_inventory_contains_only_code_intelligence_tools() -> None:
     assert MCP_TOOL_NAMES == {
+        "query_code",
         "search_code",
         "graph_context",
         "get_related",

@@ -2,6 +2,7 @@
 
 MCP_TOOL_NAMES = frozenset(
     {
+        "query_code",
         "search_code",
         "get_related",
         "graph_context",

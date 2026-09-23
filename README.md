@@ -230,12 +230,28 @@ repository identity, retain at most 30 days, and live in owner-only
 
 ## MCP tools
 
-SCS exposes eleven model-facing operations with distinct code-intelligence jobs:
+SCS exposes `query_code` beside eleven existing model-facing operations:
 `search_code`, `graph_context`, `get_related`, `list_symbols`, `inspect_file`,
 `find_references`, `regression_risk_report`, `ingest_project`, `ingest_files`,
 `delete_repository`, and `get_graph_stats`. Repository-query tools are annotated
 read-only and closed-world. Ingestion tools are marked destructive because
 reconciliation can remove stale SCS-owned index state.
+
+`query_code(goal=..., repo_path=..., mode="balanced")` selects one bounded
+playbook and returns compact evidence, routing details, stage traces, and
+completeness flags. Optional anchors are `node_type`, `symbol_name`, `node_ids`,
+`file_paths`, and `source_position`. Modes are `fast`, `balanced`, and
+`thorough`. The seven existing read tools remain available during evaluation.
+
+Routing is deterministic by default. To use the local Laya ONNX classifier,
+install its pinned, verified bundle with `uv run python scripts/install-laya.py`,
+sync the optional dependency with `uv sync --all-groups --extra laya`, and set
+`decision_model = "laya"` in the SCS configuration before restarting the daemon.
+The default bundle path is under the SCS model cache; `decision_model_path` can
+override it with an absolute path. The classifier sees only the goal and
+explicit anchors, never repository source or retrieved evidence. Failed
+classification falls back to deterministic routing. Queries never download a
+model.
 
 `delete_repository(repo_path=...)` durably removes one repository's SCS-owned
 index and catalog registration, stops its watcher, and supersedes pending

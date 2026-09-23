@@ -25,6 +25,7 @@ JOB_POLL_INTERVAL_SECONDS = 0.05
 
 MCP_GATEWAY_METHODS = frozenset(
     {
+        "knowledge.query",
         "knowledge.composite.regression_risk",
         "knowledge.graph_context",
         "knowledge.inspect_file",
@@ -609,6 +610,7 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
             )
 
         params_by_method: dict[str, dict[str, object]] = {
+            "knowledge.query": {"goal": "production_symbol", "repo_path": repo_path},
             "repository.index": {"repo_path": repo_path},
             "repository.ingest_files": {
                 "repo_path": repo_path,
@@ -649,6 +651,11 @@ async def test_every_mcp_gateway_method_is_a_live_public_route(tmp_path: Path) -
 
         assert "production_symbol" in {
             item["name"] for item in results["knowledge.search"]["results"]
+        }
+        assert results["knowledge.query"]["routing"]["playbook"] == "DISCOVER"
+        assert "production_symbol" in {
+            item["name"]
+            for item in results["knowledge.query"]["evidence"]["symbols"]
         }
         assert results["knowledge.search"]["queries"] == ["production_symbol"]
         search_with_null_queries = await client.call(

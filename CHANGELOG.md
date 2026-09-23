@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat(query): add bounded `query_code` orchestration with optional local Laya
+  routing, retaining legacy read tools during evaluation
 - fix(cli): list saved project indexes without starting reconciliation
 
 ## 0.1.22 - 2026-09-22

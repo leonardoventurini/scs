@@ -29,6 +29,8 @@ from scs.mcp.paths import (
     contained_deleted_path,
     contained_file_path,
 )
+from scs.orchestration.decision import SourcePosition
+from scs.orchestration.query import QueryCodeOutput, QueryRequest
 
 MAX_RESULTS = 200
 MAX_TRAVERSAL_DEPTH = 3
@@ -78,6 +80,38 @@ def build_mcp(
     """Build an isolated MCP application over SCS's public service contract."""
 
     mcp = ObservedMCPServer("scs", recorder=recorder or ToolRecorder())
+
+    @mcp.tool(annotations=READ_ONLY_LOCAL)
+    async def query_code(
+        goal: str,
+        repo_path: str,
+        mode: Literal["fast", "balanced", "thorough"] = "balanced",
+        node_type: str | None = None,
+        symbol_name: str | None = None,
+        node_ids: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        source_position: SourcePosition | None = None,
+        limit: int = 10,
+    ) -> QueryCodeOutput:
+        """Investigate a code goal with one bounded, inspectable playbook."""
+
+        request = _validated(
+            lambda: QueryRequest(
+                goal=goal,
+                repo_path=repo_path,
+                mode=mode,
+                node_type=node_type,
+                symbol_name=symbol_name,
+                node_ids=node_ids or [],
+                file_paths=file_paths or [],
+                source_position=source_position,
+                limit=limit,
+            )
+        )
+        return cast(
+            QueryCodeOutput,
+            await gateway.call("knowledge.query", cast(dict[str, object], request.model_dump(mode="json"))),
+        )
 
     @mcp.tool(annotations=READ_ONLY_LOCAL)
     async def search_code(

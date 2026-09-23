@@ -1,5 +1,5 @@
 ---
-status: approved
+status: implementing
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
@@ -545,17 +545,17 @@ does not alter repository source or graph data.
 
 ## Execution checklist
 
-- [ ] Add failing provider, subprocess protocol, lifecycle, timeout, and
+- [x] Add failing provider, subprocess protocol, lifecycle, timeout, and
       privacy tests.
-- [ ] Verify and pin the Laya repository, immutable revision, license, model
+- [x] Verify and pin the Laya repository, immutable revision, license, model
       digests, ONNX Runtime version, and supported execution providers.
-- [ ] Implement strict decision models and the provider-neutral interface.
-- [ ] Implement the SCS-owned Laya subprocess runner and fail-open provider.
-- [ ] Add failing table-driven and property tests for routing, eligibility,
+- [x] Implement strict decision models and the provider-neutral interface.
+- [x] Implement the SCS-owned Laya subprocess runner and fail-open provider.
+- [x] Add failing table-driven tests for routing, eligibility,
       budgets, and deterministic fallback.
-- [ ] Implement the seven fixed playbooks over existing internal routes.
-- [ ] Add failing MCP schema, evidence-envelope, and Phase A inventory tests.
-- [ ] Expose `query_code` beside the legacy read tools.
+- [x] Implement the seven fixed playbooks over existing internal routes.
+- [x] Add failing MCP schema, evidence-envelope, and Phase A inventory tests.
+- [x] Expose `query_code` beside the legacy read tools.
 - [ ] Add the versioned orchestration suite, baseline cases, metrics, evaluator,
       and a `just eval-query` command.
 - [ ] Update README, architecture, configuration, privacy, model-installation,
@@ -575,8 +575,9 @@ does not alter repository source or graph data.
 
 ## Verification results
 
-No implementation or live validation has been executed. Repository source was
-inspected to verify the current eleven-tool inventory, legacy read-tool inputs,
-typed output contracts, internal route reuse, search evaluation infrastructure,
-local installer lifecycle, and current optional-provider patterns. The local
-oMLX endpoint was unavailable during research; Laya does not depend on it.
+Phase A implementation is present. `just verify` passed with 380 Python tests,
+108 Rust tests, strict Python type checking, lint, and the native build. Focused
+provider tests exercised a subprocess protocol mismatch and credential-free
+environment. A manually launched pinned Laya worker classified two goals and
+closed cleanly. The versioned evaluation and live rollout gates remain pending;
+the seven legacy read tools remain exposed.

@@ -35,6 +35,15 @@ SEARCH_DIAGNOSTICS: dict[str, object] = {
 
 
 ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
+    "knowledge.query": {
+        "goal": "find parser", "repo_path": "/repo",
+        "routing": {"playbook": "DISCOVER"},
+        "evidence": {"symbols": [], "files": [], "relationships": [],
+                     "references": [], "test_targets": []},
+        "trace": [], "complete": True, "truncated": False,
+        "degraded_stages": [], "timings": {"classification_ms": 0.0,
+        "execution_ms": 0.0, "total_ms": 0.0},
+    },
     "knowledge.search": {
         "query": "retained",
         "results": [],
@@ -121,6 +130,10 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
 }
 
 EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
+    "query_code": {
+        "goal", "repo_path", "routing", "evidence", "trace", "complete",
+        "truncated", "degraded_stages", "timings",
+    },
     "search_code": {
         "query",
         "results",
@@ -205,6 +218,16 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
     repo = str(tmp_path.resolve())
     source_path = str(source.resolve())
     cases: list[tuple[str, dict[str, object], tuple[str, dict[str, object] | None]]] = [
+        (
+            "query_code",
+            {"goal": "find parser", "repo_path": repo},
+            (
+                "knowledge.query",
+                {"goal": "find parser", "repo_path": repo, "mode": "balanced",
+                 "node_type": None, "symbol_name": None, "node_ids": [],
+                 "file_paths": [], "source_position": None, "limit": 10},
+            ),
+        ),
         (
             "search_code",
             {"query": "retained", "repo_path": repo},
@@ -565,7 +588,7 @@ async def test_mcp_application_lists_exact_inventory() -> None:
     tools = await build_mcp(RecordingGateway()).list_tools()
 
     assert {tool.name for tool in tools} == MCP_TOOL_NAMES
-    assert len(tools) == 11
+    assert len(tools) == 12
     assert all(tool.annotations is not None for tool in tools)
     for tool in tools:
         annotations = tool.annotations
