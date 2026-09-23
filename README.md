@@ -253,6 +253,10 @@ explicit anchors, never repository source or retrieved evidence. Failed
 classification falls back to deterministic routing. Queries never download a
 model.
 
+The [query migration guide](docs/query-code-migration.md) maps each existing
+read tool to a goal and its optional anchors. Run `just eval-query` to compare
+the unified tool with versioned legacy route sequences on this repository.
+
 `delete_repository(repo_path=...)` durably removes one repository's SCS-owned
 index and catalog registration, stops its watcher, and supersedes pending
 indexing work without reading, changing, or deleting repository source. The

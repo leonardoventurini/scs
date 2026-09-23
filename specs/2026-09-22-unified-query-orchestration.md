@@ -9,7 +9,7 @@ decision: decisions/2026-09-22-unify-agent-code-queries.md
 supersedes:
 superseded-by:
 implementation:
-  commits: []
+  commits: [0eadb87]
   pull-request:
 ---
 
@@ -556,18 +556,18 @@ does not alter repository source or graph data.
 - [x] Implement the seven fixed playbooks over existing internal routes.
 - [x] Add failing MCP schema, evidence-envelope, and Phase A inventory tests.
 - [x] Expose `query_code` beside the legacy read tools.
-- [ ] Add the versioned orchestration suite, baseline cases, metrics, evaluator,
+- [x] Add the versioned orchestration suite, baseline cases, metrics, evaluator,
       and a `just eval-query` command.
-- [ ] Update README, architecture, configuration, privacy, model-installation,
+- [x] Update README, architecture, configuration, privacy, model-installation,
       and migration documentation.
-- [ ] Run targeted checks and commit each implementation unit separately.
-- [ ] Run `just verify` without a live model.
-- [ ] Install this checkout as the active local SCS runtime through a safe
+- [x] Run targeted checks and commit each implementation unit separately.
+- [x] Run `just verify` without a live model.
+- [x] Install this checkout as the active local SCS runtime through a safe
       daemon handoff.
-- [ ] Install and enable the pinned Laya bundle explicitly.
-- [ ] Run and record live fast, balanced, and thorough orchestration evaluations
+- [x] Install and enable the pinned Laya bundle explicitly.
+- [x] Run and record live fast, balanced, and thorough orchestration evaluations
       plus restart recovery.
-- [ ] Review every acceptance criterion and retain Phase A if any retirement
+- [x] Review every acceptance criterion and retain Phase A if any retirement
       gate fails.
 - [ ] In the breaking release, remove the seven legacy MCP wrappers, require
       the exact five-tool inventory, update migration documentation, and run
@@ -575,9 +575,33 @@ does not alter repository source or graph data.
 
 ## Verification results
 
-Phase A implementation is present. `just verify` passed with 380 Python tests,
+Phase A implementation is present. `just verify` passed with 384 Python tests,
 108 Rust tests, strict Python type checking, lint, and the native build. Focused
 provider tests exercised a subprocess protocol mismatch and credential-free
 environment. A manually launched pinned Laya worker classified two goals and
-closed cleanly. The versioned evaluation and live rollout gates remain pending;
-the seven legacy read tools remain exposed.
+closed cleanly. The seven legacy read tools remain exposed.
+
+The active `scs` launcher is a symlink to this checkout's `.venv/bin/scs`.
+`scs doctor` passed after a cooperative daemon restart. The previously indexed
+SCS repository remained readable. Laya revision
+`68f27dfe5a27a54fb2b1fefc432f43f972e90868` and ONNX digest
+`487746363a8da57bcadb4345352997d22a0fb90d70aa22c6856668d023242aba`
+were verified. The local runtime used ONNX Runtime 1.27.0 on arm64 with the CPU
+execution provider. The local SCS configuration enables the model; queries do
+not download it. A second cooperative daemon restart preceded the thorough
+evaluation; `scs list` still showed this repository indexed afterward.
+
+The seven-case warmed live reports are
+`evals/reports/2026-09-22-laya-{fast,balanced,thorough}.json`. Balanced and
+thorough routing accuracy was 100%, mean call count fell from two to one, and
+mean response bytes fell by about 77%. Balanced p95 was 1.93 s and classifier
+p95 was 330 ms. Macro Recall@10 matched the legacy baseline at 0.857, but
+nDCG@10 fell from 0.804 to 0.699, beyond the allowed 0.02. The IMPACT route
+returned no target for the judged MCP test file. Fast-mode classification
+timed out at its 150 ms ceiling on all seven cases, reducing routing accuracy
+to 14%. The evaluation is a small repository-specific sample and route-call
+proxy for MCP payloads, not a broad quality claim. Retirement gates failed;
+Phase A remains in force. "Unsupported" evidence in the report means absent
+from the small positive-judgment set; the suite does not establish that all
+such evidence is incorrect. The legacy baseline route choices are versioned
+inputs, so baseline routing accuracy is synthetic and not a model score.

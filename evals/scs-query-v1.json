@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "name": "scs-query-v1",
+  "cases": [
+    {
+      "goal": "Find the code that builds the MCP server",
+      "expected_playbook": "DISCOVER",
+      "relevant": [{"identity": "src/scs/mcp/server.py", "grade": 3}],
+      "baseline": [
+        {"method": "knowledge.search", "params": {"query": "build MCP server", "limit": 10, "result_detail": "compact"}},
+        {"method": "knowledge.inspect_file", "params": {"file_path": "src/scs/mcp/server.py", "node_limit": 10, "edge_limit": 20}}
+      ]
+    },
+    {
+      "goal": "Understand how code search combines lexical and semantic candidates",
+      "expected_playbook": "UNDERSTAND",
+      "relevant": [{"identity": "src/scs/indexing/search.py", "grade": 3}],
+      "baseline": [
+        {"method": "knowledge.search", "params": {"query": "combine lexical semantic candidates", "limit": 10, "result_detail": "compact"}},
+        {"method": "knowledge.inspect_file", "params": {"file_path": "src/scs/indexing/search.py", "node_limit": 10, "edge_limit": 20}}
+      ]
+    },
+    {
+      "goal": "Show relationships around the SCS daemon",
+      "anchors": {"symbol_name": "SCSDaemon"},
+      "expected_playbook": "RELATIONSHIPS",
+      "relevant": [{"identity": "src/scs/main.py", "grade": 3}],
+      "baseline": [
+        {"method": "knowledge.search", "params": {"query": "SCSDaemon", "limit": 10, "result_detail": "compact"}},
+        {"method": "knowledge.related", "params": {"symbol_name": "SCSDaemon", "depth": 2, "direction": "both"}}
+      ]
+    },
+    {
+      "goal": "Find references to SCSDaemon",
+      "anchors": {"symbol_name": "SCSDaemon"},
+      "expected_playbook": "REFERENCES",
+      "relevant": [{"identity": "src/scs/main.py", "grade": 3}],
+      "baseline": [
+        {"method": "knowledge.search", "params": {"query": "SCSDaemon", "limit": 10, "result_detail": "compact"}},
+        {"method": "knowledge.related", "params": {"symbol_name": "SCSDaemon", "depth": 2, "direction": "incoming", "relationship": "references"}}
+      ]
+    },
+    {
+      "goal": "Inspect the MCP server file and its symbols",
+      "anchors": {"file_paths": ["src/scs/mcp/server.py"]},
+      "expected_playbook": "INSPECT_FILES",
+      "relevant": [{"identity": "src/scs/mcp/server.py", "grade": 3}],
+      "baseline": [
+        {"method": "knowledge.search", "params": {"query": "MCP server", "limit": 10, "result_detail": "compact"}},
+        {"method": "knowledge.inspect_file", "params": {"file_path": "src/scs/mcp/server.py", "node_limit": 10, "edge_limit": 20}}
+      ]
+    },
+    {
+      "goal": "Which tests could be affected if the MCP server changes?",
+      "anchors": {"file_paths": ["src/scs/mcp/server.py"]},
+      "expected_playbook": "IMPACT",
+      "relevant": [{"identity": "tests/integration/test_mcp_server.py", "grade": 3}],
+      "baseline": [
+        {"method": "knowledge.search", "params": {"query": "MCP server tests", "limit": 10, "result_detail": "compact"}},
+        {"method": "knowledge.composite.regression_risk", "params": {"file_paths": ["src/scs/mcp/server.py"], "dependent_limit": 10, "test_target_limit": 10}}
+      ]
+    },
+    {
+      "goal": "List indexed Python functions",
+      "anchors": {"node_type": "function"},
+      "expected_playbook": "INVENTORY",
+      "relevant": [{"identity": "tests/unit/test_indexing_watcher.py", "grade": 1}],
+      "baseline": [
+        {"method": "knowledge.search", "params": {"query": "Python functions", "limit": 10, "result_detail": "compact"}},
+        {"method": "knowledge.nodes.list", "params": {"node_type": "function", "limit": 10, "offset": 0}}
+      ]
+    }
+  ]
+}
