@@ -9,7 +9,8 @@ decision:
 supersedes: 2026-09-22-project-lifecycle-cli.md (listing contract only)
 superseded-by:
 implementation:
-  commits: []
+  commits:
+    - 1b55b3a
   pull-request:
 ---
 
