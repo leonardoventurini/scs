@@ -10,7 +10,7 @@ superseded-by:
 related-specs:
   - specs/2026-09-22-unified-query-orchestration.md
 implementation:
-  commits: []
+  commits: [dd56819]
   pull-request:
 ---
 

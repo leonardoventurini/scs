@@ -10,7 +10,7 @@ decision-runtime: decisions/2026-09-23-use-native-mlx-for-query-routing.md
 supersedes:
 superseded-by:
 implementation:
-  commits: [0eadb87, f0187cd]
+  commits: [0eadb87, f0187cd, dd56819, 21803de, 353d35a]
   pull-request:
 ---
 
