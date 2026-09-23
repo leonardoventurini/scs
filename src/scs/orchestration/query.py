@@ -11,7 +11,7 @@ from typing import ClassVar, Literal, TypedDict, cast
 
 from pydantic import ConfigDict, Field, model_validator
 
-from scs.graph.models import NodeType
+from scs.graph.models import NodeType, RelationshipType
 from scs.orchestration.bundle import MODEL_REPOSITORY
 from scs.orchestration.decision import (
     DecisionProvider,
@@ -43,6 +43,14 @@ MODE_BUDGETS: dict[QueryMode, ModeBudget] = {
     "balanced": ModeBudget(0.5, 10, 2, 3, 7.0),
     "thorough": ModeBudget(1.0, 20, 3, 5, 35.0),
 }
+
+REFERENCE_RELATIONSHIPS = (
+    RelationshipType.IMPORTS,
+    RelationshipType.CALLS,
+    RelationshipType.REFERENCES,
+    RelationshipType.INHERITS,
+    RelationshipType.IMPLEMENTS,
+)
 
 
 class QueryRequest(RoutingRequest):
@@ -256,39 +264,52 @@ class QueryOrchestrator:
                 identities = [str(seed.get("id", "")) for seed in seeds[:1] if seed.get("id")]
             if not identities and symbol is None:
                 return
-            response = await stage(
-                "references" if incoming else "traversal",
-                "knowledge.related",
-                {
-                    "node_id": identities[0] if identities else None,
-                    "symbol_name": symbol,
-                    "repo_path": request.repo_path,
-                    "depth": budget.graph_depth,
-                    "direction": "incoming" if incoming else "both",
-                    "relationship": "references" if incoming else None,
-                },
+            edge_types: tuple[RelationshipType | None, ...] = (
+                REFERENCE_RELATIONSHIPS if incoming else (None,)
             )
-            self._append_nodes(evidence, _objects(response.get("matches")), "traversal")
-            for item in _objects(response.get("related")):
-                raw_node = item.get("node")
-                if isinstance(raw_node, dict):
-                    node = cast(dict[str, object], raw_node)
-                    self._append_nodes(evidence, [node], "traversal")
-                else:
-                    node = item
-                relationship = {
-                    "kind": "reference" if incoming else "relationship",
-                    "id": str(item.get("id", node.get("id", ""))),
-                    "seed_id": item.get("seed_id", identities[0] if identities else None),
-                    "target_id": node.get("id"),
-                    "relationship": item.get("relationship", "references" if incoming else None),
-                    "direction": item.get("direction", "incoming" if incoming else "both"),
-                    "file_path": node.get("file_path"),
-                    "start_line": node.get("start_line"),
-                    "end_line": node.get("end_line"),
-                    "stage": "references" if incoming else "traversal",
-                }
-                evidence["references" if incoming else "relationships"].append(relationship)
+            for edge_type in edge_types:
+                stage_name = "references" if incoming else "traversal"
+                response = await stage(
+                    stage_name,
+                    "knowledge.related",
+                    {
+                        "node_id": identities[0] if identities else None,
+                        "symbol_name": symbol,
+                        "repo_path": request.repo_path,
+                        "depth": 1 if incoming else budget.graph_depth,
+                        "direction": "incoming" if incoming else "both",
+                        "relationship": edge_type.value if edge_type else None,
+                    },
+                )
+                matches = _objects(response.get("matches"))
+                self._append_nodes(evidence, matches, stage_name)
+                matched_seed_id = (
+                    identities[0] if identities
+                    else next((match.get("id") for match in matches if match.get("id")), None)
+                )
+                for item in _objects(response.get("related")):
+                    # Traversal includes its seed. It is a definition, not a reference.
+                    if incoming and item.get("depth") == 0:
+                        continue
+                    raw_node = item.get("node")
+                    if isinstance(raw_node, dict):
+                        node = cast(dict[str, object], raw_node)
+                        self._append_nodes(evidence, [node], stage_name)
+                    else:
+                        node = item
+                    relationship = {
+                        "kind": "reference" if incoming else "relationship",
+                        "id": str(item.get("id", node.get("id", ""))),
+                        "seed_id": item.get("seed_id", matched_seed_id),
+                        "target_id": node.get("id"),
+                        "relationship": edge_type.value if edge_type else item.get("relationship"),
+                        "direction": item.get("direction", "incoming" if incoming else "both"),
+                        "file_path": self._file_path(node),
+                        "start_line": node.get("start_line"),
+                        "end_line": node.get("end_line"),
+                        "stage": stage_name,
+                    }
+                    evidence["references" if incoming else "relationships"].append(relationship)
 
         try:
             async with asyncio.timeout(budget.total_seconds):
@@ -460,9 +481,10 @@ class QueryOrchestrator:
             evidence[category].append(projected)
 
     @staticmethod
-    def _evidence_key(item: dict[str, object]) -> tuple[str, str, str]:
+    def _evidence_key(item: dict[str, object]) -> tuple[str, str, str, str]:
         return (
             str(item.get("kind", "")),
             str(item.get("id", item.get("file_path", ""))),
             str(item.get("target_id", item.get("file_path", ""))),
+            str(item.get("relationship", "")),
         )

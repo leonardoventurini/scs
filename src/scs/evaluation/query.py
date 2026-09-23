@@ -222,6 +222,12 @@ def _identities(value: object) -> list[str]:
     found: list[str] = []
     if isinstance(value, dict):
         item = cast(dict[str, object], value)
+        if {"symbols", "files", "references", "relationships", "test_targets"} <= item.keys():
+            for category in (
+                "symbols", "files", "references", "relationships", "test_targets"
+            ):
+                found.extend(_identities(item.get(category)))
+            return list(dict.fromkeys(found))
         metadata = item.get("metadata")
         nested_path = (
             cast(dict[str, object], metadata).get("file_path")

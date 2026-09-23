@@ -103,3 +103,46 @@ async def test_ineligible_and_failed_classifier_fall_back_once(tmp_path: Path) -
     assert result["routing"]["playbook"] == Playbook.DISCOVER.value
     assert result["routing"]["degraded_reason"] == "ineligible_playbook"
     assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_references_include_direct_dependency_edges_only(tmp_path: Path) -> None:
+    class DependencyRoutes(FakeRoutes):
+        async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            self.calls.append((method, params))
+            assert method == "knowledge.related"
+            seed = {
+                "id": "symbol", "type": "class", "name": "Parser",
+                "metadata": {"file_path": "parser.py"},
+            }
+            source = {
+                "id": "importer", "type": "file", "name": "test_parser.py",
+                "metadata": {"file_path": "test_parser.py"},
+            }
+            related = [{"node": seed, "depth": 0}]
+            if params["relationship"] == "imports":
+                related.append({"node": source, "depth": 1})
+            return {"matches": [seed], "related": related}
+
+    routes = DependencyRoutes()
+    query = QueryOrchestrator(provider=FixedProvider(Playbook.REFERENCES), call=routes.call)
+
+    result = await query.query({
+        "goal": "Find references to Parser", "repo_path": str(tmp_path),
+        "symbol_name": "Parser",
+    })
+
+    assert {params["relationship"] for _method, params in routes.calls} == {
+        "calls", "imports", "inherits", "implements", "references",
+    }
+    assert all(params["depth"] == 1 for _method, params in routes.calls)
+    assert result["evidence"]["files"] == [{
+        "kind": "file", "id": "importer", "file_path": "test_parser.py",
+        "stage": "references",
+    }]
+    assert result["evidence"]["references"] == [{
+        "kind": "reference", "id": "importer", "seed_id": "symbol",
+        "target_id": "importer", "relationship": "imports",
+        "direction": "incoming", "file_path": "test_parser.py",
+        "start_line": None, "end_line": None, "stage": "references",
+    }]

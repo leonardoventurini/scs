@@ -756,3 +756,39 @@ routing gates pass. In balanced mode, REFERENCES retrieved one of five judged
 files and RELATIONSHIPS retrieved five of six; the respective nDCG values were
 0.123 and 0.499. These are observable evidence gaps, not reasons to relax the
 retirement thresholds. Phase A and the legacy read tools remain active.
+
+### Reference retrieval and evidence ranking
+
+The symbol-anchored `REFERENCES` route previously selected only stored
+`references` edges, omitting direct `imports`, `calls`, `inherits`, and
+`implements` dependencies. It now queries those five dependency edge types
+at one hop, excludes each traversal seed from reference evidence, and labels
+returned evidence with the actual edge type. Position-anchored
+`lsp.references` keeps its existing path. `RELATIONSHIPS` retains its bounded
+bidirectional traversal.
+
+The evaluator previously inferred rank from JSON object-key order. Wire
+serialization alphabetized the evidence categories, so a related file could
+rank before the matched definition. The evaluator now ranks unified evidence
+by `symbols`, `files`, `references`, `relationships`, and `test_targets`, while
+preserving order within each category. Its graded-identity projection and
+metric formulas are unchanged. Focused tests reproduced both failures before
+the fixes and now pass.
+
+The live v2 reports are
+`evals/reports/2026-09-23-laya-mlx-reference-routing-v2-{fast,balanced,thorough}.json`.
+All three modes routed seven of seven cases correctly and passed every
+reported gate. Fast Recall@10 was 0.864 versus 0.863 and nDCG@10 was 0.777
+versus 0.775. Balanced and thorough Recall@10 was 0.935 versus 0.863; their
+nDCG@10 values were 0.832 versus 0.775 and 0.832 versus 0.777, respectively.
+Balanced response p95 was 1.66 s and classifier p95 was 20.3 ms. REFERENCES
+retrieved all five judged files in balanced mode. RELATIONSHIPS nDCG rose
+from 0.499 to 0.847 but still retrieved five of six judged files: the missing
+`src/scs/daemon.py` facade has no direct graph edge to `SCSDaemon` and the
+legacy baseline finds it through its separate search call. This per-case
+limit remains visible despite passing aggregate gates. INSPECT_FILES and
+INVENTORY report bounded truncation in all modes; no timeouts occurred.
+
+The measured quality gate is now clear for this suite and workstation. This
+does not itself retire legacy tools or complete the separate Phase C inventory
+and migration criteria, so Phase A remains active.

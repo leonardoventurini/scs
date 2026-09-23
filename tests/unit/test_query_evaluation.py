@@ -25,6 +25,18 @@ def test_node_list_identity_uses_source_path_before_opaque_id() -> None:
     assert _identities(response) == ["src/scs/main.py", "id-only"]
 
 
+def test_unified_evidence_ranking_ignores_serialized_object_key_order() -> None:
+    evidence = {
+        "files": [{"file_path": "test_parser.py"}],
+        "references": [],
+        "relationships": [],
+        "symbols": [{"file_path": "parser.py"}],
+        "test_targets": [],
+    }
+
+    assert _identities(evidence) == ["parser.py", "test_parser.py"]
+
+
 def test_ranked_evidence_and_calibration() -> None:
     case = QueryEvaluationCase.model_validate(
         {
