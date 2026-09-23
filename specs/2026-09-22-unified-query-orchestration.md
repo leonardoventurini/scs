@@ -200,6 +200,12 @@ Eligibility and fallback rules are evaluated in this order:
 
 Within each playbook, ordering, deduplication, graph direction, truncation, and
 tie-breaking are deterministic for the same index and provider responses.
+For Python repositories using a `src/` layout, indexing resolves import names
+against existing repository-scoped symbols beneath `src/` when the direct name
+has no match. It records only real dependency edges; external or missing
+imports do not become inferred test targets. Existing qualified names and graph
+storage format remain stable. Existing indexes require a full reindex to gain
+edges that were previously dropped.
 
 ### Output
 
@@ -504,6 +510,9 @@ active tool.
   produce the same playbook and evidence ordering across repeated runs.
 - The evaluation suite shows no decrease greater than 0.02 in macro evidence
   Recall@10 or nDCG@10 versus its versioned legacy baseline.
+- A test file importing an indexed Python symbol in a `src/` layout has a
+  stored import edge to that symbol. IMPACT reports it as a test target with
+  that edge as evidence after a full reindex.
 - Unified execution reduces mean MCP call count by at least 50% and mean
   serialized response bytes by at least 25% across multi-stage cases.
 - On the target Apple Silicon workstation, warmed balanced-mode p95 is below
@@ -568,6 +577,9 @@ does not alter repository source or graph data.
       offline warmup, strict output projection, and fail-open behavior.
 - [x] Rerun live fast, balanced, and thorough evaluations with MLX and record
       the new model identity, latency, routing, evidence, and restart recovery.
+- [x] Resolve Python `src/` imports to existing graph symbols, test full and
+      incremental ingestion, reindex the local repository, and rerun IMPACT
+      and orchestration quality gates.
 - [x] Add the versioned orchestration suite, baseline cases, metrics, evaluator,
       and a `just eval-query` command.
 - [x] Update README, architecture, configuration, privacy, model-installation,
@@ -683,3 +695,34 @@ remain in force.
 | Active checkout and restart recovery | Passed | Checkout launcher, doctor, cooperative restart, post-restart fast report. |
 | Five-tool Phase C and migration | Pending | Migration guide exists; retirement blocked by evidence gate. |
 | Model-free `just verify` | Passed | 389 Python and 108 Rust tests; no model load or download. |
+
+### Python source-layout dependency validation
+
+The Python parser emits an import target such as `scs.mcp.server.build_mcp`,
+while the existing repository-relative qualified name for the indexed symbol
+is `src.scs.mcp.server.build_mcp`. During edge resolution, a missing direct
+Python import now tries the `src.` form against the same repository's actual
+nodes. It does not create inferred nodes or change stored qualified names.
+An integration test first reproduced the missing edge, then passed for both
+full ingestion and an incremental changed test file; its missing external
+import produced no edge. Focused tests passed 41 cases. `just verify` passed
+390 Python and 108 Rust tests, type checking, lint, and native build.
+
+After a cooperative daemon restart, a full reindex of this checkout completed
+for 257 parsed files without an indexing error. The live regression-risk route
+reported three test targets for `src/scs/mcp/server.py`, including
+`tests/integration/test_mcp_server.py`; each target has an `imports` edge to an
+affected node. The versioned fast, balanced, and thorough reports are
+`evals/reports/2026-09-23-laya-mlx-graph-{fast,balanced,thorough}.json`.
+Every mode routed seven of seven cases correctly, reached Recall@10 of 1.0,
+and passed the latency, call-count, and byte gates. Balanced classifier p95
+was 27.7 ms and response p95 was 2.04 s.
+
+The nDCG@10 gate still fails: balanced and thorough scored 0.654 against the
+legacy baseline's 0.804. The judged IMPACT test target is third among three
+directly importing tests, while the suite gives positive relevance only to
+that one file. Other playbook rankings also moved after the full reindex.
+These observations show the graph repair worked but do not establish that the
+remaining ranked-evidence gap is resolved. Phase A remains active and the
+seven legacy read tools stay available. Existing project indexes need a full
+reindex to acquire dependency edges that were previously dropped.

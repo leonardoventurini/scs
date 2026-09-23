@@ -17,7 +17,7 @@ from scs.indexing.discovery import (
     build_file_entry,
     discover,
 )
-from scs.graph.models import Edge, NodeType
+from scs.graph.models import Edge, NodeType, RelationshipType
 from scs.indexing.parser.base import LanguageParser, ParsedEdge, ParsedEntity
 from scs.indexing.repository_paths import (
     assert_ingestable_repo_path,
@@ -658,6 +658,16 @@ class IngestionPipeline:
                 # that target a file outside the current structural plan.
                 source = resolve(edge.source_qualified_name)
                 target = resolve(edge.target_qualified_name)
+                if (
+                    target is None
+                    and item.entry.language == "python"
+                    and edge.relationship is RelationshipType.IMPORTS
+                ):
+                    # The parser keeps repository-relative identities, while
+                    # imports omit the src/ layout directory. Resolve the
+                    # import to an existing repo-scoped node without changing
+                    # stored qualified names or inventing external targets.
+                    target = resolve(f"src.{edge.target_qualified_name}")
                 key = (source or "", target or "", edge.relationship.value)
                 if source and target and key not in seen:
                     seen.add(key)

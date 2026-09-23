@@ -8,6 +8,7 @@ import pytest
 import scs.indexing.pipeline as pipeline_module
 from scs.graph.models import NodeType, RelationshipType
 from scs.indexing.parser.base import ParsedEdge, ParsedEntity
+from scs.indexing.parser.native import NativeParser
 from scs.indexing.pipeline import IngestionPipeline
 from scs.providers.base import ProviderMetadata, ProviderUnavailableError
 
@@ -451,6 +452,47 @@ def test_cross_batch_call_edge_survives_complete_file_embedding_batches(
         edge["relationship"] == RelationshipType.CALLS.value
         and names_by_id[str(edge["source_id"])] == "caller"
         and names_by_id[str(edge["target_id"])] == "callee"
+        for edge in graph.edges
+    )
+
+
+def test_src_layout_import_connects_test_to_indexed_symbol(repository: Path) -> None:
+    source = repository / "src" / "sample" / "server.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def build_mcp():\n    pass\n", encoding="utf-8")
+    test_file = repository / "tests" / "test_server.py"
+    test_file.parent.mkdir()
+    test_file.write_text(
+        "from sample.server import build_mcp\n"
+        "from external.server import missing\n",
+        encoding="utf-8",
+    )
+    graph = FakeGraph()
+    pipeline = IngestionPipeline(graph=graph, parser=NativeParser())
+
+    pipeline.ingest(repository)
+
+    names = {
+        node_id: str(node["metadata"]["qualified_name"])
+        for node_id, node in graph.nodes.items()
+    }
+    imports = [
+        (names[str(edge["source_id"])], names[str(edge["target_id"])])
+        for edge in graph.edges
+        if edge["relationship"] == RelationshipType.IMPORTS.value
+    ]
+    assert imports == [
+        ("tests.test_server", "src.sample.server.build_mcp")
+    ]
+
+    graph.edges.clear()
+    test_file.write_text(test_file.read_text() + "# changed\n", encoding="utf-8")
+    pipeline.ingest_files(repository, [test_file])
+
+    assert any(
+        edge["relationship"] == RelationshipType.IMPORTS.value
+        and names[str(edge["source_id"])] == "tests.test_server"
+        and names[str(edge["target_id"])] == "src.sample.server.build_mcp"
         for edge in graph.edges
     )
 
