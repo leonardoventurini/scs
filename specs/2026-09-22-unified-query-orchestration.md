@@ -9,7 +9,7 @@ decision: decisions/2026-09-22-unify-agent-code-queries.md
 supersedes:
 superseded-by:
 implementation:
-  commits: [0eadb87]
+  commits: [0eadb87, f0187cd]
   pull-request:
 ---
 
