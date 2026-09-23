@@ -605,3 +605,19 @@ Phase A remains in force. "Unsupported" evidence in the report means absent
 from the small positive-judgment set; the suite does not establish that all
 such evidence is incorrect. The legacy baseline route choices are versioned
 inputs, so baseline routing accuracy is synthetic and not a model score.
+
+| Acceptance criterion, in document order | Result | Evidence or limit |
+|---|---|---|
+| Seven legacy scenarios represented | Passed | Seven-case suite and playbook tests. |
+| One closed classifier decision | Passed | Runner protocol and route tests. |
+| No source in classifier input | Passed | Typed routing request and subprocess environment tests. |
+| Failure returns bounded discovery | Passed | Failure tests and observed fast fallback. |
+| Stable repeat ordering | Inferred | Deterministic code and tests; no identical live replay comparison. |
+| Recall and nDCG versus baseline | Failed | Balanced/thorough nDCG fell by 0.105. |
+| MCP call and byte reduction | Inferred | Route-call proxy measured 50% fewer calls and about 77% fewer bytes; no direct MCP transport measurement. |
+| Balanced and classifier p95 | Passed | Warmed balanced report: 1.90 s and 330 ms. |
+| Routing accuracy and playbook recall | Failed | Balanced/thorough passed; fast reached 14% due classifier timeout. |
+| Complete response envelope | Passed | Contract tests and live reports. |
+| Active checkout and restart recovery | Passed | Symlink, doctor, cooperative restart, post-restart evaluation and indexed catalog. |
+| Five-tool Phase C and migration | Pending | Migration guide exists; retirement blocked by failed gates. |
+| Model-free `just verify` | Passed | No model process or download was needed for 384 Python and 108 Rust tests. |
