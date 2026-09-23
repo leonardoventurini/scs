@@ -66,4 +66,7 @@ is read only from SCS-owned project databases.
   unit tests passed; Rust doc tests passed; coverage was 87.05%.
 - Local `uv run scs list --json` reported saved indexes as `indexed`; the latest
   durable job creation time remained unchanged and the active-job count was 0.
-- The installed CLI outside this checkout was not changed or checked.
+- Installed the verified checkout with `uv tool install --force --from
+  /Users/leonardo/Repositories/scs scs`. The shell's `scs list --json` returned
+  21 `indexed` projects, and the durable job count and latest creation time were
+  unchanged before and after the command.
