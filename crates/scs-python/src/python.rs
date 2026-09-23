@@ -355,7 +355,7 @@ impl PyKnowledgeGraph {
     /// Count nodes, optionally filtered by type and/or repo.
     ///
     /// When `repo_id` is provided, the count is scoped to that repository —
-    /// critical for `list_symbols` where the total must match the filtered node set.
+    /// critical for scoped inventory where totals must match the filtered nodes.
     /// GIL released so concurrent threads aren't blocked.
     #[pyo3(signature = (node_type=None, repo_id=None))]
     fn count_nodes(
@@ -613,8 +613,8 @@ impl PyKnowledgeGraph {
     ) -> PyResult<Py<PyAny>> {
         let dir = parse_traversal_direction(direction);
         // Release the GIL: recursive traversal can visit many nodes across
-        // multiple SQL queries (depth * fan-out). MCP graph_context and
-        // get_related calls hold this for 50–500ms on large graphs, blocking
+        // multiple SQL queries (depth * fan-out). Service graph-context and
+        // related-node calls hold this for 50–500ms on large graphs, blocking
         // the dictation thread pool.
         let results = py
             .detach(|| {

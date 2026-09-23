@@ -230,10 +230,8 @@ repository identity, retain at most 30 days, and live in owner-only
 
 ## MCP tools
 
-SCS exposes `query_code` beside eleven existing model-facing operations:
-`search_code`, `graph_context`, `get_related`, `list_symbols`, `inspect_file`,
-`find_references`, `regression_risk_report`, `ingest_project`, `ingest_files`,
-`delete_repository`, and `get_graph_stats`. Repository-query tools are annotated
+SCS exposes five model-facing operations: `query_code`, `ingest_project`,
+`ingest_files`, `delete_repository`, and `get_graph_stats`. Query tools are annotated
 read-only and closed-world. Ingestion tools are marked destructive because
 reconciliation can remove stale SCS-owned index state.
 
@@ -241,7 +239,8 @@ reconciliation can remove stale SCS-owned index state.
 playbook and returns compact evidence, routing details, stage traces, and
 completeness flags. Optional anchors are `node_type`, `symbol_name`, `node_ids`,
 `file_paths`, and `source_position`. Modes are `fast`, `balanced`, and
-`thorough`. The seven existing read tools remain available during evaluation.
+`thorough`. The seven former read tools are available only as internal service
+routes; their MCP names have been removed.
 
 Routing is deterministic by default. To use the local Laya MLX classifier on
 Apple Silicon, sync the optional dependency with
@@ -258,9 +257,9 @@ For Python projects using a `src/` layout, a full `scs reindex <repo-path>`
 connects previously unresolved imports to indexed symbols. IMPACT then reports
 test targets only when the graph contains a dependency edge.
 
-The [query migration guide](docs/query-code-migration.md) maps each existing
+The [query migration guide](docs/query-code-migration.md) maps each retired
 read tool to a goal and its optional anchors. Run `just eval-query` to compare
-the unified tool with versioned legacy route sequences on this repository.
+the unified tool with versioned internal-route sequences on this repository.
 
 `delete_repository(repo_path=...)` durably removes one repository's SCS-owned
 index and catalog registration, stops its watcher, and supersedes pending
@@ -273,22 +272,18 @@ tools preserve repository source.
 Operational diagnostics remain available through the CLI and SCSWire instead
 of occupying the model's tool catalog.
 
-The search tool returns the existing full node records by default. Consumers
-can set result detail to compact to retain stable symbol identity, source
-location, signature, bounded content, and semantic distance while omitting
-timestamps, repository IDs, and unrelated parser metadata. Up to four optional
-query angles can be supplied through `queries`; `search_mode` selects `fast`,
-`balanced`, or the default `thorough` policy. Responses expose query-match
-evidence, stage timings, and truthful semantic/reranker degradation.
+`query_code` returns compact evidence, stage timings, and truthful degradation.
+It does not expose the former search tool's full node records, raw query-angle
+controls, or pagination. Use the documented SCSWire service routes for callers
+that need those lower-level responses.
 
 `get_graph_stats` separately reports structural and semantic readiness. With a
 repository path it also includes redacted active/latest durable jobs and a
 retry hint. `wait_job_id` can observe one job for up to 10 seconds without
 running, retrying, or cancelling it.
 
-`regression_risk_report` uses bounded incoming dependency analysis. It returns
-total counts and truncation/completeness flags, stage timings, and deduplicated
-test-file targets with the direct dependency edge supporting each suggestion.
+The `IMPACT` playbook uses bounded incoming dependency analysis and includes
+test-file targets backed by direct dependency edges.
 
 ## Runtime ownership
 

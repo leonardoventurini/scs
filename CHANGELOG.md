@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+- **Breaking (MCP):** replace the seven read tools (`search_code`,
+  `graph_context`, `get_related`, `list_symbols`, `inspect_file`,
+  `find_references`, `regression_risk_report`) with `query_code`; keep internal
+  service routes and four repository lifecycle tools. See the
+  [migration guide](docs/query-code-migration.md).
 - feat(query): replace the optional ONNX classifier with a pinned native MLX
   checkpoint and warm its GPU worker before serving decisions
 - feat(query): add bounded `query_code` orchestration with optional local Laya
-  routing, retaining legacy read tools during evaluation
+  routing
 - fix(indexing): resolve Python imports from `src/` layouts to indexed symbols
   so IMPACT can report graph-backed test targets after reindexing
 - fix(evaluation): score node-list source paths and audit unified-query

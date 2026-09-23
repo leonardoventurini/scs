@@ -10,7 +10,7 @@ decision-runtime: decisions/2026-09-23-use-native-mlx-for-query-routing.md
 supersedes:
 superseded-by:
 implementation:
-  commits: [0eadb87, f0187cd, dd56819, 21803de, 353d35a]
+  commits: [0eadb87, f0187cd, dd56819, 21803de, 353d35a, d583b94]
   pull-request:
 ---
 
@@ -100,9 +100,9 @@ get_graph_stats
 delete_repository
 ```
 
-During compatibility validation, the seven legacy read tools remain exposed
-beside `query_code`. Their removal is a deliberate breaking API change and
-must ship in a release that identifies the migration in the changelog.
+During compatibility validation, the seven legacy read tools remained exposed
+beside `query_code`. The approved full replacement removes them from MCP in the
+unreleased breaking change identified in the changelog.
 
 ### `query_code` input
 
@@ -369,30 +369,28 @@ repository reindex.
 
 ## Compatibility and migration
 
-Migration has three externally observable phases:
+The original plan had three externally observable phases. The user approved
+skipping the deprecation interval and proceeding directly to full replacement
+after the fast, balanced, and thorough v2 gates passed:
 
 ```text
 Phase A: query_code + seven legacy read tools
                    |
-                   | live equivalence and efficiency gates
+                   | live gates passed; full replacement approved
                    v
-Phase B: query_code preferred; legacy tools deprecated
-                   |
-                   | release boundary and removal approval
-                   v
-Phase C: query_code + four lifecycle tools
+Phase B: query_code + four lifecycle tools
 ```
 
 The internal routes behind the legacy tools remain available to playbooks and
-service tests in Phase C. MCP aliases are not retained after removal because
+service tests in Phase B. MCP aliases are not retained after removal because
 aliases would preserve the schema footprint this change is intended to remove.
 
 The migration guide maps every retired input onto `query_code` anchors and
 documents output evidence variants. Hard-coded callers receive an unknown-tool
-error after Phase C and must migrate.
+error after Phase B and must migrate.
 
-Rollback before Phase C disables `decision_model` or removes `query_code` while
-leaving legacy tools intact. Rollback after Phase C re-exposes the legacy MCP
+Rollback before Phase B disables `decision_model` or removes `query_code` while
+leaving legacy tools intact. Rollback after Phase B re-exposes the legacy MCP
 wrappers in a patch release; internal routes remain available, so rollback
 requires no data migration.
 
@@ -436,7 +434,7 @@ Tests are designed and added before or alongside each implementation unit.
 - Phase A contract tests require `query_code` and all current tools.
 - Migration tests compare every legacy read-tool scenario with its
   `query_code` representation and assert equivalent evidence identity.
-- Phase C contract tests require exactly the five-tool final inventory and
+- Full-replacement contract tests require exactly the five-tool final inventory and
   reject retired names.
 - Input and output schemas are snapshot-tested for intentional compatibility.
 
@@ -525,15 +523,15 @@ active tool.
 - The active local `scs` launcher runs the checkout build, survives daemon
   restart, and completes the live orchestration evaluation without losing or
   mutating indexed repository state.
-- Phase C exposes exactly five MCP tools and the migration guide covers every
+- Phase B exposes exactly five MCP tools and the migration guide covers every
   retired tool.
 - `just verify` passes without requiring a model download or a live Laya
   process.
 
-Legacy-tool retirement requires every criterion above to pass except where a
-criterion explicitly reports observational calibration. A failure retains
-Phase A, keeps the seven legacy read tools available, and records the evidence;
-it is not waived by manually inspecting a few successful requests.
+The pre-removal gate required every criterion above to pass except where a
+criterion explicitly reports observational calibration. A failing gate would
+have retained Phase A. After removal, a material regression requires restoring
+the MCP wrappers from the prior revision while keeping internal routes intact.
 
 ## Risks and recovery
 
@@ -597,7 +595,7 @@ does not alter repository source or graph data.
       plus restart recovery.
 - [x] Review every acceptance criterion and retain Phase A if any retirement
       gate fails.
-- [ ] In the breaking release, remove the seven legacy MCP wrappers, require
+- [x] In the breaking unreleased change, remove the seven legacy MCP wrappers, require
       the exact five-tool inventory, update migration documentation, and run
       `just verify` plus the live evaluation again.
 
@@ -789,6 +787,41 @@ legacy baseline finds it through its separate search call. This per-case
 limit remains visible despite passing aggregate gates. INSPECT_FILES and
 INVENTORY report bounded truncation in all modes; no timeouts occurred.
 
-The measured quality gate is now clear for this suite and workstation. This
-does not itself retire legacy tools or complete the separate Phase C inventory
-and migration criteria, so Phase A remains active.
+The measured quality gate is now clear for this suite and workstation. The
+user then approved direct full replacement without a deprecation period. The
+implementation and post-removal verification are recorded below.
+
+### Full replacement verification
+
+The seven read-tool MCP wrappers and their MCP-only response contracts were
+removed. The exact inventory is `query_code`, `ingest_project`, `ingest_files`,
+`get_graph_stats`, and `delete_repository`. The underlying SCSWire service
+routes remain available for playbooks, comparison reports, and rollback. The
+migration guide, README, and unreleased changelog identify the breaking change
+and the lower-level capabilities that `query_code` does not expose.
+
+The five-tool contract test failed before removal and passed afterward. The
+targeted MCP tests passed 20 cases. `just verify` passed 386 Python and 108 Rust
+tests, strict Python types, lint, and native build. The active `scs` launcher
+resolves to this checkout's `.venv/bin/scs`. The live v2 reports are
+`evals/reports/2026-09-23-laya-mlx-five-tool-v2-{fast,balanced,thorough}.json`.
+All modes routed seven of seven cases correctly and passed every reported gate.
+Fast Recall@10 was 0.864 against 0.863 and nDCG@10 was 0.781 against 0.775.
+Balanced Recall@10 was 0.935 against 0.863 and nDCG@10 was 0.832 against
+0.777; response p95 was 1.77 s. Thorough Recall@10 was 0.935 against 0.863
+and nDCG@10 was 0.832 against 0.775. The internal-route baseline remains
+available for future regression checks. The `RELATIONSHIPS` case still misses
+the graph-unlinked `src/scs/daemon.py` facade, as recorded above.
+
+The change is implemented in the checkout and documented as unreleased. No
+release was published in this unit of work.
+
+After a supported daemon restart, manual MCP inventory inspection returned
+exactly the five expected names. A cold balanced `SCSDaemon` reference query
+fell back to `DISCOVER` with `classifier_timeout` while the lazy MLX worker
+started; a later call routed to `REFERENCES` in about 20 ms of classification
+and returned four directly importing test files. The live reports warm the
+model before measurement, so their passing latency and evidence gates do not
+describe the first request after a daemon restart. The specified fail-open
+behavior remains intact, but callers should inspect `routing.degraded_reason`
+and retry when they need reference evidence after a cold start.

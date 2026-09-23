@@ -101,15 +101,16 @@ async def test_repository_deletion_rejects_an_empty_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inspection_normalizes_missing_source_path(tmp_path: Path) -> None:
+async def test_query_rejects_missing_source_position_path(tmp_path: Path) -> None:
     """Missing sources fail at the MCP boundary with a durable public error."""
     gateway = RecordingGateway()
     missing = tmp_path / "missing.py"
 
     with pytest.raises(Exception, match="source path does not exist"):
         await build_mcp(gateway).call_tool(
-            "inspect_file",
-            {"repo_path": str(tmp_path), "file_path": str(missing)},
+            "query_code",
+            {"goal": "find references", "repo_path": str(tmp_path),
+             "source_position": {"file_path": str(missing), "line": 0}},
         )
 
     assert gateway.calls == []

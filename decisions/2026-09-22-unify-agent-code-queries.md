@@ -3,7 +3,7 @@ status: accepted
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
-updated: 2026-09-22
+updated: 2026-09-23
 supersedes:
   - decisions/2026-08-05-reduce-mcp-tool-footprint.md
   - decisions/2026-09-14-add-evidence-driven-agent-contracts.md (inventory only)
@@ -21,6 +21,12 @@ implementation:
 The classifier-runtime choice in this decision was superseded by
 [Use Native MLX for Query Routing](2026-09-23-use-native-mlx-for-query-routing.md).
 The tool, playbook, and migration decisions remain active.
+
+On 2026-09-23, after the versioned fast, balanced, and thorough evaluation
+passed every reported retirement gate, the user approved direct full
+replacement without an intermediate deprecation interval. The five-tool MCP
+inventory is implemented in the unreleased breaking change. Internal service
+routes remain available for orchestration, evaluation, and rollback.
 
 ## Context
 

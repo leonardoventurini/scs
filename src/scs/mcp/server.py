@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from collections.abc import Callable
 from typing import Literal, TypeVar, cast
 
@@ -10,16 +9,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from scs.mcp.contracts import (
-    GraphContextOutput,
     GraphStatsOutput,
     IngestionOutput,
-    InspectFileOutput,
-    ListSymbolsOutput,
-    ReferencesOutput,
-    RegressionRiskOutput,
     RepositoryDeletionOutput,
-    RelatedOutput,
-    SearchCodeOutput,
 )
 from scs.mcp.gateway import ServiceGateway
 from scs.mcp.observability import ObservedMCPServer, ToolRecorder
@@ -32,9 +24,6 @@ from scs.mcp.paths import (
 from scs.orchestration.decision import SourcePosition
 from scs.orchestration.query import QueryCodeOutput, QueryRequest
 
-MAX_RESULTS = 200
-MAX_TRAVERSAL_DEPTH = 3
-MINIMUM_INSPECT_LIMIT = 1
 ToolInputT = TypeVar("ToolInputT")
 
 # Query tools inspect only SCS-owned state derived from local repositories.
@@ -57,10 +46,6 @@ DELETE_LOCAL = ToolAnnotations(
     idempotent_hint=True,
     open_world_hint=False,
 )
-
-
-def _limit(value: int) -> int:
-    return max(1, min(value, MAX_RESULTS))
 
 
 def _validated(operation: Callable[[], ToolInputT]) -> ToolInputT:
@@ -111,115 +96,6 @@ def build_mcp(
         return cast(
             QueryCodeOutput,
             await gateway.call("knowledge.query", cast(dict[str, object], request.model_dump(mode="json"))),
-        )
-
-    @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def search_code(
-        query: str | None = None,
-        node_type: str | None = None,
-        limit: int = 10,
-        result_detail: Literal["full", "compact"] = "full",
-        repo_path: str | None = None,
-        queries: list[str] | None = None,
-        search_mode: Literal["fast", "balanced", "thorough"] = "thorough",
-    ) -> SearchCodeOutput:
-        """Find code; use result node IDs with get_related for dependencies."""
-        # Some clients send only the supplemental `queries` list; promote its
-        # first entry to the primary query so schema confusion stays recoverable.
-        if query is None and queries:
-            query = queries[0]
-        if query is None:
-            raise ToolError("query is required; pass a string, or `queries`")
-
-        return cast(
-            SearchCodeOutput,
-            await gateway.call(
-                "knowledge.search",
-                {
-                    "query": query,
-                    "node_type": node_type,
-                    "limit": _limit(limit),
-                    "result_detail": result_detail,
-                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
-                    "queries": queries,
-                    "search_mode": search_mode,
-                },
-            ),
-        )
-
-    @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def get_related(
-        symbol_name: str | None = None,
-        node_id: str | None = None,
-        depth: int = 2,
-        relationship: str | None = None,
-        direction: str = "outgoing",
-        repo_path: str | None = None,
-    ) -> RelatedOutput:
-        """Traverse dependencies from one search result node ID or symbol name."""
-        return cast(
-            RelatedOutput,
-            await gateway.call(
-                "knowledge.related",
-                {
-                    "symbol_name": symbol_name,
-                    "node_id": node_id,
-                    "depth": max(1, min(depth, MAX_TRAVERSAL_DEPTH)),
-                    "relationship": relationship,
-                    "direction": direction,
-                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
-                },
-            ),
-        )
-
-    @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def graph_context(
-        query: str,
-        node_type: str | None = None,
-        vector_limit: int = 5,
-        hop_limit: int = 2,
-        direction: str = "both",
-        repo_path: str | None = None,
-        queries: list[str] | None = None,
-        search_mode: Literal["fast", "balanced", "thorough"] = "thorough",
-    ) -> GraphContextOutput:
-        """Combine code search seeds with bounded graph traversal."""
-        return cast(
-            GraphContextOutput,
-            await gateway.call(
-                "knowledge.graph_context",
-                {
-                    "query": query,
-                    "node_type": node_type,
-                    "vector_limit": _limit(vector_limit),
-                    "hop_limit": max(1, min(hop_limit, MAX_TRAVERSAL_DEPTH)),
-                    "direction": direction,
-                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
-                    "queries": queries,
-                    "search_mode": search_mode,
-                },
-            ),
-        )
-
-    @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def list_symbols(
-        node_type: str = "function",
-        limit: int = 50,
-        offset: int = 0,
-        repo_path: str | None = None,
-    ) -> ListSymbolsOutput:
-        """List an exhaustive page of indexed symbols of one code node type."""
-        return cast(
-            ListSymbolsOutput,
-            await gateway.call(
-                "knowledge.nodes.list",
-                {
-                    "node_type": node_type,
-                    "limit": _limit(limit),
-                    "offset": max(0, offset),
-                    "repo_path": _validated(lambda: canonical_repo_path(repo_path)),
-                },
-            ),
         )
 
     @mcp.tool(annotations=INDEX_MUTATING_LOCAL)
@@ -294,71 +170,6 @@ def build_mcp(
                         10.0,
                         max(0.0, wait_timeout_seconds),
                     ),
-                },
-            ),
-        )
-
-    @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def inspect_file(
-        repo_path: str,
-        file_path: str,
-        node_limit: int = 50,
-        edge_limit: int = 100,
-    ) -> InspectFileOutput:
-        """Inspect indexed symbols and edges after search identifies a source file."""
-        repo = _validated(lambda: canonical_repo_path(repo_path))
-        assert repo is not None
-        source = _validated(lambda: contained_file_path(file_path, repo))
-        return cast(
-            InspectFileOutput,
-            await gateway.call(
-                "knowledge.inspect_file",
-                {
-                    "repo_path": repo,
-                    "file_path": str(Path(source).relative_to(repo)),
-                    "node_limit": max(MINIMUM_INSPECT_LIMIT, node_limit),
-                    "edge_limit": max(MINIMUM_INSPECT_LIMIT, edge_limit),
-                },
-            ),
-        )
-
-    @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def regression_risk_report(
-        repo_path: str,
-        file_paths: list[str],
-        dependent_limit: int = 200,
-        test_target_limit: int = 50,
-    ) -> RegressionRiskOutput:
-        """Estimate a bounded blast radius with explicit test-target evidence."""
-        repo = _validated(lambda: canonical_repo_path(repo_path))
-        assert repo is not None
-        paths = [
-            _validated(lambda path=path: contained_file_path(path, repo))
-            for path in file_paths
-        ]
-        return cast(
-            RegressionRiskOutput,
-            await gateway.call(
-                "knowledge.composite.regression_risk",
-                {
-                    "file_paths": paths,
-                    "repo_path": repo,
-                    "dependent_limit": _limit(dependent_limit),
-                    "test_target_limit": _limit(test_target_limit),
-                },
-            ),
-        )
-
-    @mcp.tool(annotations=READ_ONLY_LOCAL)
-    async def find_references(file_path: str, line: int) -> ReferencesOutput:
-        """Find references to the narrowest symbol containing a zero-based line."""
-        return cast(
-            ReferencesOutput,
-            await gateway.call(
-                "lsp.references",
-                {
-                    "file_path": _validated(lambda: contained_file_path(file_path)),
-                    "line": max(0, line),
                 },
             ),
         )

@@ -8,31 +8,12 @@ from typing import override
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import CallToolResult
 
 from scs.mcp.inventory import MCP_TOOL_NAMES
 from scs.mcp.observability import ToolRecorder
 from scs.mcp.server import build_mcp
 
 pytestmark = pytest.mark.asyncio
-
-SEARCH_DIAGNOSTICS: dict[str, object] = {
-    "queries": ["retained"],
-    "query_matches": {},
-    "semantic_available": False,
-    "reranker_applied": False,
-    "degraded_stage": "semantic",
-    "timed_out": False,
-    "degraded_reason": "disabled in test",
-    "timings": {
-        "lexical_ms": 1.0,
-        "embedding_ms": 0.0,
-        "vector_ms": 0.0,
-        "rerank_ms": 0.0,
-        "total_ms": 1.0,
-    },
-}
-
 
 ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
     "knowledge.query": {
@@ -44,28 +25,6 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
         "degraded_stages": [], "timings": {"classification_ms": 0.0,
         "execution_ms": 0.0, "total_ms": 0.0},
     },
-    "knowledge.search": {
-        "query": "retained",
-        "results": [],
-        "neighbors": [],
-        "total": 0,
-        "retrieval_mode": "lexical",
-        **SEARCH_DIAGNOSTICS,
-    },
-    "knowledge.related": {
-        "symbol_name": None,
-        "node_id": "node-1",
-        "matches": [],
-        "related": [],
-    },
-    "knowledge.graph_context": {
-        "query": "retained",
-        "direction": "both",
-        "seeds": [],
-        "context": [],
-        "search": SEARCH_DIAGNOSTICS,
-    },
-    "knowledge.nodes.list": {"nodes": [], "total": 0, "limit": 50, "offset": 0},
     "repository.ingest_files": {"accepted": True, "job": {"id": "job-1"}},
     "repository.index": {"accepted": True, "job": {"id": "job-2"}},
     "repository.drop_index": {
@@ -93,40 +52,6 @@ ROUTE_OUTPUTS: dict[str, dict[str, object]] = {
         "retry_after_ms": None,
         "wait": None,
     },
-    "knowledge.inspect_file": {
-        "repo_path": "/repo",
-        "file_path": "module.py",
-        "nodes": [],
-        "edges": {},
-        "nodes_truncated": False,
-        "edges_truncated": False,
-    },
-    "knowledge.composite.regression_risk": {
-        "file_paths": [],
-        "affected_node_ids": [],
-        "dependents": [],
-        "test_dependents": [],
-        "total_dependents": 0,
-        "dependents_truncated": False,
-        "test_targets": [],
-        "total_test_targets": 0,
-        "test_targets_truncated": False,
-        "complete": True,
-        "timings": {
-            "file_lookup_ms": 0.0,
-            "edge_traversal_ms": 0.0,
-            "node_hydration_ms": 0.0,
-            "projection_ms": 0.0,
-            "total_ms": 0.0,
-        },
-    },
-    "lsp.references": {
-        "available": False,
-        "source": "index",
-        "file_path": "/repo/module.py",
-        "reason": "not indexed",
-        "language_server_configured": False,
-    },
 }
 
 EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
@@ -134,67 +59,16 @@ EXPECTED_OUTPUT_FIELDS: dict[str, set[str]] = {
         "goal", "repo_path", "routing", "evidence", "trace", "complete",
         "truncated", "degraded_stages", "timings",
     },
-    "search_code": {
-        "query",
-        "results",
-        "neighbors",
-        "total",
-        "retrieval_mode",
-        "queries",
-        "query_matches",
-        "semantic_available",
-        "reranker_applied",
-        "degraded_stage",
-        "timed_out",
-        "degraded_reason",
-        "timings",
-    },
-    "get_related": {"symbol_name", "node_id", "matches", "related"},
-    "graph_context": {"query", "direction", "seeds", "context", "search"},
-    "list_symbols": {"nodes", "total", "limit", "offset"},
     "ingest_files": {"accepted", "job"},
     "ingest_project": {"accepted", "job"},
     "delete_repository": {"accepted", "already_absent", "job"},
     "get_graph_stats": {
-        "repo_path",
-        "status",
-        "total_nodes",
-        "nodes_by_type",
-        "embedding_count",
-        "vector_index_count",
-        "vector_index_scope",
-        "ingestion_stats",
-        "database_size_bytes",
-        "vector_available",
-        "vector_unavailable_reason",
-        "structural_search_ready",
-        "semantic_search_ready",
-        "semantic_search_unavailable_reason",
-        "active_job",
-        "latest_job",
-        "retry_after_ms",
-        "wait",
-    },
-    "inspect_file": {
-        "repo_path",
-        "file_path",
-        "nodes",
-        "edges",
-        "nodes_truncated",
-        "edges_truncated",
-    },
-    "regression_risk_report": {
-        "file_paths",
-        "affected_node_ids",
-        "dependents",
-        "test_dependents",
-        "total_dependents",
-        "dependents_truncated",
-        "test_targets",
-        "total_test_targets",
-        "test_targets_truncated",
-        "complete",
-        "timings",
+        "repo_path", "status", "total_nodes", "nodes_by_type",
+        "embedding_count", "vector_index_count", "vector_index_scope",
+        "ingestion_stats", "database_size_bytes", "vector_available",
+        "vector_unavailable_reason", "structural_search_ready",
+        "semantic_search_ready", "semantic_search_unavailable_reason",
+        "active_job", "latest_job", "retry_after_ms", "wait",
     },
 }
 
@@ -212,7 +86,7 @@ class RecordingGateway:
         return ROUTE_OUTPUTS[method]
 
 
-async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> None:
+async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path: Path) -> None:
     source = tmp_path / "module.py"
     source.write_text("def retained():\n    return True\n", encoding="utf-8")
     repo = str(tmp_path.resolve())
@@ -226,62 +100,6 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
                 {"goal": "find parser", "repo_path": repo, "mode": "balanced",
                  "node_type": None, "symbol_name": None, "node_ids": [],
                  "file_paths": [], "source_position": None, "limit": 10},
-            ),
-        ),
-        (
-            "search_code",
-            {"query": "retained", "repo_path": repo},
-            (
-                "knowledge.search",
-                {
-                        "query": "retained",
-                        "node_type": None,
-                        "limit": 10,
-                        "result_detail": "full",
-                        "queries": None,
-                        "search_mode": "thorough",
-                        "repo_path": repo,
-                },
-            ),
-        ),
-        (
-            "get_related",
-            {"node_id": "node-1", "repo_path": repo},
-            (
-                "knowledge.related",
-                {
-                    "symbol_name": None,
-                    "node_id": "node-1",
-                    "depth": 2,
-                    "relationship": None,
-                    "direction": "outgoing",
-                    "repo_path": repo,
-                },
-            ),
-        ),
-        (
-            "graph_context",
-            {"query": "retained", "repo_path": repo},
-            (
-                "knowledge.graph_context",
-                {
-                    "query": "retained",
-                    "node_type": None,
-                    "vector_limit": 5,
-                    "hop_limit": 2,
-                    "direction": "both",
-                    "queries": None,
-                    "search_mode": "thorough",
-                    "repo_path": repo,
-                },
-            ),
-        ),
-        (
-            "list_symbols",
-            {"repo_path": repo},
-            (
-                "knowledge.nodes.list",
-                {"node_type": "function", "limit": 50, "offset": 0, "repo_path": repo},
             ),
         ),
         (
@@ -307,43 +125,9 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
             {"repo_path": repo},
             (
                 "knowledge.stats",
-                {
-                    "repo_path": repo,
-                    "wait_job_id": None,
-                    "wait_timeout_seconds": 0.0,
-                },
+                {"repo_path": repo, "wait_job_id": None,
+                 "wait_timeout_seconds": 0.0},
             ),
-        ),
-        (
-            "inspect_file",
-            {"repo_path": repo, "file_path": source_path},
-            (
-                "knowledge.inspect_file",
-                {
-                    "repo_path": repo,
-                    "file_path": "module.py",
-                    "node_limit": 50,
-                    "edge_limit": 100,
-                },
-            ),
-        ),
-        (
-            "regression_risk_report",
-            {"repo_path": repo, "file_paths": [source_path]},
-            (
-                "knowledge.composite.regression_risk",
-                {
-                    "repo_path": repo,
-                    "file_paths": [source_path],
-                    "dependent_limit": 200,
-                    "test_target_limit": 50,
-                },
-            ),
-        ),
-        (
-            "find_references",
-            {"file_path": source_path, "line": 0},
-            ("lsp.references", {"file_path": source_path, "line": 0}),
         ),
     ]
     gateway = RecordingGateway()
@@ -356,170 +140,8 @@ async def test_every_retained_tool_dispatches_to_its_public_route(tmp_path) -> N
     assert {name for name, _, _ in cases} == MCP_TOOL_NAMES
 
 
-async def test_search_dispatches_through_public_service_gateway(tmp_path) -> None:
-    gateway = RecordingGateway()
-    result = await build_mcp(gateway).call_tool(
-        "search_code",
-        {"query": "router contract", "repo_path": str(tmp_path), "limit": 999},
-    )
-
-    assert result.structured_content is not None
-    assert result.structured_content["query"] == "retained"
-    assert result.structured_content["results"] == []
-    assert gateway.calls == [
-        (
-            "knowledge.search",
-            {
-                "query": "router contract",
-                "node_type": None,
-                "limit": 200,
-                "result_detail": "full",
-                "queries": None,
-                "search_mode": "thorough",
-                "repo_path": str(tmp_path.resolve()),
-            },
-        )
-    ]
-
-
-@pytest.mark.parametrize(
-    "route_output",
-    [
-        {
-            "available": True,
-            "source": "index",
-            "symbol": {"id": "symbol-1", "name": "retained"},
-            "references": [],
-        },
-        {
-            "available": False,
-            "source": "index",
-            "file_path": "/repo/module.py",
-            "reason": "not indexed",
-            "language_server_configured": False,
-        },
-    ],
-)
-async def test_reference_result_variants_serialize_through_mcp(
-    tmp_path: Path, route_output: dict[str, object]
-) -> None:
-    source = tmp_path / "module.py"
-    source.write_text("def retained():\n    return True\n", encoding="utf-8")
-
-    class ReferenceGateway(RecordingGateway):
-        @override
-        async def call(
-            self,
-            method: str,
-            params: dict[str, object] | None = None,
-        ) -> dict[str, object]:
-            self.calls.append((method, params))
-            return route_output
-
-    result = await build_mcp(ReferenceGateway()).call_tool(
-        "find_references",
-        {"file_path": str(source), "line": 0},
-    )
-
-    assert isinstance(result, CallToolResult)
-    assert result.is_error is False
-    assert result.structured_content == {"result": route_output}
-
-
-async def test_search_dispatches_opt_in_compact_result_detail(tmp_path) -> None:
-    gateway = RecordingGateway()
-
-    await build_mcp(gateway).call_tool(
-        "search_code",
-        {
-            "query": "router contract",
-            "repo_path": str(tmp_path),
-            "result_detail": "compact",
-        },
-    )
-
-    assert gateway.calls == [
-        (
-            "knowledge.search",
-            {
-                "query": "router contract",
-                "node_type": None,
-                "limit": 10,
-                "result_detail": "compact",
-                "queries": None,
-                "search_mode": "thorough",
-                "repo_path": str(tmp_path.resolve()),
-            },
-        )
-    ]
-
-
-async def test_search_dispatches_multi_query_mode(tmp_path: Path) -> None:
-    gateway = RecordingGateway()
-
-    await build_mcp(gateway).call_tool(
-        "search_code",
-        {
-            "query": "router contract",
-            "queries": ["gateway dispatch", "wire route"],
-            "search_mode": "balanced",
-            "repo_path": str(tmp_path),
-        },
-    )
-
-    assert gateway.calls == [
-        (
-            "knowledge.search",
-            {
-                "query": "router contract",
-                "node_type": None,
-                "limit": 10,
-                "result_detail": "full",
-                "queries": ["gateway dispatch", "wire route"],
-                "search_mode": "balanced",
-                "repo_path": str(tmp_path.resolve()),
-            },
-        )
-    ]
-
-
-async def test_search_accepts_queries_without_primary_query(tmp_path: Path) -> None:
-    gateway = RecordingGateway()
-
-    await build_mcp(gateway).call_tool(
-        "search_code",
-        {
-            "queries": ["router contract", "gateway dispatch"],
-            "repo_path": str(tmp_path),
-        },
-    )
-
-    assert gateway.calls == [
-        (
-            "knowledge.search",
-            {
-                "query": "router contract",
-                "node_type": None,
-                "limit": 10,
-                "result_detail": "full",
-                "queries": ["router contract", "gateway dispatch"],
-                "search_mode": "thorough",
-                "repo_path": str(tmp_path.resolve()),
-            },
-        )
-    ]
-
-
-async def test_search_rejects_call_without_any_query(tmp_path: Path) -> None:
-    with pytest.raises(ToolError, match="query is required"):
-        await build_mcp(RecordingGateway()).call_tool(
-            "search_code",
-            {"repo_path": str(tmp_path)},
-        )
-
-
 async def test_explicit_project_ingestion_is_acknowledged_without_waiting(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     gateway = RecordingGateway()
     result = await build_mcp(gateway).call_tool(
@@ -566,9 +188,7 @@ async def test_repository_deletion_serializes_an_already_absent_result(
 @pytest.mark.parametrize(
     "retired_name",
     [
-        "search_knowledge",
-        "test_coverage_map",
-        "scs_diagnostics_snapshot",
+        "search_knowledge", "test_coverage_map", "scs_diagnostics_snapshot",
         "ingest_git_history",
     ],
 )
@@ -578,9 +198,9 @@ async def test_representative_retired_tools_are_unavailable(retired_name: str) -
 
 
 async def test_empty_repository_scope_is_rejected() -> None:
-    with pytest.raises(ToolError, match="repo_path must be a non-empty string"):
+    with pytest.raises(ToolError, match="String should have at least 1 character"):
         await build_mcp(RecordingGateway()).call_tool(
-            "search_code", {"query": "scope", "repo_path": ""}
+            "query_code", {"goal": "find scope", "repo_path": ""}
         )
 
 
@@ -588,7 +208,7 @@ async def test_mcp_application_lists_exact_inventory() -> None:
     tools = await build_mcp(RecordingGateway()).list_tools()
 
     assert {tool.name for tool in tools} == MCP_TOOL_NAMES
-    assert len(tools) == 12
+    assert len(tools) == 5
     assert all(tool.annotations is not None for tool in tools)
     for tool in tools:
         annotations = tool.annotations
@@ -614,18 +234,8 @@ async def test_mcp_application_lists_exact_inventory() -> None:
                 annotations.open_world_hint,
             ) == (True, False, True, False)
         assert tool.output_schema is not None
-        if tool.name != "find_references":
-            assert (
-                set(tool.output_schema["properties"])
-                == EXPECTED_OUTPUT_FIELDS[tool.name]
-            )
+        assert set(tool.output_schema["properties"]) == EXPECTED_OUTPUT_FIELDS[tool.name]
         assert tool.output_schema.get("additionalProperties") is not True
-    references = next(tool for tool in tools if tool.name == "find_references")
-    assert set(references.input_schema["properties"]) == {"file_path", "line"}
-    assert references.output_schema is not None
-    reference_result_schema = references.output_schema["properties"]["result"]
-    assert reference_result_schema.get("oneOf")
-    assert reference_result_schema["discriminator"]["propertyName"] == "available"
 
 
 async def test_observability_failure_is_fail_open() -> None:
@@ -643,26 +253,21 @@ async def test_observability_failure_is_fail_open() -> None:
     assert result.structured_content["status"] == "empty"
 
 
-async def test_source_aliases_preserve_identity_in_mcp_forwarding(tmp_path) -> None:
+async def test_source_aliases_preserve_identity_in_mcp_forwarding(tmp_path: Path) -> None:
     target = tmp_path / "source.py"
     target.write_text("value = 1\n", encoding="utf-8")
     alias = tmp_path / "alias.py"
     alias.symlink_to(target.name)
     gateway = RecordingGateway()
     mcp = build_mcp(gateway)
-    await mcp.call_tool(
-        "inspect_file", {"repo_path": str(tmp_path), "file_path": alias.name}
-    )
-    assert gateway.calls[-1][1]["file_path"] == alias.name
+
     await mcp.call_tool(
         "ingest_files",
         {"repo_path": str(tmp_path), "file_paths": [str(target), str(alias)]},
     )
-    assert gateway.calls[-1][1]["file_paths"] == [str(target), str(alias)]
-    await mcp.call_tool(
-        "regression_risk_report",
-        {"repo_path": str(tmp_path), "file_paths": [str(alias)]},
-    )
-    assert gateway.calls[-1][1]["file_paths"] == [str(alias)]
-    await mcp.call_tool("find_references", {"file_path": str(alias), "line": 0})
-    assert gateway.calls[-1][1]["file_path"] == str(alias)
+
+    assert gateway.calls[-1][1] == {
+        "repo_path": str(tmp_path.resolve()),
+        "file_paths": [str(target), str(alias)],
+        "deleted_paths": [],
+    }
