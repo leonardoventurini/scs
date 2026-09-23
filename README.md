@@ -4,6 +4,12 @@ SCS is a headless semantic code-intelligence service. It indexes
 source repositories into a structural and vector-backed code graph and exposes
 that intelligence through a local control socket and MCP.
 
+For code questions, an agent calls one `query_code` tool with a goal, repository
+path, and optional file or symbol anchors. SCS selects a bounded investigation
+playbook, reads its own index, and returns evidence with routing and completeness
+details. On Apple Silicon, an optional local Laya classifier can choose the
+playbook; SCS executes it with deterministic search and graph operations.
+
 SCS starts with an empty index. It does not migrate, inspect, or recreate any
 data from other applications. Repositories are added only through an explicit CLI,
 MCP, or client request.
@@ -16,7 +22,7 @@ Stable releases support Apple Silicon macOS and x86-64 Linux with CPython
 script, then run it:
 
 ```bash
-VERSION=0.1.15
+VERSION=0.2.0
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/scs-installer-${VERSION}.sh"
 curl -fsSLO "https://github.com/leonardoventurini/scs/releases/download/v${VERSION}/SHA256SUMS"
 shasum -a 256 -c SHA256SUMS --ignore-missing
@@ -89,7 +95,7 @@ and closing the final bridge shuts it down cleanly.
 Re-run the versioned installation procedure to upgrade or reinstall SCS. The
 installer cancels active indexing at a durable boundary, waits for the older
 daemon to release its writer lock, and then replaces the `uv` tool atomically.
-preserves `SCS_HOME`, including configuration and indexes.
+The upgrade preserves `SCS_HOME`, including configuration and indexes.
 
 ## Storage architecture
 
@@ -100,7 +106,7 @@ ingestion checkpoints, metadata filters, traversal, and semantic search onto
 generic TSG primitives. The Python, SCSWire, MCP, and CLI contracts therefore
 remain SCS-owned without coupling TSG to code intelligence.
 
-The dependency is pinned to the immutable `v0.2.1` Git tag and its resolved
+The dependency is pinned to the immutable `v0.2.4` Git tag and its resolved
 commit in `Cargo.lock`; building SCS does not require a sibling TSG checkout.
 TSG keeps canonical graph, catalog, and embedding state transactionally in
 SQLite and treats its vector index as a rebuildable accelerator.
@@ -235,33 +241,76 @@ SCS exposes five model-facing operations: `query_code`, `ingest_project`,
 read-only and closed-world. Ingestion tools are marked destructive because
 reconciliation can remove stale SCS-owned index state.
 
-`query_code(goal=..., repo_path=..., mode="balanced")` selects one bounded
-playbook and returns compact evidence, routing details, stage traces, and
-completeness flags. Optional anchors are `node_type`, `symbol_name`, `node_ids`,
-`file_paths`, and `source_position`. Modes are `fast`, `balanced`, and
-`thorough`. The seven former read tools are available only as internal service
-routes; their MCP names have been removed.
+### How a code query runs
 
-Routing is deterministic by default. To use the local Laya MLX classifier on
-Apple Silicon, sync the optional dependency with
-`uv sync --all-groups --extra laya`, install its pinned, verified bundle with
-`uv run --extra laya python scripts/install-laya.py`, and set
-`decision_model = "laya"` in the SCS configuration before restarting the daemon.
-The default bundle path is under the SCS model cache; `decision_model_path` can
-override it with an absolute path. The classifier sees only the goal and
-explicit anchors, never repository source or retrieved evidence. Failed
-inference falls back to deterministic routing. A configured daemon becomes
-ready only after the classifier has loaded and warmed; invalid model material
-prevents startup. If the worker exits, SCS restarts it automatically and waits
-for readiness before routing new queries. Queries never download a model.
+```text
+agent goal + repository + optional anchors
+                 |
+                 v
+        validate request and paths
+                 |
+                 v
+     select one of seven playbooks  <--- optional local Laya classifier
+                 |
+                 v
+     bounded index search and graph reads
+                 |
+                 v
+   evidence + routing + trace + completeness
+```
+
+For example, an agent can call:
+
+```text
+query_code(
+    goal="Find tests affected by changes to the parser",
+    repo_path="/repo",
+    file_paths=["src/parser.py"],
+    mode="balanced",
+)
+```
+
+Optional anchors are `node_type`, `symbol_name`, `node_ids`, `file_paths`, and
+`source_position`. The modes `fast`, `balanced`, and `thorough` set fixed time
+and evidence budgets. SCS chooses one of DISCOVER, UNDERSTAND, RELATIONSHIPS,
+REFERENCES, INSPECT_FILES, IMPACT, or INVENTORY, then runs only that bounded
+playbook. Results include the selected route, compact evidence, stage traces,
+timings, and `complete`, `truncated`, and `degraded_stages` flags.
+
+By default, routing follows deterministic rules. On Apple Silicon, you can opt
+in to a local Laya MLX classifier to choose the playbook from the goal and
+explicit anchors. Laya receives no repository source, embeddings, or retrieved
+evidence. It does not generate an answer or run arbitrary tools; SCS performs
+the search and graph reads. If inference fails during a query, SCS records the
+degradation and uses deterministic routing.
+
+For a source checkout on Apple Silicon, set up Laya explicitly:
+
+```bash
+uv sync --all-groups --extra laya
+uv run --extra laya python scripts/install-laya.py
+```
+
+Then add `decision_model = "laya"` to `~/.scs/config.toml` and run
+`uv run --extra laya scs daemon restart` from that checkout. The release
+installer installs the base tool without the optional Laya dependency. The model
+installation script downloads a pinned bundle to SCS's model cache and verifies
+every file against its expected SHA-256 digest. `decision_model_path` can point
+to another absolute bundle path. A configured daemon reports ready only after
+its private classifier worker loads and warms. It restarts a worker that exits
+and waits for recovery before routing new queries; queries never download a
+model. Missing or invalid model files prevent daemon startup.
+
+The seven former read tools are now internal service routes. Existing MCP
+callers must use `query_code`; the [migration guide](docs/query-code-migration.md)
+maps each retired tool to a goal and anchors.
 
 For Python projects using a `src/` layout, a full `scs reindex <repo-path>`
 connects previously unresolved imports to indexed symbols. IMPACT then reports
 test targets only when the graph contains a dependency edge.
 
-The [query migration guide](docs/query-code-migration.md) maps each retired
-read tool to a goal and its optional anchors. Run `just eval-query` to compare
-the unified tool with versioned internal-route sequences on this repository.
+Run `just eval-query` to compare the unified tool with versioned internal-route
+sequences on this repository.
 
 `delete_repository(repo_path=...)` durably removes one repository's SCS-owned
 index and catalog registration, stops its watcher, and supersedes pending
