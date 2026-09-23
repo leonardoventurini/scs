@@ -63,10 +63,10 @@ class ProjectStoreCatalog:
     _home: Path
     _database: Path
 
-    def __init__(self, home: Path) -> None:
+    def __init__(self, home: Path, *, migrate: bool = True) -> None:
         self._home = validate_scs_home(home)
         self._database = self._home / "catalog.db"
-        if self._database.exists():
+        if migrate and self._database.exists():
             self._migrate_schema()
 
     @property

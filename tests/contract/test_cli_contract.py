@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,35 +71,91 @@ def test_metrics_command_reads_daemon_aggregates(
     assert json.loads(capsys.readouterr().out)["totals"]["calls"] == 2
 
 
-def test_list_renders_table_and_json(
+def test_list_reads_saved_index_without_starting_daemon(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    response = {
-        "projects": [
-            {
-                "id": 7,
-                "state": "indexed",
-                "file_count": 42,
-                "last_indexed": "2026-09-22T12:00:00Z",
-                "repo_path": "/tmp/example",
-                "active_job_id": None,
-            }
-        ]
-    }
+    from scs.storage.catalog import ProjectStoreCatalog
+    from scs.storage.models import StoreGeneration, StoreState
+    from scs.storage.paths import ProjectStorePaths
 
-    async def call(method: str, params: dict[str, object] | None = None) -> dict[str, object]:
-        assert method == "projects.list"
-        assert params in (None, {})
-        return response
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    catalog = ProjectStoreCatalog(home)
+    registered = catalog.register(repo)
+    generation = StoreGeneration("gtest")
+    paths = ProjectStorePaths.resolve(home, registered.store_id, generation)
+    paths.ensure()
+    catalog.activate(repo, generation=generation, state=StoreState.SEMANTIC_STALE)
+    with sqlite3.connect(paths.database) as connection:
+        connection.execute("CREATE TABLE scopes (id INTEGER PRIMARY KEY, key TEXT NOT NULL)")
+        connection.execute("CREATE TABLE catalog (namespace TEXT, key TEXT, value TEXT)")
+        connection.execute("INSERT INTO scopes (key) VALUES (?)", (str(repo),))
+        connection.execute(
+            "INSERT INTO catalog VALUES (?, ?, ?)",
+            (
+                "scs.ingested-files",
+                "sample.py",
+                json.dumps({"repo_path": str(repo), "indexed_at": "2026-09-22T12:00:00Z"}),
+            ),
+        )
 
-    monkeypatch.setattr("scs.cli._call_daemon", call)
+    empty_repo = tmp_path / "empty-repo"
+    empty_repo.mkdir()
+    empty_record = catalog.register(empty_repo)
+    empty_paths = ProjectStorePaths.resolve(home, empty_record.store_id, generation)
+    empty_paths.ensure()
+    catalog.activate(
+        empty_repo, generation=generation, state=StoreState.SEMANTIC_READY
+    )
+    with sqlite3.connect(empty_paths.database) as connection:
+        connection.execute("CREATE TABLE catalog (namespace TEXT, key TEXT, value TEXT)")
+
+    async def unexpected_daemon_call(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise AssertionError("listing must not start or call the daemon")
+
+    monkeypatch.setenv("SCS_HOME", str(home))
+    monkeypatch.setattr("scs.cli._call_daemon", unexpected_daemon_call)
 
     assert main(["list"]) == 0
     table = capsys.readouterr().out
-    assert "ID" in table and "STATE" in table and "/tmp/example" in table
+    assert "ID" in table and "indexed" in table and str(repo) in table
     assert main(["list", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out) == response
+    assert json.loads(capsys.readouterr().out) == {
+        "projects": [
+            {
+                "id": registered.project_id,
+                "state": "indexed",
+                "file_count": 1,
+                "last_indexed": "2026-09-22T12:00:00Z",
+                "repo_path": str(repo),
+                "active_job_id": None,
+            },
+            {
+                "id": empty_record.project_id,
+                "state": "indexed",
+                "file_count": 0,
+                "last_indexed": None,
+                "repo_path": str(empty_repo),
+                "active_job_id": None,
+            },
+        ]
+    }
+
+
+def test_list_of_missing_catalog_creates_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("SCS_HOME", str(home))
+
+    assert main(["list", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"projects": []}
+    assert not home.exists()
 
 
 @pytest.mark.parametrize(

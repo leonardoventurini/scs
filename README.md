@@ -64,6 +64,9 @@ scs reingest 3
 scs delete 3
 ```
 
+`scs list` reads the saved index directly and does not start the daemon or
+schedule reconciliation. Its state column describes saved index availability.
+
 `delete` and `reingest` also accept a repository path. Both return a durable
 job acknowledgement immediately. Deletion removes only SCS-owned derived state;
 it never modifies repository source. A deleted numeric ID is never reused.

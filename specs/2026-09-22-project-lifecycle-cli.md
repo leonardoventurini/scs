@@ -7,7 +7,7 @@ updated: 2026-09-22
 owner: repository-lifecycle
 decision:
 supersedes:
-superseded-by:
+superseded-by: 2026-09-22-read-only-project-list.md (listing contract only)
 implementation:
   commits:
     - fc0612d

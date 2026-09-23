@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix(cli): list saved project indexes without starting reconciliation
+
 ## 0.1.22 - 2026-09-22
 
 - fix(indexing): bound semantic signatures and embedding requests while

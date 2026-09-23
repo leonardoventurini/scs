@@ -15,6 +15,7 @@ from scs.config import SCSSettings
 from scs.daemon import DaemonController
 from scs.main import serve
 from scs.mcp.stdio import serve_stdio
+from scs.storage.snapshot import list_saved_projects
 from scs.wire.client import SCSConnection
 
 
@@ -216,7 +217,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result, sort_keys=True))
         return 0
     if command == "list":
-        result = asyncio.run(_call_daemon("projects.list"))
+        result = list_saved_projects(SCSSettings().paths.home)
         if values.get("json") is True:
             print(json.dumps(result, sort_keys=True))
         else:
