@@ -21,7 +21,7 @@ from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
 from scs.identity import IdentityPublisher
 from scs.metrics import AggregateMetrics
-from scs.orchestration.bundle import MODEL_REVISION
+from scs.orchestration.bundle import MODEL_CACHE_NAMESPACE, MODEL_REVISION
 from scs.orchestration.decision import DecisionProvider, DeterministicDecisionProvider
 from scs.orchestration.laya_provider import LayaDecisionProvider
 from scs.orchestration.query import QueryOrchestrator
@@ -109,7 +109,7 @@ class SCSDaemon:
             reranker=lambda: self._reranker,
         )
         model_path = self.settings.decision_model_path or (
-            self.settings.paths.model_cache / "laya" / MODEL_REVISION
+            self.settings.paths.model_cache / MODEL_CACHE_NAMESPACE / MODEL_REVISION
         )
         self._decision_provider: DecisionProvider = (
             LayaDecisionProvider(
@@ -172,7 +172,7 @@ class SCSDaemon:
             stores = ProjectStoreRegistry(home=paths.home, provider=embeddings.metadata)
             if self.settings.decision_model == "laya":
                 model_path = (self.settings.decision_model_path or (
-                    paths.model_cache / "laya" / MODEL_REVISION
+                    paths.model_cache / MODEL_CACHE_NAMESPACE / MODEL_REVISION
                 )).resolve()
                 if not model_path.is_relative_to(paths.model_cache.resolve()) and any(
                     model_path.is_relative_to(Path(record.canonical_root))

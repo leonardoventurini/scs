@@ -31,7 +31,7 @@ eval-search suite="evals/scs-search-v1.json" repo="." k="10" repeats="1":
     uv run python scripts/evaluate-search.py --suite "{{suite}}" --repo "{{repo}}" --k "{{k}}" --repeats "{{repeats}}" --result-detail compact
 
 eval-query suite="evals/scs-query-v1.json" repo="." mode="balanced" k="10" repeats="1":
-    uv run python scripts/evaluate-query.py --suite "{{suite}}" --repo "{{repo}}" --mode "{{mode}}" --k "{{k}}" --repeats "{{repeats}}"
+    uv run --extra laya python scripts/evaluate-query.py --suite "{{suite}}" --repo "{{repo}}" --mode "{{mode}}" --k "{{k}}" --repeats "{{repeats}}"
 
 verify: typecheck lint coverage native-test
 

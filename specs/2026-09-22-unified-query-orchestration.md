@@ -3,9 +3,10 @@ status: implementing
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
-updated: 2026-09-22
+updated: 2026-09-23
 owner: code-intelligence
 decision: decisions/2026-09-22-unify-agent-code-queries.md
+decision-runtime: decisions/2026-09-23-use-native-mlx-for-query-routing.md
 supersedes:
 superseded-by:
 implementation:
@@ -47,7 +48,7 @@ of these existing workflows.
 
 Laya is the first candidate because it provides non-generative Choice-style
 classification with probabilities, publishes open weights under Apache 2.0,
-and can run locally through ONNX Runtime. Its SCS-specific accuracy,
+and can run locally through native MLX on Apple Silicon. Its SCS-specific accuracy,
 calibration, Apple Silicon latency, packaging integrity, and resource use have
 not yet been validated. Published model claims are hypotheses until the live
 evaluation in this specification records evidence.
@@ -58,7 +59,7 @@ evaluation in this specification records evidence.
 
 - Add one `query_code` MCP tool with a stable goal-oriented input contract.
 - Add a typed decision-provider boundary and a Laya implementation.
-- Run Laya in an SCS-owned local ONNX Runtime subprocess.
+- Run Laya in an SCS-owned local MLX subprocess.
 - Select one fixed playbook in one classifier call per `query_code` request.
 - Execute the selected playbook with deterministic, bounded SCS operations.
 - Return compact evidence, routing facts, completeness, degradation, and stage
@@ -308,10 +309,11 @@ discovery.
 
 ### Runtime and model packaging
 
-ONNX Runtime is an optional production dependency activated only when
-`decision_model` is configured. The exact package version, supported Python
-3.14 wheel, Apple Silicon execution provider, and Linux x86_64 behavior must be
-proven before the dependency is locked.
+Native MLX is an optional production dependency activated only when
+`decision_model` is configured on Apple Silicon. Version 0.2.0 is pinned;
+Python 3.14 compatibility and local GPU inference were verified on the target
+workstation. Other platforms use deterministic discovery. This replaces the
+original ONNX Runtime choice under the linked runtime decision.
 
 Implementation must pin an exact Laya model repository and immutable revision,
 record the weights' Apache 2.0 license, verify every downloaded artifact by
@@ -321,7 +323,8 @@ an absent bundle is a normal fail-open state.
 
 The runner loads only the configured local directory, enables the model
 library's offline mode, and does not discover other local model runtimes or
-caches. SCS does not depend on oMLX support for this integration.
+caches. It warms GPU inference before announcing readiness. SCS does not depend
+on oMLX support for this integration.
 
 ### Configuration
 
@@ -393,6 +396,11 @@ Tests are designed and added before or alongside each implementation unit.
 
 ### Provider and subprocess
 
+- Replacement MLX tests cover a verified local FP16 bundle, offline loading,
+  one synthetic GPU warmup before handshake, strict output projection, and
+  malformed or missing runtime fallback without a model download in CI.
+- Live replacement checks compare all seven routes with the former ONNX report
+  and require warmed fast classification to finish inside its 150 ms deadline.
 - Contract tests cover every strict request, response, and handshake variant.
 - Procedurally generated malformed messages cover unknown playbooks, missing
   probabilities, non-finite values, oversized inputs, wrong request IDs,
@@ -474,8 +482,8 @@ rather than only the development environment:
    balanced, and thorough modes with warmed repetitions.
 6. Restart the daemon and repeat a representative subset to prove model and
    index recovery.
-7. Record exact model revision/digest, ONNX Runtime version and execution
-   provider, machine architecture, evaluation report path, and all skipped or
+7. Record exact model revision/digest, MLX package version and device,
+   machine architecture, evaluation report path, and all skipped or
    degraded checks.
 
 The validation may stop or restart the SCS daemon through its supported
@@ -525,8 +533,8 @@ it is not waived by manually inspecting a few successful requests.
 - One public tool has a broader schema than any legacy tool. Typed anchors and
   one stable output envelope trade schema breadth for fewer model-facing
   choices.
-- Laya or ONNX Runtime may not support Python 3.14 or Apple Silicon adequately.
-  The provider remains disabled and Phase A remains in force until proven.
+- The pinned MLX runtime has been verified on this Apple Silicon workstation,
+  but wider platform compatibility and future Python versions are unproven.
 - Model probabilities may be poorly calibrated on code-investigation intents.
   They are diagnostic only; deterministic eligibility controls execution.
 - The subprocess adds memory and lifecycle complexity. Lazy startup, a single
@@ -556,6 +564,10 @@ does not alter repository source or graph data.
 - [x] Implement the seven fixed playbooks over existing internal routes.
 - [x] Add failing MCP schema, evidence-envelope, and Phase A inventory tests.
 - [x] Expose `query_code` beside the legacy read tools.
+- [x] Replace the ONNX runner and bundle with pinned native MLX; verify
+      offline warmup, strict output projection, and fail-open behavior.
+- [x] Rerun live fast, balanced, and thorough evaluations with MLX and record
+      the new model identity, latency, routing, evidence, and restart recovery.
 - [x] Add the versioned orchestration suite, baseline cases, metrics, evaluator,
       and a `just eval-query` command.
 - [x] Update README, architecture, configuration, privacy, model-installation,
@@ -574,6 +586,8 @@ does not alter repository source or graph data.
       `just verify` plus the live evaluation again.
 
 ## Verification results
+
+### Initial ONNX validation (historical)
 
 Phase A implementation is present. `just verify` passed with 384 Python tests,
 108 Rust tests, strict Python type checking, lint, and the native build. Focused
@@ -621,3 +635,51 @@ inputs, so baseline routing accuracy is synthetic and not a model score.
 | Active checkout and restart recovery | Passed | Symlink, doctor, cooperative restart, post-restart evaluation and indexed catalog. |
 | Five-tool Phase C and migration | Pending | Migration guide exists; retirement blocked by failed gates. |
 | Model-free `just verify` | Passed | No model process or download was needed for 384 Python and 108 Rust tests. |
+
+### Native MLX replacement validation
+
+The pinned `aac6fef/laya-mlx` revision
+`20aed815fc6acde75733882e7ec0e3f28aeb9717` was explicitly installed
+under the SCS model cache with all ten files checked by size and SHA-256. The
+worker loaded the local FP16 checkpoint through `laya-mlx==0.2.0`, warmed once
+before its handshake, and handled subsequent requests without a download.
+The configured `decision_model = "laya"` and public `query_code` contract did
+not change. `just verify` passed with 389 Python and 108 Rust tests, strict
+type checking, lint, and the native build without loading the model.
+The checkout launcher remains active, `scs doctor` passes, and the indexed SCS
+repository remains readable. The former ONNX cache bundle and temporary MLX
+probe copy were removed after the verified MLX handoff.
+
+The seven-case live reports are
+`evals/reports/2026-09-23-laya-mlx-{fast,balanced,thorough}.json`. All modes
+routed seven of seven cases correctly. Balanced classifier p95 was 20.3 ms and
+response p95 was 1.30 s. Thorough classifier p95 was 19.8 ms. Mean calls fell
+from two to one and balanced mean bytes from 20,562 to 4,634, measured as
+route-call proxies. Balanced/thorough Recall@10 matched baseline at 0.857,
+but nDCG@10 remained 0.699 against the baseline's 0.804, failing the allowed
+0.02 loss. The IMPACT judgment has no graph-backed target in this repository;
+the baseline finds its test file lexically. The underlying behavior and suite
+judgment need a separate agreed resolution before Phase C.
+
+The first fast run classified all routes, but its first measured classifier
+call took 144 ms and its evidence recall gate failed. After a cooperative
+daemon restart, `scs doctor` passed and the seven-case fast recovery report
+`evals/reports/2026-09-23-laya-mlx-fast-restart.json` had seven correct routes,
+no fallback or timeouts, and 19.0 ms classifier p95. Fast recovery Recall@10
+matched baseline; nDCG@10 still failed. This is local workstation evidence,
+not a portable latency guarantee. Phase A and all seven legacy read tools
+remain in force.
+
+| Acceptance criterion | Current result | Evidence or limit |
+|---|---|---|
+| Seven scenarios, one closed decision, complete envelope | Passed | Versioned suite, contract tests, and live MLX reports. |
+| No source in classifier input; offline verified bundle | Passed | Typed request, subprocess environment tests, verified local bundle, live worker. |
+| Failure returns bounded discovery | Passed | Provider failure tests; no live MLX failure induced. |
+| Stable repeat ordering | Inferred | Deterministic code and tests; no identical live replay comparison. |
+| Recall and nDCG versus baseline | Failed | Balanced/thorough Recall@10 0.857 matched; nDCG@10 0.699 versus 0.804. |
+| Call and byte reduction | Inferred | Route-call proxy: 50% fewer calls and 77% fewer balanced response bytes. |
+| Balanced and classifier p95 | Passed | 1.30 s balanced response; 20.3 ms classifier. |
+| Routing accuracy and playbook recall | Passed | Seven of seven for each mode, including after restart. |
+| Active checkout and restart recovery | Passed | Checkout launcher, doctor, cooperative restart, post-restart fast report. |
+| Five-tool Phase C and migration | Pending | Migration guide exists; retirement blocked by evidence gate. |
+| Model-free `just verify` | Passed | 389 Python and 108 Rust tests; no model load or download. |

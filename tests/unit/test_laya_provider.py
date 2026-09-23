@@ -20,7 +20,7 @@ from scs.orchestration.query import QueryOrchestrator
 
 
 def fake_runner(tmp_path: Path, *, wrong_identity: bool = False) -> Path:
-    """Generate a tiny protocol peer without ONNX or stored fixture payloads."""
+    """Generate a tiny protocol peer without MLX or stored fixture payloads."""
 
     handshake = {
         "protocol_version": PROTOCOL_VERSION,

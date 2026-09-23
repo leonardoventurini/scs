@@ -243,9 +243,10 @@ completeness flags. Optional anchors are `node_type`, `symbol_name`, `node_ids`,
 `file_paths`, and `source_position`. Modes are `fast`, `balanced`, and
 `thorough`. The seven existing read tools remain available during evaluation.
 
-Routing is deterministic by default. To use the local Laya ONNX classifier,
-install its pinned, verified bundle with `uv run python scripts/install-laya.py`,
-sync the optional dependency with `uv sync --all-groups --extra laya`, and set
+Routing is deterministic by default. To use the local Laya MLX classifier on
+Apple Silicon, sync the optional dependency with
+`uv sync --all-groups --extra laya`, install its pinned, verified bundle with
+`uv run --extra laya python scripts/install-laya.py`, and set
 `decision_model = "laya"` in the SCS configuration before restarting the daemon.
 The default bundle path is under the SCS model cache; `decision_model_path` can
 override it with an absolute path. The classifier sees only the goal and

@@ -1,20 +1,15 @@
-"""Private offline ONNX worker; stdout carries protocol messages only."""
+"""Private offline MLX worker; stdout carries protocol messages only."""
 
 from __future__ import annotations
 
 import argparse
-import json
-import math
 import sys
 import threading
+from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
+from importlib.metadata import version
 from pathlib import Path
-from typing import ClassVar, cast
-
-import numpy as np
-import onnxruntime as ort
-from tokenizers import Tokenizer
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Protocol, cast
 
 from scs.orchestration.bundle import (
     MODEL_DIGEST,
@@ -38,128 +33,96 @@ from scs.orchestration.protocol import (
 )
 
 QUESTION = "Select the single best code investigation workflow for this goal."
-MASK_TOKEN = "[MASK]"
+QUESTIONS: dict[str, object] = {
+    "playbook": {
+        "type": "choice",
+        "instructions": QUESTION,
+        "criteria": {
+            playbook.value: PLAYBOOK_DESCRIPTIONS[playbook]
+            for playbook in Playbook
+        },
+    },
+}
+WARMUP_GOAL = "Warm the local code-query classifier."
 
 
-class LayaConfig(BaseModel):
-    """The small trusted metadata file shipped with the pinned model."""
+class LayaAgent(Protocol):
+    """Only the private model method needed by this worker."""
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", strict=True)
-
-    max_len: int = Field(ge=1, le=4096)
-    head_max_len: int = Field(ge=1, le=1024)
-    temperature_by_options: dict[str, float]
+    def predict(self, state: dict[str, object], questions: dict[str, object]) -> object: ...
 
 
-def _sequence(
-    tokenizer: Tokenizer,
-    request: RoutingRequest,
-    *,
-    max_len: int,
-    head_max_len: int,
-) -> tuple[list[int], list[int]]:
-    """Render Laya's choice question with fixed labels and bounded state."""
+def _load_agent(directory: Path) -> LayaAgent:
+    """Import the optional dependency only after the verified bundle is present."""
 
-    def token_id(token: str) -> int:
-        value = tokenizer.token_to_id(token)
-        if value is None:
-            raise ValueError("Laya tokenizer lacks a required special token")
-        return value
+    from laya_mlx import load
 
-    def encode(value: str) -> list[int]:
-        return tokenizer.encode(value.replace(MASK_TOKEN, " "), add_special_tokens=False).ids
+    return load(str(directory), dtype="float16", device="gpu")
 
-    options = [
-        f"{playbook.value}: {PLAYBOOK_DESCRIPTIONS[playbook]}"
+
+def _mapping(value: object, label: str) -> Mapping[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"Laya {label} must be an object")
+    items = cast(dict[object, object], value)
+    if not all(isinstance(key, str) for key in items):
+        raise ValueError(f"Laya {label} must have string keys")
+    return cast(Mapping[str, object], items)
+
+
+def _probability(value: object, label: str) -> float:
+    if type(value) not in (int, float):
+        raise ValueError(f"Laya {label} must be numeric")
+    return float(cast(int | float, value))
+
+
+def _decision_from_prediction(prediction: object) -> RoutingDecision:
+    """Treat library output as untrusted before it crosses the subprocess pipe."""
+
+    response = _mapping(prediction, "prediction")
+    answers = _mapping(response.get("answers"), "answers")
+    answer = _mapping(answers.get("playbook"), "playbook")
+    if answer.get("type") != "choice":
+        raise ValueError("Laya playbook answer is not a choice")
+    selected = answer.get("choice")
+    if not isinstance(selected, str):
+        raise ValueError("Laya playbook is not a string")
+    raw_probabilities = _mapping(answer.get("probabilities"), "probabilities")
+    if set(raw_probabilities) != {playbook.value for playbook in Playbook}:
+        raise ValueError("Laya probabilities must cover every playbook")
+    probabilities = {
+        playbook: _probability(raw_probabilities[playbook.value], playbook.value)
         for playbook in Playbook
-    ]
-    option_ids = [
-        [token_id(MASK_TOKEN), *encode(" " + option)[:48]]
-        for option in options
-    ]
-    option_budget = head_max_len - sum(len(option) for option in option_ids)
-    if option_budget < 16:
-        per_option = max(4, (head_max_len - 16) // len(option_ids))
-        option_ids = [option[:per_option] for option in option_ids]
-        option_budget = head_max_len - sum(len(option) for option in option_ids)
-    header = encode(f"choice question: {QUESTION}")[: max(8, option_budget)]
-    sequence = [token_id("[CLS]"), *header, token_id("[SEP]")]
-    markers: list[int] = []
-    for option in option_ids:
-        markers.append(len(sequence))
-        sequence.extend(option)
-    sequence.append(token_id("[SEP]"))
-    state = json.dumps(request.model_dump(exclude_none=True), ensure_ascii=False)
-    sequence.extend(encode(state)[: max(0, max_len - len(sequence) - 1)])
-    sequence.append(token_id("[SEP]"))
-    if len(markers) != len(Playbook) or any(marker >= max_len for marker in markers):
-        raise ValueError("Laya question exceeds the pinned head budget")
-    return sequence[:max_len], markers
+    }
+    return RoutingDecision(
+        playbook=Playbook(selected),
+        model=f"{MODEL_REPOSITORY}@{MODEL_REVISION}",
+        confidence=_probability(answer.get("confidence"), "confidence"),
+        probabilities=probabilities,
+    )
 
 
 class LayaRuntime:
-    """One local model session reused by all child-process requests."""
+    """Keep one verified GPU model loaded and ready for bounded decisions."""
 
     def __init__(self, directory: Path) -> None:
         if not verify_bundle(directory):
             raise ValueError("Laya bundle is absent or failed checksum verification")
-        config = LayaConfig.model_validate_json((directory / "laya_config.json").read_text())
-        self._max_len: int = config.max_len
-        self._head_max_len: int = config.head_max_len
-        self._temperature: float = config.temperature_by_options["choice:6-10"]
-        self._tokenizer: Tokenizer = Tokenizer.from_file(str(directory / "tokenizer/tokenizer.json"))
-        options = ort.SessionOptions()
-        options.intra_op_num_threads = 4
-        self._session: ort.InferenceSession = ort.InferenceSession(
-            str(directory / "laya.onnx"),
-            sess_options=options,
-            providers=["CPUExecutionProvider"],
+        self._agent: LayaAgent = _load_agent(directory)
+
+        # MLX specializes GPU kernels on first use. Warm before the handshake
+        # so a ready worker can meet the 150 ms fast-mode classifier deadline.
+        self._agent.predict(
+            RoutingRequest(goal=WARMUP_GOAL).model_dump(exclude_none=True),
+            QUESTIONS,
         )
 
     def classify(self, request: RoutingRequest) -> RoutingDecision:
-        sequence, markers = _sequence(
-            self._tokenizer,
-            request,
-            max_len=self._max_len,
-            head_max_len=self._head_max_len,
-        )
-        result = self._session.run(
-            ["logits"],
-            {
-                "input_ids": np.asarray([sequence], dtype=np.int64),
-                "attention_mask": np.ones((1, len(sequence)), dtype=np.int64),
-                "marker_pos": np.asarray([markers], dtype=np.int64),
-                "marker_mask": np.ones((1, len(markers)), dtype=np.bool_),
-                "qtype": np.asarray([0], dtype=np.int64),
-            },
-        )
-        logits = np.asarray(result[0], dtype=np.float32).reshape(-1)
-        scores = [
-            value / self._temperature
-            for value in cast(list[float], logits[: len(Playbook)].tolist())
-        ]
-        maximum = max(scores)
-        weights = [math.exp(score - maximum) for score in scores]
-        denominator = sum(weights)
-        probabilities = {
-            playbook: weight / denominator
-            for playbook, weight in zip(Playbook, weights, strict=True)
-        }
-        selected = max(Playbook, key=lambda playbook: probabilities[playbook])
-        entropy = -sum(
-            probability * math.log(max(probability, 1e-12))
-            for probability in probabilities.values()
-        )
-        return RoutingDecision(
-            playbook=selected,
-            model=f"{MODEL_REPOSITORY}@{MODEL_REVISION}",
-            confidence=max(0.0, min(1.0, 1.0 - entropy / math.log(len(Playbook)))),
-            probabilities=probabilities,
-        )
+        prediction = self._agent.predict(request.model_dump(exclude_none=True), QUESTIONS)
+        return _decision_from_prediction(prediction)
 
 
 def main() -> int:
-    """Serve bounded lines; never print goals or anchors to logs."""
+    """Serve bounded lines without logging goals, anchors, or model output."""
 
     parser = argparse.ArgumentParser()
     parser.add_argument("model_directory", type=Path)
@@ -171,7 +134,7 @@ def main() -> int:
         model_repository=MODEL_REPOSITORY,
         model_revision=MODEL_REVISION,
         model_digest=MODEL_DIGEST,
-        runtime_version=ort.__version__,
+        runtime_version=version("laya-mlx"),
         question_schema_version=QUESTION_SCHEMA_VERSION,
     )
     output_lock = threading.Lock()

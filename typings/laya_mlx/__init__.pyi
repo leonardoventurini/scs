@@ -1,0 +1,6 @@
+from typing import Protocol
+
+class Agent(Protocol):
+    def predict(self, state: dict[str, object], questions: dict[str, object]) -> object: ...
+
+def load(model_id_or_path: str, *, dtype: str, device: str) -> Agent: ...

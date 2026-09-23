@@ -12,6 +12,7 @@ from typing import ClassVar, Literal, TypedDict, cast
 from pydantic import ConfigDict, Field, model_validator
 
 from scs.graph.models import NodeType
+from scs.orchestration.bundle import MODEL_REPOSITORY
 from scs.orchestration.decision import (
     DecisionProvider,
     DeterministicDecisionProvider,
@@ -401,7 +402,7 @@ class QueryOrchestrator:
             "routing": {
                 "requested_mode": request.mode,
                 "playbook": selected.value,
-                "provider": "laya" if decision.model.startswith("receptron/") else "deterministic",
+                "provider": "laya" if decision.model.startswith(f"{MODEL_REPOSITORY}@") else "deterministic",
                 "model": decision.model,
                 "confidence": decision.confidence,
                 "probabilities": {key.value: value for key, value in decision.probabilities.items()},

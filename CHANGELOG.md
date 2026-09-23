@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat(query): replace the optional ONNX classifier with a pinned native MLX
+  checkpoint and warm its GPU worker before serving decisions
 - feat(query): add bounded `query_code` orchestration with optional local Laya
   routing, retaining legacy read tools during evaluation
 - fix(cli): list saved project indexes without starting reconciliation

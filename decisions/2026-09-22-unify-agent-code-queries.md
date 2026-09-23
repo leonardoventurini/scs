@@ -8,6 +8,7 @@ supersedes:
   - decisions/2026-08-05-reduce-mcp-tool-footprint.md
   - decisions/2026-09-14-add-evidence-driven-agent-contracts.md (inventory only)
 superseded-by:
+  - decisions/2026-09-23-use-native-mlx-for-query-routing.md (classifier runtime only)
 related-specs:
   - specs/2026-09-22-unified-query-orchestration.md
 implementation:
@@ -16,6 +17,10 @@ implementation:
 ---
 
 # Unify Agent Code Queries Behind One Orchestrated Tool
+
+The classifier-runtime choice in this decision was superseded by
+[Use Native MLX for Query Routing](2026-09-23-use-native-mlx-for-query-routing.md).
+The tool, playbook, and migration decisions remain active.
 
 ## Context
 
