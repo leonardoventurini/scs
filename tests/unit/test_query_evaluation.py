@@ -7,10 +7,22 @@ from pydantic import ValidationError
 from scs.evaluation.query import (
     QueryEvaluationCase,
     QueryEvaluationSuite,
+    _identities,
     evaluate_observation,
     run_query_evaluation,
     summarize_observations,
 )
+
+
+def test_node_list_identity_uses_source_path_before_opaque_id() -> None:
+    response = {
+        "nodes": [
+            {"id": "opaque", "metadata": {"file_path": "src/scs/main.py"}},
+            {"id": "id-only", "metadata": {}},
+        ]
+    }
+
+    assert _identities(response) == ["src/scs/main.py", "id-only"]
 
 
 def test_ranked_evidence_and_calibration() -> None:

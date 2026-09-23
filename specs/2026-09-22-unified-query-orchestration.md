@@ -442,10 +442,11 @@ Tests are designed and added before or alongside each implementation unit.
 
 ### Evaluation
 
-Add `evals/scs-query-v1.json` and `scripts/evaluate-query.py`. Cases contain a
+The current `evals/scs-query-v2.json` and `scripts/evaluate-query.py` contain a
 goal, explicit anchors, expected playbook, graded evidence identities, and
 allowed legacy baseline calls. Fixtures are generated procedurally where
-possible; real repository judgments remain versioned and reviewable.
+possible; real repository judgments remain versioned and reviewable. V1 and
+its reports remain historical. Compare only reports from the same suite version.
 
 The evaluator runs both:
 
@@ -580,6 +581,9 @@ does not alter repository source or graph data.
 - [x] Resolve Python `src/` imports to existing graph symbols, test full and
       incremental ingestion, reindex the local repository, and rerun IMPACT
       and orchestration quality gates.
+- [x] Audit and expand the relevance judgments against source-backed pooled
+      candidates, correct node-list file identity projection, and rerun all
+      three modes with the versioned v2 suite.
 - [x] Add the versioned orchestration suite, baseline cases, metrics, evaluator,
       and a `just eval-query` command.
 - [x] Update README, architecture, configuration, privacy, model-installation,
@@ -726,3 +730,29 @@ These observations show the graph repair worked but do not establish that the
 remaining ranked-evidence gap is resolved. Phase A remains active and the
 seven legacy read tools stay available. Existing project indexes need a full
 reindex to acquire dependency edges that were previously dropped.
+
+### Relevance-judgment audit
+
+The v1 suite judged one file per case, including an arbitrary Python test file
+for INVENTORY. An audit pooled the top candidates from both paths, inspected
+the relevant source, and created `evals/scs-query-v2.json` with 31 positive
+file-level judgments across the same seven goals and baseline sequences. The
+three direct IMPACT tests are now judged; Rust functions remain unjudged for
+the Python INVENTORY goal. Node-list responses previously exposed only opaque
+IDs to the evaluator even though their metadata contained source paths. The
+evaluator now prefers that source path, with an ID fallback, and a focused test
+covers the projection. The nDCG formula and product retrieval are unchanged.
+`evals/README.md` records grade meanings and the limits of partial judgments.
+V1 and v2 scores are not directly comparable.
+
+The v2 live reports are
+`evals/reports/2026-09-23-laya-mlx-judgments-v2-{fast,balanced,thorough}.json`.
+Balanced and thorough routing remained seven of seven, with classifier p95
+near 20 ms. Their macro Recall@10 was 0.821 versus 0.863 for the legacy
+baseline, and nDCG@10 was 0.601 versus 0.777. Fast scored 0.750 recall and
+0.576 nDCG against the same baseline recall of 0.863 and nDCG of 0.775.
+Both quality gates fail in all modes, while latency, call-count, byte, and
+routing gates pass. In balanced mode, REFERENCES retrieved one of five judged
+files and RELATIONSHIPS retrieved five of six; the respective nDCG values were
+0.123 and 0.499. These are observable evidence gaps, not reasons to relax the
+retirement thresholds. Phase A and the legacy read tools remain active.

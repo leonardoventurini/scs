@@ -44,3 +44,26 @@ identity. Model-backed timings are intentionally observational rather than CI
 gates. Commit representative suites for each evaluated repository and compare
 reports produced with the same suite version and cutoff. The runner waits for
 active indexing jobs to finish before collecting measurements.
+
+## Unified query judgments
+
+`scs-query-v2.json` is the current seven-playbook suite. It keeps the v1 goals,
+anchors, and legacy call sequences, but expands file-level relevance judgments
+after auditing the top candidates from both paths against this checkout's
+source. V1 and its reports remain historical and must not be compared
+numerically with v2 reports.
+
+Grades are source-backed: 3 is the direct implementation or primary test, 2 is
+an entry point, direct reference, or focused supporting test, and 1 is useful
+context or a valid Python function file. The IMPACT case includes all three
+tests that directly import `build_mcp` from the changed file. The REFERENCES
+case includes files that instantiate or import `SCSDaemon`; unrelated
+`DaemonController` matches are unjudged. The INVENTORY case judges Python
+function files from the pooled top results; Rust function files remain
+unjudged because the goal specifies Python.
+
+The suite contains positive judgments, not an exhaustive list of every useful
+file. `unsupported_rate` therefore means absent from this judgment set, not
+proven incorrect. The file-level metric does not measure symbol-level relevance
+or whether a returned function has the requested language. Keep those limits in
+mind when reviewing the retirement gate.

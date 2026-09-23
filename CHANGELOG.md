@@ -8,6 +8,8 @@
   routing, retaining legacy read tools during evaluation
 - fix(indexing): resolve Python imports from `src/` layouts to indexed symbols
   so IMPACT can report graph-backed test targets after reindexing
+- fix(evaluation): score node-list source paths and audit unified-query
+  relevance judgments across all seven playbooks
 - fix(cli): list saved project indexes without starting reconciliation
 
 ## 0.1.22 - 2026-09-22

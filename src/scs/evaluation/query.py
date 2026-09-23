@@ -222,8 +222,24 @@ def _identities(value: object) -> list[str]:
     found: list[str] = []
     if isinstance(value, dict):
         item = cast(dict[str, object], value)
-        identity = item.get("file_path") or item.get("qualified_name") or item.get("id")
-        if isinstance(identity, str) and identity:
+        metadata = item.get("metadata")
+        nested_path = (
+            cast(dict[str, object], metadata).get("file_path")
+            if isinstance(metadata, dict)
+            else None
+        )
+        identity = next(
+            (
+                candidate
+                for candidate in (
+                    item.get("file_path"), nested_path,
+                    item.get("qualified_name"), item.get("id"),
+                )
+                if isinstance(candidate, str) and candidate
+            ),
+            None,
+        )
+        if identity is not None:
             found.append(identity)
         for key, child in item.items():
             if key not in {"routing", "trace", "timings", "metadata", "evidence"}:

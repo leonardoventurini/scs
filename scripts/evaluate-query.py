@@ -19,7 +19,7 @@ from scs.wire.client import SCSConnection
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate unified SCS code queries.")
-    parser.add_argument("--suite", type=Path, default=Path("evals/scs-query-v1.json"))
+    parser.add_argument("--suite", type=Path, default=Path("evals/scs-query-v2.json"))
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--mode", choices=("fast", "balanced", "thorough"), default="balanced")
     parser.add_argument("--k", type=int, default=10)
