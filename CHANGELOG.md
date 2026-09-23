@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-09-23
+
 - **Breaking (MCP):** replace the seven read tools (`search_code`,
   `graph_context`, `get_related`, `list_symbols`, `inspect_file`,
   `find_references`, `regression_risk_report`) with `query_code`; keep internal
