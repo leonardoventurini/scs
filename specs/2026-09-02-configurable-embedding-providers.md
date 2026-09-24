@@ -1,5 +1,7 @@
 # Configurable Embedding Providers
 
+Status: shipped
+
 ## Problem
 
 SCS currently defaults to a local OMLX endpoint and cannot authenticate to the

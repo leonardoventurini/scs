@@ -1,5 +1,11 @@
 # Add Evidence-Driven Agent Contracts
 
+Status: accepted
+
+The inventory portion was superseded by the
+[unified query decision](2026-09-22-unify-agent-code-queries.md); the underlying
+service-route and evidence decisions remain historical implementation context.
+
 > Superseded in part by
 > `decisions/2026-09-22-unify-agent-code-queries.md`. Its search, readiness,
 > risk, and metrics contracts remain authoritative internally; its fixed MCP

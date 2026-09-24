@@ -1,5 +1,7 @@
 # Expand risk-based test coverage
 
+Status: shipped
+
 ## Goal and scope
 
 Expand automated coverage around SCS contracts whose failure can lose durable

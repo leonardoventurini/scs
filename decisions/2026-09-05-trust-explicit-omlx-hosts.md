@@ -1,5 +1,10 @@
 # Explicit trust for remote OMLX hosts
 
+Status: superseded
+
+The exact-host trust principle remains, but the OMLX-specific setting names
+were replaced by the [OpenAI-compatible transport decision](2026-09-22-use-openai-compatible-local-inference.md).
+
 ## Context
 
 The user runs SCS locally and OMLX on a separately reachable machine, m3.

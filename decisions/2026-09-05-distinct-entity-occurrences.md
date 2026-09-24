@@ -1,5 +1,7 @@
 # Preserve occurrence identity at the SCS ingestion boundary
 
+Status: accepted
+
 ## Context
 
 Valid source can contain multiple parsed entities with one kind and qualified

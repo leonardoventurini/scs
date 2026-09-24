@@ -1,5 +1,7 @@
 # Enforce strict Python types before commit
 
+Status: accepted
+
 ## Context
 
 The repository described its Python sources as typed, but `just typecheck` only

@@ -2,7 +2,11 @@
 
 Date: 2026-09-14
 
-Status: Approved and validated for implementation
+Status: shipped
+
+This compatibility-phase work was delivered. The later
+[unified query contract](2026-09-22-unified-query-orchestration.md) replaced its
+fixed MCP inventory while retaining the underlying service routes.
 
 ## Problem
 

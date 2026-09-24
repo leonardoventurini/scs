@@ -1,5 +1,7 @@
 # Index the local SCS project
 
+Status: shipped
+
 ## Goal and scope
 
 Queue and complete one explicit full SCS indexing pass for the repository at

@@ -1,5 +1,10 @@
 # Lazy MCP daemon and GitHub release
 
+This replaces the launchd proxy and service-install approach in the
+[original redistribution plan](2026-08-28-package-scs-for-redistribution.md).
+
+Status: shipped
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

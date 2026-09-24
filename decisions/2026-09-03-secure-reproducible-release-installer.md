@@ -1,5 +1,7 @@
 # Secure, Reproducible Release Installer
 
+Status: accepted
+
 ## Context
 
 The GitHub Releases rollout originally described an installer that accepted an

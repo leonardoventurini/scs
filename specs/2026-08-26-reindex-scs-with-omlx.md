@@ -1,5 +1,10 @@
 # Reindex the SCS project with local OMLX embeddings
 
+Status: shipped
+
+Historical one-time reindex record. The OMLX-specific provider name was later
+retired; use the current [embedding configuration](../docs/configuration.md).
+
 ## Goal and scope
 
 Run one explicit, durable full reindex of

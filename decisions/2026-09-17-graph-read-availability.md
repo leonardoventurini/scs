@@ -1,5 +1,7 @@
 # Keep graph reads available during vector deletion
 
+Status: accepted
+
 Project: SCS (`/Users/leonardo/Repositories/scs`)
 
 ## Context

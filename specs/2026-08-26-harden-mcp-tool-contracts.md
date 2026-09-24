@@ -1,5 +1,10 @@
 # Harden the SCS MCP tool contracts
 
+Status: shipped
+
+Historical implementation record for the former ten-tool MCP inventory.
+Current callers use the [five-tool MCP contract](../docs/mcp-tools.md).
+
 ## Goal and scope
 
 Correct the two live MCP defects found in the tool evaluation and implement the

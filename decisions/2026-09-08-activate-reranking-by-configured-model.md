@@ -1,5 +1,10 @@
 # Activate Reranking by Configured Model
 
+Status: superseded
+
+Model-presence activation remains, but the OMLX-specific endpoint contract was
+replaced by the [OpenAI-compatible transport decision](2026-09-22-use-openai-compatible-local-inference.md).
+
 ## Context
 
 The initial oMLX integration used two settings: a `reranking_provider` switch

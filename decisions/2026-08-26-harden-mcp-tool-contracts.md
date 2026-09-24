@@ -1,5 +1,7 @@
 # Harden MCP tool contracts
 
+Status: accepted
+
 ## Context
 
 Project: `scs`

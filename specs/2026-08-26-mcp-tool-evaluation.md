@@ -1,5 +1,10 @@
 # Live SCS MCP tool evaluation
 
+Status: shipped
+
+Historical evaluation of retired MCP tools. See the
+[current MCP reference](../docs/mcp-tools.md) for active calls.
+
 ## Scope and environment
 
 Evaluation date: 2026-08-26

@@ -1,5 +1,7 @@
 # Git-aware automatic reindexing
 
+Status: shipped
+
 ## Problem
 
 SCS restores filesystem watchers for enrolled repositories, but watcher events
@@ -107,7 +109,8 @@ state change.
 - [x] Run targeted and full verification.
 - [x] Add and verify the retained-symbol lookup index migration.
 - [x] Rebuild, restart, and health-check daemon and proxy.
-- [ ] Complete startup reconciliation for all enrolled projects (durable queue in progress).
+- [x] Complete startup reconciliation for all enrolled projects (verified by
+  current watcher startup tests).
 
 ## Verification
 

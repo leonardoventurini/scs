@@ -1,5 +1,7 @@
 # Hybrid Reranking and Search Evaluation
 
+Status: shipped
+
 > Configuration amendment: activation by `reranking_provider` and the compiled
 > default model were superseded by
 > `specs/2026-09-08-configured-reranker-activation.md`. Reranking is now enabled

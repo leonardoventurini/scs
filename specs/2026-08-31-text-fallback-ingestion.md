@@ -1,5 +1,7 @@
 # Text fallback ingestion
 
+Status: shipped
+
 ## Problem
 
 SCS currently discovers only extensions registered by native structural parsers. Useful textual repository context such as `Dockerfile`, dotfiles, extensionless configuration, YAML, TOML, and documentation is therefore absent from lexical and semantic search.

@@ -1,5 +1,7 @@
 # Missing-embedding repair
 
+Status: shipped
+
 ## Problem
 
 An indexed repository can contain structurally indexed, hash-acknowledged files while its project vector index contains none or only some of their embeddings. Incremental ingestion currently selects work only by source-content hash, so unchanged files never regenerate missing embeddings. Search then has no semantic corpus and may fail behind `internal: SCSWire method failed internally`.

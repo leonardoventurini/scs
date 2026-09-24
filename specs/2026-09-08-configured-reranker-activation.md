@@ -1,5 +1,7 @@
 # Configure Reranking by Model Presence
 
+Status: shipped
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

@@ -1,5 +1,12 @@
 # Package SCS for redistribution
 
+Status: superseded
+
+The launchd proxy and service-install design was replaced by the
+[lazy stdio daemon and GitHub release](2026-09-04-lazy-mcp-daemon-and-github-release.md).
+The [0.2.0 release record](2026-09-23-release-0.2.0.md) documents publication;
+this original package plan is not an active checklist.
+
 ## Goal and scope
 
 Project: `scs`
@@ -205,25 +212,28 @@ at runtime; package composition must not be mistaken for process ownership.
   install candidate and run `scs doctor` → migrations and project stores remain
   valid; failure is an abort condition if a supported upgrade path is affected.
 
-## Execution checklist
+## Original execution checklist (superseded)
 
-- [ ] Build one redistributable SCS wheel — files: package manifests and Cargo
+These steps were never checked off in this record. The successor records
+linked above govern the current implementation and verification.
+
+- Superseded: Build one redistributable SCS wheel — files: package manifests and Cargo
   metadata; verify: committed build command plus `twine check dist/*`; done
   when Python, proxy, and native extension share one versioned artifact.
-- [ ] Establish clean-install proof — files: release smoke-test script/test;
+- Superseded: Establish clean-install proof — files: release smoke-test script/test;
   verify: isolated wheel install with source path denied; done when CLI and
   native imports work without the checkout or compiler.
-- [ ] Preserve service/data contracts through upgrade — files: CLI, service,
+- Superseded: Preserve service/data contracts through upgrade — files: CLI, service,
   config, storage schema APIs, lifecycle tests; verify: disposable launchd
   upgrade test with non-default configuration; done when SCS_HOME remains
   intact and incompatibility is rejected before startup mutation.
-- [ ] Make OMLX operational readiness explicit — files: provider/CLI/docs/tests;
+- Superseded: Make OMLX operational readiness explicit — files: provider/CLI/docs/tests;
   verify: ready and unavailable provider tests; done when doctor reports the
   correct semantic capability.
-- [ ] Automate signed, traceable artifacts — files: release workflow/scripts;
+- Superseded: Automate signed, traceable artifacts — files: release workflow/scripts;
   verify: draft tag release; done when checksums, signature, SBOM/provenance,
   and smoke-test evidence are attached.
-- [ ] Document end-user operations — files: README, launchd guide, changelog;
+- Superseded: Document end-user operations — files: README, launchd guide, changelog;
   verify: clean-account walkthrough; done when no repository clone is required.
 
 ## Verification and rollout

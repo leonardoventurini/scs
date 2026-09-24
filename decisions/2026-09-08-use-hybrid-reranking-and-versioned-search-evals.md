@@ -1,5 +1,7 @@
 # Use Hybrid Reranking and Versioned Search Evaluations
 
+Status: accepted
+
 > Superseded in part by
 > `decisions/2026-09-08-activate-reranking-by-configured-model.md`: reranking is
 > now activated by a configured model rather than a separate provider switch,

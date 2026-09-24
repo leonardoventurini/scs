@@ -1,5 +1,10 @@
 # Use local OMLX embeddings
 
+Status: shipped
+
+Historical provider rollout. Its OMLX-specific settings were replaced by the
+[OpenAI-compatible local transport](../decisions/2026-09-22-use-openai-compatible-local-inference.md).
+
 ## Goal and scope
 
 Replace the unavailable in-process MLX default with SCS's local OMLX

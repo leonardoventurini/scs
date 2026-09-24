@@ -1,5 +1,7 @@
 # Retire file summarization
 
+Status: shipped
+
 ## Goal and scope
 
 Remove file summarization as an SCS capability in one rollout. SCS will generate

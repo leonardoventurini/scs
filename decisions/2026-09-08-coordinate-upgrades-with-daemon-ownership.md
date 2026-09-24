@@ -1,5 +1,7 @@
 # Coordinate upgrades with daemon ownership
 
+Status: accepted
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

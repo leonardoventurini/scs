@@ -1,9 +1,9 @@
 ---
-status: implemented
+status: shipped
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
 owner: code-intelligence
 decision: decisions/2026-09-23-gate-daemon-readiness-on-classifier.md
 supersedes:

@@ -1,5 +1,7 @@
 # Global SCS workflow skill
 
+Status: shipped
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/scs`

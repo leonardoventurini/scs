@@ -1,5 +1,7 @@
 # Adopt MCP Python SDK 2
 
+Status: accepted
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

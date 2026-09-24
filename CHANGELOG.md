@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- docs: label historical specs and decisions with lifecycle status and successors
 - docs: replace obsolete proxy and OMLX setup guides with current references
 - docs: simplify the README and clarify local Laya resource use, embedding
   requirements, and platform support

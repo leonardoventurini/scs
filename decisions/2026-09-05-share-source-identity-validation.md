@@ -1,5 +1,7 @@
 # Share source identity validation across ingestion and MCP
 
+Status: accepted
+
 ## Context
 
 Version 0.1.6 stores separate identities for internal source symlinks, but MCP

@@ -1,5 +1,7 @@
 # Use SCS first in codebase workflows
 
+Status: accepted
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/scs`

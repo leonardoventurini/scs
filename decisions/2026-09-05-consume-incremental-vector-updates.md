@@ -1,5 +1,7 @@
 # Consume incremental TSG vector updates
 
+Status: accepted
+
 ## Context
 
 Real Mentagen ingestion used oMLX correctly, but process sampling showed full

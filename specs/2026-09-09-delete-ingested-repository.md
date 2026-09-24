@@ -1,5 +1,12 @@
 # Delete an ingested repository
 
+Status: shipped
+
+This feature is present in the current five-tool MCP release. The original
+0.1.14 rollout checks below were not all recorded in this artifact; the later
+[0.2.0 release verification](2026-09-23-release-0.2.0.md) is the current
+publication evidence.
+
 ## Problem
 
 SCS can index and incrementally reconcile repositories through MCP, but it has
@@ -174,12 +181,11 @@ only by a later explicit index request.
 - [x] Implement and verify the feature on `main`.
 - [x] Update all version identities to `0.1.14` and add the changelog entry.
 - [x] Run `python3 scripts/check-release-version.py v0.1.14` and `just verify`.
-- [ ] Push `main` and wait for its GitHub CI run to succeed.
-- [ ] Create and push annotated tag `v0.1.14`.
-- [ ] Wait for the GitHub release workflow and verify the seven expected
-  assets, checksums, and attestations.
-- [ ] Exercise the installed MCP inventory and deletion/restart behavior where
-  the release environment permits it.
+- Historical release steps not verified in this record: push and CI, annotated
+  `v0.1.14` tag, release assets and attestations, and installed MCP smoke checks.
+  The local `v0.1.14` tag exists, but its CI and installation evidence was not
+  independently rechecked for this lifecycle update. These release checks are
+  superseded by the linked 0.2.0 publication record.
 
 ## Verification record
 
@@ -194,6 +200,6 @@ Executed locally on 2026-09-09:
 - `scripts/check-release-version.py v0.1.14`: returned `0.1.14`;
 - `uv lock --check`, locked Cargo metadata, and whitespace checks: passed.
 
-The GitHub `main` CI run, tag release run, release assets, checksums,
-attestations, and installed-release checks remain pending until the verified
-commit is pushed.
+At the time of this original record, GitHub CI, release assets, attestations,
+and installed-release checks were pending. The later 0.2.0 release record
+supersedes those rollout checks; this paragraph is not an active task list.

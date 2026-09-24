@@ -1,5 +1,12 @@
 # TSG storage integration
 
+This replaces the original SQLite/USearch migration mechanics in the
+[project-store plan](2026-08-27-isolate-project-stores-and-migrations.md) and
+[batch-ingestion plan](2026-08-27-resumable-batch-ingestion.md). Their
+project-scoped and retry goals remain subject to current implementation tests.
+
+Status: shipped
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

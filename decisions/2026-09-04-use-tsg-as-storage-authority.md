@@ -1,5 +1,7 @@
 # Use TSG as the SCS storage authority
 
+Status: accepted
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

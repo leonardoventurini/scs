@@ -1,5 +1,7 @@
 # Index unparsed text with layered pruning
 
+Status: accepted
+
 ## Context
 
 SCS previously equated parser support with file eligibility. This kept the

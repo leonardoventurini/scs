@@ -1,5 +1,7 @@
 # Use a lazy shared daemon behind per-harness stdio MCP bridges
 
+Status: accepted
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

@@ -1,5 +1,7 @@
 # Enforce Standalone Product Provenance
 
+Status: accepted
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

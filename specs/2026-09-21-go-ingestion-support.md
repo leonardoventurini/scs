@@ -1,9 +1,9 @@
 ---
-status: implemented
+status: shipped
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-21
-updated: 2026-09-21
+updated: 2026-09-24
 owner: parser-and-indexing
 decision:
 supersedes:

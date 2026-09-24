@@ -1,5 +1,11 @@
 # Evaluate live SCS MCP tool contracts
 
+Status: shipped
+
+Historical evaluation of the former MCP inventory. Current callers use
+[`query_code`](../docs/mcp-tools.md); the [migration guide](../docs/query-code-migration.md)
+maps retired tools.
+
 ## Goal and scope
 
 Exercise every publicly exposed SCS MCP tool against the indexed SCS checkout,

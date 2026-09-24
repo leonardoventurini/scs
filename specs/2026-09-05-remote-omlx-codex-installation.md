@@ -1,5 +1,12 @@
 # Local SCS with explicitly trusted OMLX hosts
 
+Status: shipped
+
+Historical release and installation evidence. OMLX-specific settings and the
+ten-tool inventory below are no longer current; use the
+[embedding configuration](../docs/configuration.md) and
+[MCP reference](../docs/mcp-tools.md).
+
 ## Problem and evidence
 
 The local SCS executable and Codex registration were absent. The old checkout

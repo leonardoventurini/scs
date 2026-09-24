@@ -1,5 +1,11 @@
 # Isolate SCS storage by project and migrate safely
 
+Status: superseded
+
+The planned SQLite/USearch migration mechanics were replaced by the
+[TSG storage integration](2026-09-04-tsg-storage-integration.md). Project-scoped
+ownership remains, but this original plan is not current implementation guidance.
+
 ## Goal and scope
 
 Replace SCS's one shared graph/vector store with one isolated store per
@@ -248,28 +254,31 @@ runtime, or live data is changed by this document.
   `just verify`, and source-read-only Git checks. Preserve current performance
   budgets or establish comparable per-store ceilings with measured evidence.
 
-## Execution checklist
+## Original execution checklist (superseded)
 
-- [ ] Define catalog, store, generation, and journal contracts — files:
+These steps were never checked off in this record. The successor records
+linked above govern the current implementation and verification.
+
+- Superseded: Define catalog, store, generation, and journal contracts — files:
   path/config/catalog modules; verify: typed unit/property tests; done when
   canonical roots map one-to-one to contained mode-0700 stores.
-- [ ] Add versioned native migrations and authoritative embedding records — files:
+- Superseded: Add versioned native migrations and authoritative embedding records — files:
    `crates/scs-store`; verify: Rust migration/integrity negative tests; done when
   no schema/vector generation activates without parity evidence.
-- [ ] Replace singleton graph routing with per-store handles — files:
+- Superseded: Replace singleton graph routing with per-store handles — files:
   daemon, routes, jobs, runner, watcher; verify: two-repository integration
   tests; done when queue, watcher, search, and stats share one store identity.
-- [ ] Implement journaled staging, backup, activation, and restart recovery —
+- Superseded: Implement journaled staging, backup, activation, and restart recovery —
   files: migration coordinator/catalog; verify: transition fault-injection and
   restore rehearsal; done when every interruption preserves one verified active
   generation and migration admission blocks legacy/new writes deterministically.
-- [ ] Run the live clean cutover — files: SCS-owned data only; verify: backup
+- Superseded: Run the live clean cutover — files: SCS-owned data only; verify: backup
   manifest, service health, empty per-store state, and no automatic jobs; done
   when the catalog is active and all registered projects are semantic-stale.
-- [ ] Explicitly reindex chosen projects — files: per-store graph/vector data;
+- Superseded: Explicitly reindex chosen projects — files: per-store graph/vector data;
   verify: exact durable jobs plus project-scoped semantic search; done when
   each selected project is semantic-ready with no cross-store results.
-- [ ] Retire legacy active-path support after the release window — files:
+- Superseded: Retire legacy active-path support after the release window — files:
   migration/docs/tests; verify: restore rehearsal and fresh-home isolation;
   done when legacy state is archived under the retention policy.
 

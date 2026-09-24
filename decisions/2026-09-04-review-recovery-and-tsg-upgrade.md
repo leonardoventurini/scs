@@ -1,5 +1,7 @@
 # Recover force jobs from their own acknowledgements and adopt TSG v0.2.1
 
+Status: accepted
+
 ## Context
 
 The review reproduced watcher omissions, blocked shutdown, and force-job recovery

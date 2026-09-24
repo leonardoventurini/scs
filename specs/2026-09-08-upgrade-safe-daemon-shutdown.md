@@ -1,5 +1,7 @@
 # Upgrade-safe daemon shutdown
 
+Status: shipped
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

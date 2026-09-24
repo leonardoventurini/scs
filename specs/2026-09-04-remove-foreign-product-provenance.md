@@ -1,5 +1,7 @@
 # Remove Foreign-Product Provenance
 
+Status: shipped
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

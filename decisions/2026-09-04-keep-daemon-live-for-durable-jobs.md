@@ -1,5 +1,7 @@
 # Keep the Daemon Live for Durable Jobs
 
+Status: accepted
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

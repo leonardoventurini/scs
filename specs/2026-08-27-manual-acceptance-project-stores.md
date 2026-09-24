@@ -1,5 +1,7 @@
 # Manual acceptance: project-scoped storage
 
+Status: shipped
+
 ## Goal and scope
 
 Exercise the live SCS daemon and public MCP tools after the project-store

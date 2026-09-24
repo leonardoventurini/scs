@@ -1,5 +1,12 @@
 # Resumable batch-committed ingestion
 
+Status: superseded
+
+Bounded batch acknowledgement exists in the current pipeline, but this plan's
+USearch-sidecar durability design was replaced by the
+[TSG storage integration](2026-09-04-tsg-storage-integration.md). See current
+pipeline and integration tests for the implemented retry contract.
+
 ## Goal and scope
 
 Replace SCS's all-or-nothing ingestion-hash acknowledgement with deterministic,
@@ -240,22 +247,25 @@ tool inventory, make indexing synchronous, or change project-store routing.
   OMLX multi-batch fixture. Preserve performance ceilings unless comparable
   evidence and a decision revise them.
 
-## Execution checklist
+## Original execution checklist (superseded)
 
-- [ ] Preserve cross-batch graph semantics — files: pipeline/protocol tests;
+These steps were never checked off in this record. The successor records
+linked above govern the current implementation and verification.
+
+- Superseded: Preserve cross-batch graph semantics — files: pipeline/protocol tests;
   verify: forced caller/callee split fixture; done when no valid relationship
   vanishes because of batching.
-- [ ] Add transactional batch checkpoints, force-attempt snapshots, and
+- Superseded: Add transactional batch checkpoints, force-attempt snapshots, and
   two-step deletion — files: native store, PyO3, graph adapter, jobs, tests;
   verify: SQLite/flush/forced-retry fault tests; done when a failed batch
   changes zero hashes and a force retry skips its acknowledged paths.
-- [ ] Commit vectors and hashes one bounded batch at a time — files: pipeline,
+- Superseded: Commit vectors and hashes one bounded batch at a time — files: pipeline,
   provider/vector tests; verify: provider failure/retry and sidecar reopen;
   done when prior acknowledged files are never re-embedded.
-- [ ] Publish acknowledged progress and strict stale/ready state — files: jobs,
+- Superseded: Publish acknowledged progress and strict stale/ready state — files: jobs,
   runner, daemon, event tests; verify: live event sequence; done when clients
   can distinguish in-progress work from durable acknowledgement.
-- [ ] Prove crash/deletion/large-index recovery — files: integration/perf
+- Superseded: Prove crash/deletion/large-index recovery — files: integration/perf
   tests; verify: termination and deletion fault injection plus measured vector
   bound; done when recovery preserves graph correctness and skips completed
   batches.

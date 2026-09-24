@@ -1,5 +1,11 @@
 # Set up and start the local SCS service
 
+Status: shipped
+
+Historical rollout record. The paired launchd services and `scs service`
+commands described below were later removed; use the current
+[architecture](../docs/architecture.md) and [README](../README.md) to operate SCS.
+
 ## Goal and scope
 
 Prepare this checkout's supported development environment and run both of its

@@ -1,5 +1,7 @@
 # Review fixes and TSG patch upgrade
 
+Status: shipped
+
 ## Problem and evidence
 
 Review reproduced three defects: repeated changes to an already dirty file leave

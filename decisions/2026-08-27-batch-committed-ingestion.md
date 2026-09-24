@@ -1,5 +1,7 @@
 # Batch-committed ingestion checkpoints
 
+Status: accepted
+
 ## Context
 
 SCS previously deferred every ingestion hash until the complete repository had

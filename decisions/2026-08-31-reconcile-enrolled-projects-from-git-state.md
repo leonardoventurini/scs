@@ -1,5 +1,7 @@
 # Reconcile enrolled projects from Git-visible state
 
+Status: accepted
+
 ## Context
 
 Filesystem notifications provided low-latency incremental indexing but could

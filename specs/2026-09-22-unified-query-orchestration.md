@@ -1,9 +1,9 @@
 ---
-status: implementing
+status: shipped
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
-updated: 2026-09-23
+updated: 2026-09-24
 owner: code-intelligence
 decision: decisions/2026-09-22-unify-agent-code-queries.md
 decision-runtime: decisions/2026-09-23-use-native-mlx-for-query-routing.md
@@ -16,6 +16,10 @@ implementation:
 ---
 
 # Unified Query Orchestration
+
+The contract shipped in SCS 0.2.0, as recorded in the
+[release spec](2026-09-23-release-0.2.0.md). Earlier rollout phases and their
+unreleased-state observations below remain historical evidence.
 
 ## Outcome
 

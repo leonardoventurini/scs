@@ -1,5 +1,11 @@
 # Default to Configurable OpenAI Embeddings
 
+Status: accepted
+
+The OpenAI default remains current. OMLX-specific provider names and settings
+in this historical decision were later replaced by the
+[OpenAI-compatible transport decision](2026-09-22-use-openai-compatible-local-inference.md).
+
 ## Context
 
 SCS previously selected a loopback OMLX endpoint by default and treated remote

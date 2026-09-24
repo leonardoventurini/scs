@@ -1,5 +1,7 @@
 # Strict Python type gate
 
+Status: shipped
+
 ## Goal and scope
 
 Make strict static typing a blocking, repository-owned pre-commit and

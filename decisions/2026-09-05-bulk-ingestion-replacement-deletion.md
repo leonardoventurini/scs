@@ -1,5 +1,7 @@
 # Delete ingestion replacement sets as one native operation
 
+Status: accepted
+
 ## Context
 
 After indexed attribute queries were repaired, runtime sampling exposed repeated

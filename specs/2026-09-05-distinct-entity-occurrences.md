@@ -1,5 +1,7 @@
 # Preserve distinct parsed entity occurrences
 
+Status: shipped
+
 ## Problem and evidence
 
 Mentagen ingestion fails after parsing roughly 2,925 files with TSG's

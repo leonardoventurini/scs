@@ -1,5 +1,7 @@
 # Schedule semantic repair by node coverage
 
+Status: accepted
+
 ## Context
 
 SCS incremental ingestion treated an acknowledged source hash as sufficient evidence that a file required no work. Vector state is independently recoverable and can be absent or partial while those source hashes remain valid, leaving unchanged files permanently unembedded.

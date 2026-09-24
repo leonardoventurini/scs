@@ -1,5 +1,7 @@
 # Preserve source aliases while checking resolved targets
 
+Status: accepted
+
 ## Context
 
 Ordinary discovery recorded both a source file and its internal symlink alias.

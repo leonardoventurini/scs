@@ -1,5 +1,7 @@
 # Keep semantic enrichment local
 
+Status: accepted
+
 ## Context
 
 SCS generated vectors locally with MLX but optionally called OpenAI to summarize
