@@ -4,6 +4,11 @@ Date: 2026-09-14
 
 Status: Analysis and recommendations
 
+> Historical analysis of the September 2026 tool inventory. The seven read
+> tools discussed below were replaced by `query_code`. Use the
+> [migration guide](query-code-migration.md) and [current MCP reference](mcp-tools.md)
+> for active caller guidance.
+
 ## Implementation status
 
 The report's product recommendations were implemented on 2026-09-14:
