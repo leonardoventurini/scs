@@ -1,25 +1,27 @@
 # SCS
 
-SCS is a headless semantic code-intelligence service. It indexes
-source repositories into a structural and vector-backed code graph and exposes
-that intelligence through a local control socket and MCP.
+SCS is a headless code-intelligence service. It indexes source repositories and
+lets coding agents investigate them through a local MCP tool. An agent asks
+`query_code` a question; SCS returns bounded evidence from its structural and
+semantic index.
 
-For code questions, an agent calls one `query_code` tool with a goal, repository
-path, and optional file or symbol anchors. SCS selects a bounded investigation
-playbook, reads its own index, and returns evidence with routing and completeness
-details. On Apple Silicon, an optional local Laya classifier can choose the
-playbook; SCS executes it with deterministic search and graph operations.
+SCS starts with an empty index. It enrolls a repository only after an explicit
+CLI, MCP, or client request, and never changes repository source.
 
-SCS starts with an empty index. It does not migrate, inspect, or recreate any
-data from other applications. Repositories are added only through an explicit CLI,
-MCP, or client request.
+## Requirements
+
+- Stable releases support Apple Silicon macOS and x86-64 Linux with CPython 3.14.
+- Indexing needs an embedding provider. The default uses the OpenAI embeddings
+  API and sends source-derived entity text to it. Local providers are available.
+- Laya is an **optional, local Apple Silicon feature** for choosing query
+  playbooks. SCS works without Laya on both supported platforms. See
+  [Laya requirements](#optional-laya-routing) for its measured memory use.
 
 ## Quick start
 
-Stable releases support Apple Silicon macOS and x86-64 Linux with CPython
-3.14. Download the versioned installer and checksum manifest from the same
+Download the installer and checksum manifest from the same
 [GitHub Release](https://github.com/leonardoventurini/scs/releases), verify the
-script, then run it:
+installer, and install SCS:
 
 ```bash
 VERSION=0.2.0
@@ -30,14 +32,14 @@ sh "scs-installer-${VERSION}.sh"
 scs version
 ```
 
-On Linux, use `sha256sum -c SHA256SUMS --ignore-missing`. The installer pins
-the release, verifies its wheel and constraints, provisions a checksum-verified
-`uv` binary when necessary, and installs SCS without `sudo`. Current macOS
-artifacts are not Apple-signed or notarized; checksums and GitHub build
-provenance provide release integrity.
+On Linux, use `sha256sum -c SHA256SUMS --ignore-missing`. The installer
+verifies its wheel and constraints, installs without `sudo`, and uses a pinned,
+checksum-verified `uv` binary when necessary. Current macOS releases are not
+Apple-signed or notarized. See
+[distribution and upgrade details](docs/github-releases-distribution.md).
 
-Configure an embedding provider in `~/.scs/config.toml` before indexing. For
-OpenAI, the minimum configuration is:
+Configure an embedding provider before indexing. For the default OpenAI
+provider, put this in `~/.scs/config.toml`:
 
 ```toml
 embedding_provider = "openai"
@@ -46,202 +48,27 @@ embedding_dimension = 3072
 openai_api_key = "replace-with-your-key"
 ```
 
-Keep that file owner-readable only (`chmod 600 ~/.scs/config.toml`). Local
-OpenAI-compatible and in-process MLX examples are documented under
-[Embedding configuration](#embedding-configuration).
+Keep the file owner-readable only (`chmod 600 ~/.scs/config.toml`). See
+[embedding configuration](docs/configuration.md) for local provider and
+reranking options.
 
-Replace any old SCS entry, register the installed stdio MCP bridge with Codex,
-then explicitly index the current repository:
+Register the installed stdio bridge with Codex, then index the repository
+containing your current directory:
 
 ```bash
-codex mcp remove scs 2>/dev/null || true
 codex mcp add scs -- "$HOME/.local/bin/scs" mcp
 codex mcp get scs
 scs index "$PWD"
 scs status
 ```
 
-Manage enrolled projects with stable numeric IDs:
+If an existing `scs` MCP entry points elsewhere, remove it first with
+`codex mcp remove scs`. Restart open Codex clients after changing MCP
+configuration. Indexing runs as a durable background job; use `scs status` or
+`get_graph_stats` to check when it is ready. The path above assumes the
+installer's default `~/.local/bin` location.
 
-```bash
-scs list
-scs list --json
-scs reingest 3
-scs delete 3
-```
-
-`scs list` reads the saved index directly and does not start the daemon or
-schedule reconciliation. Its state column describes saved index availability.
-
-`delete` and `reingest` also accept a repository path. Both return a durable
-job acknowledgement immediately. Deletion removes only SCS-owned derived state;
-it never modifies repository source. A deleted numeric ID is never reused.
-
-Indexing is durable background work. `scs status` reports progress, and Codex
-can call `get_graph_stats` once the index is ready. Restart open Codex clients
-after changing MCP configuration. The equivalent manual entry in
-`~/.codex/config.toml` is:
-
-```toml
-[mcp_servers.scs]
-command = "/Users/you/.local/bin/scs"
-args = ["mcp"]
-```
-
-Use `/home/you/.local/bin/scs` on Linux. Each Codex session owns a small stdio
-bridge. The first bridge starts the shared daemon, concurrent bridges reuse it,
-and closing the final bridge shuts it down cleanly.
-
-Re-run the versioned installation procedure to upgrade or reinstall SCS. The
-installer cancels active indexing at a durable boundary, waits for the older
-daemon to release its writer lock, and then replaces the `uv` tool atomically.
-The upgrade preserves `SCS_HOME`, including configuration and indexes.
-
-## Storage architecture
-
-SCS uses [TSG](https://github.com/leonardoventurini/tsg) as its sole durable
-graph and embedding engine. The Rust `scs-store` crate is a compatibility
-adapter: it maps SCS repository scopes, typed code nodes and relationships,
-ingestion checkpoints, metadata filters, traversal, and semantic search onto
-generic TSG primitives. The Python, SCSWire, MCP, and CLI contracts therefore
-remain SCS-owned without coupling TSG to code intelligence.
-
-The dependency is pinned to the immutable `v0.2.4` Git tag and its resolved
-commit in `Cargo.lock`; building SCS does not require a sibling TSG checkout.
-TSG keeps canonical graph, catalog, and embedding state transactionally in
-SQLite and treats its vector index as a rebuildable accelerator.
-
-An index created by the former SCS storage engine is not migrated in place.
-When that incompatible database is first opened, SCS moves the database, WAL,
-SHM, and legacy `.usearch` sidecar (when present) to unique
-`*.pre-tsg.backup` names, then creates an empty TSG index. Run
-`scs reindex <repo>` to rebuild derived state from repository source. For
-rollback, stop SCS, retain the new TSG files separately, restore the backed-up
-legacy filenames, and run the previous SCS binary. Backup removal is always an
-explicit operator action.
-
-Semantic embeddings are generated from parser-owned entity text. SCS defaults
-to the OpenAI embeddings API, while local OpenAI-compatible and in-process MLX
-providers are available by explicit configuration. SCS does not send repository files to a
-summarization service; an embedding provider receives only the entity text used
-to build the semantic index.
-
-## Embedding configuration
-
-Persistent configuration lives at `~/.scs/config.toml`. Explicit Python
-settings take precedence over environment variables, environment variables
-take precedence over TOML, and TOML takes precedence over defaults. The
-standard `OPENAI_API_KEY` environment variable overrides `openai_api_key` in
-the file. Storing the key in the owner-only configuration file makes it
-available to lazily spawned daemon processes without placing it in MCP config.
-
-The unconfigured default is:
-
-```toml
-embedding_provider = "openai"
-embedding_model = "text-embedding-3-large"
-embedding_dimension = 3072
-openai_base_url = "https://api.openai.com/v1"
-openai_api_key = "replace-with-your-key"
-```
-
-To use a local OpenAI-compatible server without an API key:
-
-```toml
-embedding_provider = "openai_compatible"
-embedding_model = "Qwen3-Embedding-8B-4bit-DWQ"
-embedding_dimension = 4096
-openai_compatible_base_url = "http://127.0.0.1:10001/v1"
-```
-
-The compatible provider defaults to loopback HTTP URLs. To use a server on an
-explicitly trusted network host, configure both its URL and exact hostname:
-
-```toml
-openai_compatible_base_url = "http://m3:10001/v1"
-openai_compatible_trusted_hosts = ["m3"]
-```
-
-The trust list is empty by default and matches hostnames case-insensitively;
-it does not match subdomains or wildcards. Only opt in to a host and network
-that you trust with source-derived embedding text. SCS continues to run locally.
-The environment equivalent is
-`SCS_OPENAI_COMPATIBLE_TRUSTED_HOSTS='["m3"]'`. In compatible-provider mode,
-SCS ignores OpenAI credentials and sends no authorization header. Changing the provider, model,
-or dimension quarantines incompatible vectors; the next indexing pass
-regenerates embeddings while preserving the structural graph.
-
-Search always fuses bounded semantic and lexical candidates. To rerank that
-candidate set through the same local reranking endpoint, opt in explicitly:
-
-~~~toml
-reranking_model = "your-installed-reranker"
-~~~
-
-An absent `reranking_model` disables reranking. A configured model uses the
-same validated `openai_compatible_base_url` as local embeddings and sends no
-credentials. An unavailable or malformed reranker degrades to deterministic
-fused retrieval without making search unavailable.
-
-Files supported by a native parser are indexed structurally. Other regular
-UTF-8 text files—including `Dockerfile`, dotfiles, extensionless files, and
-configuration formats—are indexed as file-level text for lexical and semantic
-search. Git ignore rules remain authoritative; common dependency, cache, VCS,
-and build directories are always skipped. Large directories are additionally
-pruned only when they cross a resource limit and exhibit generated or vendored
-evidence. Binary and oversized files are not indexed.
-
-The default ingestion limits can be changed with environment variables:
-
-- `SCS_INDEX_TEXT_FALLBACK` enables or disables non-parser text ingestion.
-- `SCS_INDEX_MAX_FILE_BYTES` limits each indexed file (default 1 MiB).
-- `SCS_INDEX_TEXT_SAMPLE_BYTES` controls bounded UTF-8 detection (default 8 KiB).
-- `SCS_INDEX_LARGE_DIR_FILES` sets the large-directory file threshold (default 10,000).
-- `SCS_INDEX_LARGE_DIR_BYTES` sets the aggregate-size threshold (default 512 MiB).
-
-The text sample size must not exceed the maximum file size.
-
-## Automatic reindexing
-
-SCS automatically reconciles every active enrolled project from Git-visible
-state. Each daemon start queues a full discovery pass, which uses stored hashes
-to parse and embed only changed files and removes stale file graphs. Subsequent
-polls fingerprint `HEAD`, Git porcelain status, and dirty-path metadata, covering
-commits, branch switches, repeated staged and unstaged edits, deletions, and
-non-ignored untracked files. Nanosecond modification/change times and file identity
-detect edits even when a path's Git status stays unchanged. Polling reads metadata
-without reading whole source files or following symlink targets. Ignored files do
-not trigger work; ingestion still verifies source content hashes.
-
-Active repositories are checked every 2 seconds. Unchanged repositories back
-off exponentially to 30 seconds; any change resets the interval to 2 seconds
-and is debounced for 500 ms. Durable jobs coalesce per project and the single
-job runner bounds indexing concurrency. The behavior is configurable with:
-
-- `SCS_AUTO_REINDEX_ENABLED` (default `true`).
-- `SCS_AUTO_REINDEX_ACTIVE_SECONDS` (default `2`).
-- `SCS_AUTO_REINDEX_IDLE_SECONDS` (default `30`).
-- `SCS_AUTO_REINDEX_DEBOUNCE_SECONDS` (default `0.5`).
-- `SCS_AUTO_REINDEX_GIT_TIMEOUT_SECONDS` (default `10`).
-
-The idle interval must be at least the active interval. Disabling automatic
-reindexing does not affect explicit `scs index` or `scs reindex` requests.
-
-The service has no graphical interface. Use `scs status`, `scs doctor`, logs,
-SCSWire, or MCP index statistics for operational visibility. `scs metrics
---days 7 --json` reports daemon-wide hourly operation aggregates without query
-text, source text, file paths, job payloads, or results. Metrics use an HMAC
-repository identity, retain at most 30 days, and live in owner-only
-`metrics.db` and `metrics.key` files under `SCS_HOME`.
-
-## MCP tools
-
-SCS exposes five model-facing operations: `query_code`, `ingest_project`,
-`ingest_files`, `delete_repository`, and `get_graph_stats`. Query tools are annotated
-read-only and closed-world. Ingestion tools are marked destructive because
-reconciliation can remove stale SCS-owned index state.
-
-### How a code query runs
+## How code queries work
 
 ```text
 agent goal + repository + optional anchors
@@ -259,7 +86,7 @@ agent goal + repository + optional anchors
    evidence + routing + trace + completeness
 ```
 
-For example, an agent can call:
+For example, an agent can ask:
 
 ```text
 query_code(
@@ -270,85 +97,71 @@ query_code(
 )
 ```
 
-Optional anchors are `node_type`, `symbol_name`, `node_ids`, `file_paths`, and
-`source_position`. The modes `fast`, `balanced`, and `thorough` set fixed time
-and evidence budgets. SCS chooses one of DISCOVER, UNDERSTAND, RELATIONSHIPS,
-REFERENCES, INSPECT_FILES, IMPACT, or INVENTORY, then runs only that bounded
-playbook. Results include the selected route, compact evidence, stage traces,
-timings, and `complete`, `truncated`, and `degraded_stages` flags.
+The `fast`, `balanced`, and `thorough` modes set fixed time and evidence
+budgets. Results show which playbook ran and whether evidence was complete,
+truncated, or degraded. See the [MCP tool reference](docs/mcp-tools.md) for
+anchors, tool contracts, and the
+[`query_code` migration guide](docs/query-code-migration.md) for retired tools.
 
-By default, routing follows deterministic rules. On Apple Silicon, you can opt
-in to a local Laya MLX classifier to choose the playbook from the goal and
-explicit anchors. Laya receives no repository source, embeddings, or retrieved
-evidence. It does not generate an answer or run arbitrary tools; SCS performs
-the search and graph reads. If inference fails during a query, SCS records the
-degradation and uses deterministic routing.
+## Embeddings and indexing
 
-For a source checkout on Apple Silicon, set up Laya explicitly:
+SCS indexes supported source files structurally. Other regular UTF-8 text
+files can be indexed at file level for lexical and semantic search. Git ignore
+rules and size limits apply. Once a repository is enrolled, SCS watches
+Git-visible changes and updates its index in the background. See
+[indexing and project management](docs/indexing.md) for coverage, limits,
+reindexing, and deletion.
+
+The default OpenAI embedding provider sends source-derived entity text to
+the configured API. SCS does not send whole repository files to a
+summarization service. You can instead configure a local OpenAI-compatible
+server or an in-process MLX provider. Provider details and trust controls
+are in [embedding configuration](docs/configuration.md).
+
+## Optional Laya routing
+
+On Apple Silicon, Laya can choose one of SCS's bounded query playbooks.
+SCS runs Laya in its own local MLX worker process; it does not call an
+external inference service. Laya receives the goal and explicit anchors,
+not repository source, embeddings, or retrieved evidence. SCS performs the
+search and graph reads. Without Laya, routing follows deterministic rules.
+
+**Resource example:** On a Mac Studio M3 Ultra, the pinned model bundle
+occupied about 807 MB on disk, and a warmed Laya worker measured about
+5.2 GB of physical memory footprint on 2026-09-24. This is one observed
+measurement, not a fixed minimum; usage can vary by host and workload.
+Laya is disabled unless explicitly configured.
+
+To enable it from a source checkout on Apple Silicon:
 
 ```bash
 uv sync --all-groups --extra laya
 uv run --extra laya python scripts/install-laya.py
 ```
 
-Then add `decision_model = "laya"` to `~/.scs/config.toml` and run
+Add `decision_model = "laya"` to `~/.scs/config.toml`, then run
 `uv run --extra laya scs daemon restart` from that checkout. The release
-installer installs the base tool without the optional Laya dependency. The model
-installation script downloads a pinned bundle to SCS's model cache and verifies
-every file against its expected SHA-256 digest. `decision_model_path` can point
-to another absolute bundle path. A configured daemon reports ready only after
-its private classifier worker loads and warms. It restarts a worker that exits
-and waits for recovery before routing new queries; queries never download a
-model. Missing or invalid model files prevent daemon startup.
+installer installs the base tool without the optional Laya dependency.
+The installation script downloads and verifies a pinned model bundle;
+queries never download a model. A configured daemon reports ready only
+after its worker loads and warms. If inference fails during a query, SCS
+reports degradation and uses deterministic routing.
 
-The seven former read tools are now internal service routes. Existing MCP
-callers must use `query_code`; the [migration guide](docs/query-code-migration.md)
-maps each retired tool to a goal and anchors.
+## Operations and development
 
-For Python projects using a `src/` layout, a full `scs reindex <repo-path>`
-connects previously unresolved imports to indexed symbols. IMPACT then reports
-test targets only when the graph contains a dependency edge.
+`scs list` shows enrolled projects and their stable numeric IDs.
+`scs reingest ID|PATH` forces a full rebuild, and `scs delete ID|PATH`
+removes only SCS-owned derived state. `scs doctor` checks daemon health;
+`scs metrics --days 7 --json` reports aggregate operations without query
+text, source text, file paths, job payloads, or results. See
+[indexing and project management](docs/indexing.md) for lifecycle details.
 
-Run `just eval-query` to compare the unified tool with versioned internal-route
-sequences on this repository.
+Each MCP client runs a small stdio bridge. Bridges share one lazily started
+daemon, which shuts down after the last bridge disconnects. Persistent state
+lives under `SCS_HOME`. See [architecture](docs/architecture.md) for storage,
+runtime ownership, and legacy-index migration.
 
-`delete_repository(repo_path=...)` durably removes one repository's SCS-owned
-index and catalog registration, stops its watcher, and supersedes pending
-indexing work without reading, changing, or deleting repository source. The
-source directory does not need to exist. The operation is annotated
-non-read-only, destructive, closed-world, and idempotent; deleting an already
-absent repository succeeds with `already_absent=true` and no queued job. All SCS
-tools preserve repository source.
-
-Operational diagnostics remain available through the CLI and SCSWire instead
-of occupying the model's tool catalog.
-
-`query_code` returns compact evidence, stage timings, and truthful degradation.
-It does not expose the former search tool's full node records, raw query-angle
-controls, or pagination. Use the documented SCSWire service routes for callers
-that need those lower-level responses.
-
-`get_graph_stats` separately reports structural and semantic readiness. With a
-repository path it also includes redacted active/latest durable jobs and a
-retry hint. `wait_job_id` can observe one job for up to 10 seconds without
-running, retrying, or cancelling it.
-
-The `IMPACT` playbook uses bounded incoming dependency analysis and includes
-test-file targets backed by direct dependency edges.
-
-## Runtime ownership
-
-MCP uses stdio between each harness and its bridge, then SCSWire over one
-owner-only Unix socket between bridges and the daemon. No TCP port or platform
-service manager is required. A bootstrap lock serializes simultaneous first
-clients; the daemon independently holds the storage writer lock. Each bridge
-connection is its lease, so abrupt termination cannot leave an orphan lease.
-
-Runtime artifacts live under `~/Library/Application Support/SCS/` on macOS and
-`$XDG_RUNTIME_DIR/scs` on Linux, falling back to
-`~/.local/state/scs/runtime`. Persistent indexes live only under `SCS_HOME`.
-
-## Development
+For a source checkout:
 
 ```bash
 just setup
@@ -356,40 +169,8 @@ just verify
 just eval-search
 ```
 
-`just setup` installs Python dependencies, builds the private `scs._scs_native`
-extension, and installs the repository's pre-commit hook. The daemon can then
-be run directly with `scs serve`, while explicit repository enrollment uses
-`scs index <repo>` or `scs reindex <repo>`. Use `scs list` to discover enrolled
-projects and their numeric IDs, `scs reingest ID|PATH` for a forced full
-rebuild, and `scs delete ID|PATH` to retire one project's SCS-owned state.
-
-Operate the lazy daemon explicitly when diagnosing it:
-
-```bash
-scs daemon start
-scs daemon status
-scs daemon restart
-scs daemon stop
-scs doctor
-```
-
-`scs status` is non-mutating. Commands that require the daemon start it lazily
-and hold a temporary lease. `uv tool uninstall scs` removes installed code but
-preserves `SCS_HOME`, configuration, indexes, and logs.
-
-## Verification
-
-`just verify` runs strict Basedpyright checks, Ruff, all Python tests with
-branch coverage, and the Rust workspace. `just coverage` reports uncovered
-Python lines and enforces the committed risk-based floor. The pre-commit hook
-runs the same whole-source type gate.
-Isolation gates cover exact stdio MCP inventory, multi-bridge daemon
-convergence, bounded frames, generation-safe cleanup, stale/live socket
-ownership, empty-startup behavior, runtime isolation, repository
-source fingerprints, and committed RSS/index/query budgets.
-
-The search evaluation recipe runs the versioned suite in
-evals/scs-search-v1.json against the current checkout through the public SCS
-route. It reports Recall@k, MRR, nDCG@k, response size, and latency as JSON.
-Suite schema and comparison guidance live in evals/README.md; live model timing
-is evidence, not a machine-independent CI threshold.
+`just setup` syncs dependencies, builds the private native extension, and
+installs the repository's pre-commit hook. `just verify` runs strict
+Basedpyright checks, Ruff, Python tests with branch coverage, and the Rust
+workspace tests. Search and query evaluation guidance lives in
+[evals/README.md](evals/README.md).

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- docs: simplify the README and clarify local Laya resource use, embedding
+  requirements, and platform support
+
 ## 0.2.0 - 2026-09-23
 
 - **Breaking (MCP):** replace the seven read tools (`search_code`,
