@@ -126,7 +126,7 @@ external inference service. Laya receives the goal and explicit anchors,
 not repository source, embeddings, or retrieved evidence. SCS performs the
 search and graph reads. Without Laya, routing follows deterministic rules.
 
-**Resource example:** On a Mac Studio M3 Ultra, the pinned model bundle
+**Resource example:** On one Apple Silicon Mac, the pinned model bundle
 occupied about 807 MB on disk, and a warmed Laya worker measured about
 5.2 GB of physical memory footprint on 2026-09-24. This is one observed
 measurement, not a fixed minimum; usage can vary by host and workload.

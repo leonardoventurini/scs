@@ -38,18 +38,19 @@ The compatible provider defaults to loopback HTTP URLs. To use a server on an
 explicitly trusted network host, configure both its URL and exact hostname:
 
 ```toml
-openai_compatible_base_url = "http://m3:10001/v1"
-openai_compatible_trusted_hosts = ["m3"]
+openai_compatible_base_url = "http://embedding-host.example:10001/v1"
+openai_compatible_trusted_hosts = ["embedding-host.example"]
 ```
 
 The trust list is empty by default and matches hostnames case-insensitively;
 it does not match subdomains or wildcards. Only opt in to a host and network
 that you trust with source-derived embedding text. SCS continues to run locally.
 The environment equivalent is
-`SCS_OPENAI_COMPATIBLE_TRUSTED_HOSTS='["m3"]'`. In compatible-provider mode,
-SCS ignores OpenAI credentials and sends no authorization header. Changing the
-provider, model, or dimension quarantines incompatible vectors; the next
-indexing pass regenerates embeddings while preserving the structural graph.
+`SCS_OPENAI_COMPATIBLE_TRUSTED_HOSTS='["embedding-host.example"]'`.
+In compatible-provider mode, SCS ignores OpenAI credentials and sends no
+authorization header. Changing the provider, model, or dimension quarantines
+incompatible vectors; the next indexing pass regenerates embeddings while
+preserving the structural graph.
 
 ## In-process MLX embeddings
 
