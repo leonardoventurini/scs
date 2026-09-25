@@ -1,222 +1,165 @@
-"""A private worker cannot control routing with a bad identity or leaked env."""
+"""SCS sends only policy choices and validates external choice responses."""
 
 from __future__ import annotations
 
-import json
 import asyncio
-import sys
-from pathlib import Path
 
 import pytest
 
-from scs.orchestration.bundle import MODEL_DIGEST, MODEL_REPOSITORY, MODEL_REVISION
-from scs.orchestration.decision import (
-    DeterministicDecisionProvider,
-    Playbook,
-    RoutingRequest,
-)
-from scs.orchestration.laya_provider import LayaDecisionProvider
-from scs.orchestration.protocol import PROTOCOL_VERSION, QUESTION_SCHEMA_VERSION
-from scs.orchestration.query import QueryOrchestrator
+from scs.orchestration.decision import Playbook, RoutingRequest
+from scs.orchestration.laya_provider import LayaDecisionProvider, MODEL_ID
 
 
-def fake_runner(
-    tmp_path: Path,
-    *,
-    wrong_identity: bool = False,
-    handshake_delay: float = 0.0,
-    exit_once: bool = False,
-    recovery_delay: float = 0.0,
-    fail_recovery: bool = False,
-    exit_always: bool = False,
-) -> Path:
-    """Generate a tiny protocol peer without MLX or stored fixture payloads."""
-
-    handshake = {
-        "protocol_version": PROTOCOL_VERSION,
-        "model_repository": MODEL_REPOSITORY,
-        "model_revision": MODEL_REVISION,
-        "model_digest": MODEL_DIGEST,
-        "runtime_version": "test",
-        "question_schema_version": QUESTION_SCHEMA_VERSION,
+def decision() -> dict[str, object]:
+    return {
+        "model": MODEL_ID,
+        "choice": "UNDERSTAND",
+        "confidence": 0.8,
+        "probabilities": {
+            playbook.value: 0.8 if playbook is Playbook.UNDERSTAND else 0.2 / 6
+            for playbook in Playbook
+        },
     }
-    script = tmp_path / "runner.py"
-    script.write_text(
-        "import json, os, sys\n"
-        "from pathlib import Path\n"
-        "import time\n"
-        "starts = Path('starts')\n"
-        "starts.open('a').write('x')\n"
-        "attempt = len(starts.read_text())\n"
-        f"time.sleep({handshake_delay!r} if attempt == 1 else {recovery_delay!r})\n"
-        + ("if attempt > 1: sys.exit(2)\n" if fail_recovery else "")
-        + f"print({json.dumps(json.dumps(handshake))}, flush=True)\n"
-        + (
-            "sys.exit(0)\n"
-            if exit_always
-            else "if attempt == 1: sys.exit(0)\n"
-            if exit_once
-            else ""
-        )
-        + "for line in sys.stdin:\n"
-        " request = json.loads(line)\n"
-        " probabilities = {label: float(label == 'DISCOVER') for label in "
-        "('DISCOVER','UNDERSTAND','RELATIONSHIPS','REFERENCES','INSPECT_FILES','IMPACT','INVENTORY')}\n"
-        " response = {'request_id': "
-        + ("'f' * 32" if wrong_identity else "request['request_id']")
-        + ", 'decision': {'playbook': 'DISCOVER', 'model': 'fake', "
-        "'confidence': 1.0, 'probabilities': probabilities}}\n"
-        " if os.environ.get('OPENAI_API_KEY'): response = {'request_id': "
-        "request['request_id'], 'error': 'secret_leaked'}\n"
-        " print(json.dumps(response), flush=True)\n"
-    )
-    return script
 
 
 @pytest.mark.asyncio
-async def test_worker_start_waits_for_handshake_before_reporting_ready(
-    tmp_path: Path,
-) -> None:
-    provider = LayaDecisionProvider(
-        tmp_path,
-        runner_command=(
-            sys.executable,
-            str(fake_runner(tmp_path, handshake_delay=0.1)),
-        ),
-    )
-    task = asyncio.create_task(provider.start())
-    try:
-        await asyncio.sleep(0.03)
-        assert provider.is_ready is False
-        assert task.done() is False
-
-        await asyncio.wait_for(task, timeout=2)
-        assert provider.is_ready is True
-    finally:
-        await provider.close()
-
-
-@pytest.mark.asyncio
-async def test_worker_exit_restarts_without_a_query(tmp_path: Path) -> None:
-    provider = LayaDecisionProvider(
-        tmp_path,
-        runner_command=(
-            sys.executable,
-            str(
-                fake_runner(
-                    tmp_path,
-                    exit_once=True,
-                    recovery_delay=0.1,
-                )
-            ),
-        ),
-    )
-    try:
-        await provider.start()
-        async with asyncio.timeout(2):
-            while (
-                not (tmp_path / "starts").exists()
-                or (tmp_path / "starts").read_text() != "xx"
-            ):
-                await asyncio.sleep(0.01)
-
-        ready = asyncio.create_task(provider.wait_ready())
-        await asyncio.sleep(0.02)
-        assert ready.done() is False
-        await asyncio.wait_for(ready, timeout=2)
-        decision = await provider.classify(RoutingRequest(goal="find parser"))
-        assert decision.playbook is Playbook.DISCOVER
-    finally:
-        await provider.close()
-
-
-@pytest.mark.asyncio
-async def test_failed_automatic_recovery_notifies_owner(tmp_path: Path) -> None:
-    unavailable = asyncio.Event()
-    provider = LayaDecisionProvider(
-        tmp_path,
-        runner_command=(
-            sys.executable,
-            str(
-                fake_runner(
-                    tmp_path,
-                    exit_once=True,
-                    fail_recovery=True,
-                )
-            ),
-        ),
-        on_unavailable=unavailable.set,
-    )
-    try:
-        await provider.start()
-        await asyncio.wait_for(unavailable.wait(), timeout=2)
-        assert provider.is_ready is False
-        with pytest.raises(RuntimeError, match="recovery failed"):
-            await provider.wait_ready()
-    finally:
-        await provider.close()
-
-
-@pytest.mark.asyncio
-async def test_repeated_worker_exits_do_not_spin_forever(tmp_path: Path) -> None:
-    unavailable = asyncio.Event()
-    provider = LayaDecisionProvider(
-        tmp_path,
-        runner_command=(sys.executable, str(fake_runner(tmp_path, exit_always=True))),
-        on_unavailable=unavailable.set,
-    )
-    try:
-        await provider.start()
-        await asyncio.wait_for(unavailable.wait(), timeout=2)
-        assert provider.is_ready is False
-        assert len((tmp_path / "starts").read_text()) <= 3
-    finally:
-        await provider.close()
-
-
-@pytest.mark.asyncio
-async def test_laya_parent_reuses_one_worker_without_inheriting_api_key(
-    tmp_path: Path,
+async def test_provider_sends_bounded_request_and_accepts_complete_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "private-test-value")
-    provider = LayaDecisionProvider(
-        tmp_path, runner_command=(sys.executable, str(fake_runner(tmp_path)))
-    )
-    try:
-        first = await provider.classify(RoutingRequest(goal="find parser"))
-        second = await provider.classify(RoutingRequest(goal="list symbols"))
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
 
-        assert first.playbook is second.playbook is Playbook.DISCOVER
-        assert (tmp_path / "starts").read_text() == "x"
+    def request(
+        _self: LayaDecisionProvider,
+        method: str,
+        route: str,
+        payload: dict[str, object] | None = None,
+    ) -> object:
+        calls.append((method, route, payload))
+        if route == "/decisions/ready":
+            return {"status": "ok", "model": MODEL_ID}
+        return decision()
+
+    monkeypatch.setattr(LayaDecisionProvider, "_request", request)
+    provider = LayaDecisionProvider("http://127.0.0.1:10000/v1")
+    try:
+        await provider.start()
+        answer = await provider.classify(RoutingRequest(goal="find parser"))
+        assert answer.playbook is Playbook.UNDERSTAND
+        method, route, payload = calls[-1]
+        assert (method, route) == ("POST", "/decisions")
+        assert payload is not None
+        assert payload["state"] == {"goal": "find parser", "node_ids": [], "file_paths": []}
+        assert payload["model"] == MODEL_ID
+        question = payload["question"]
+        assert isinstance(question, dict)
+        assert set(question["criteria"]) == {playbook.value for playbook in Playbook}
     finally:
         await provider.close()
 
 
 @pytest.mark.asyncio
-async def test_wrong_response_identity_fails_open_to_discovery(tmp_path: Path) -> None:
-    provider = LayaDecisionProvider(
-        tmp_path,
-        runner_command=(
-            sys.executable,
-            str(fake_runner(tmp_path, wrong_identity=True)),
-        ),
+async def test_provider_rejects_incompatible_service_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        LayaDecisionProvider,
+        "_request",
+        lambda *_args, **_kwargs: {"status": "ok", "model": "wrong"},
     )
-    fallback = DeterministicDecisionProvider()
+    provider = LayaDecisionProvider("http://127.0.0.1:10000/v1")
+    with pytest.raises(RuntimeError, match="unavailable or incompatible"):
+        await provider.start()
+    await provider.close()
 
-    async def unused_route(
-        _method: str, _params: dict[str, object]
-    ) -> dict[str, object]:
-        return {"results": []}
 
-    query = QueryOrchestrator(provider=provider, call=unused_route)
+@pytest.mark.asyncio
+async def test_provider_rejects_invalid_choice_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def request(
+        _self: LayaDecisionProvider,
+        _method: str,
+        route: str,
+        _payload: dict[str, object] | None = None,
+    ) -> object:
+        if route == "/decisions/ready":
+            return {"status": "ok", "model": MODEL_ID}
+        answer = decision()
+        answer["choice"] = "ARBITRARY_TOOL"
+        return answer
+
+    monkeypatch.setattr(LayaDecisionProvider, "_request", request)
+    provider = LayaDecisionProvider("http://127.0.0.1:10000/v1")
     try:
-        result = await query.query({"goal": "find parser", "repo_path": str(tmp_path)})
+        await provider.start()
+        with pytest.raises(ValueError):
+            await provider.classify(RoutingRequest(goal="find parser"))
+    finally:
+        await provider.close()
 
-        assert result["routing"]["playbook"] == Playbook.DISCOVER.value
-        assert result["routing"]["degraded_reason"] == "classifier_unavailable"
-        assert (
-            await fallback.classify(RoutingRequest(goal="find parser"))
-        ).playbook is Playbook.DISCOVER
+
+@pytest.mark.asyncio
+async def test_provider_pauses_during_service_outage_and_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    healthy = True
+
+    def request(
+        _self: LayaDecisionProvider,
+        _method: str,
+        route: str,
+        _payload: dict[str, object] | None = None,
+    ) -> object:
+        if route == "/decisions/ready":
+            return {"status": "ok", "model": MODEL_ID} if healthy else None
+        return decision()
+
+    monkeypatch.setattr(LayaDecisionProvider, "_request", request)
+    monkeypatch.setattr("scs.orchestration.laya_provider.HEALTH_INTERVAL_SECONDS", 0.01)
+    provider = LayaDecisionProvider("http://127.0.0.1:10000/v1")
+    try:
+        await provider.start()
+        healthy = False
+        async with asyncio.timeout(1):
+            while provider.is_ready:
+                await asyncio.sleep(0.01)
+        waiting = asyncio.create_task(provider.wait_ready())
+        await asyncio.sleep(0.02)
+        assert not waiting.done()
+        healthy = True
+        await asyncio.wait_for(waiting, timeout=1)
+        assert provider.is_ready
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_shuts_down_after_bounded_failed_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    healthy = True
+    unavailable = asyncio.Event()
+
+    def request(
+        _self: LayaDecisionProvider,
+        _method: str,
+        _route: str,
+        _payload: dict[str, object] | None = None,
+    ) -> object:
+        return {"status": "ok", "model": MODEL_ID} if healthy else None
+
+    monkeypatch.setattr(LayaDecisionProvider, "_request", request)
+    monkeypatch.setattr("scs.orchestration.laya_provider.HEALTH_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr("scs.orchestration.laya_provider.RECOVERY_TIMEOUT_SECONDS", 0.02)
+    provider = LayaDecisionProvider(
+        "http://127.0.0.1:10000/v1", on_unavailable=unavailable.set
+    )
+    try:
+        await provider.start()
+        healthy = False
+        await asyncio.wait_for(unavailable.wait(), timeout=1)
+        assert not provider.is_ready
+        with pytest.raises(RuntimeError, match="recovery failed"):
+            await provider.wait_ready()
     finally:
         await provider.close()

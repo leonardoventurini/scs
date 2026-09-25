@@ -41,13 +41,13 @@ async def test_daemon_does_not_publish_ready_socket_before_classifier(
     class SlowProvider(LayaDecisionProvider):
         def __init__(
             self,
-            model_path: Path,
+            base_url: str,
             *,
             max_concurrency: int = 1,
             on_unavailable: Callable[[], None] | None = None,
         ) -> None:
             super().__init__(
-                model_path,
+                base_url,
                 max_concurrency=max_concurrency,
                 on_unavailable=on_unavailable,
             )

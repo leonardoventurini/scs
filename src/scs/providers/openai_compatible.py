@@ -15,7 +15,7 @@ EMBEDDINGS_PATH: Final[str] = "embeddings"
 DOCUMENT_PREFIX: Final[str] = "search_document"
 QUERY_PREFIX: Final[str] = "search_query"
 REQUEST_TIMEOUT_SECONDS: Final[float] = 30.0
-# MES accepts at most 131,072 characters. Keep explicit headroom for model
+# The configured model endpoint accepts at most 131,072 characters. Keep headroom for model
 # instructions and future provider-side accounting changes.
 MAX_EMBEDDING_REQUEST_CHARACTERS: Final[int] = 120_000
 MAX_HTTP_ERROR_DETAIL_BYTES: Final[int] = 1_024

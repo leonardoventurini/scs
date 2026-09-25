@@ -27,6 +27,7 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LOCAL_EMBEDDING_MODEL = "Qwen3-Embedding-8B-4bit-DWQ"
 DEFAULT_LOCAL_EMBEDDING_DIMENSION = 4096
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "http://127.0.0.1:10000/v1"
+DEFAULT_DECISION_BASE_URL = "http://127.0.0.1:10000/v1"
 
 
 class SCSSettings(BaseSettings):
@@ -62,7 +63,8 @@ class SCSSettings(BaseSettings):
     openai_compatible_trusted_hosts: list[str] = Field(default_factory=list)
     reranking_model: str | None = None
     decision_model: Literal["disabled", "laya"] = "disabled"
-    decision_model_path: Path | None = None
+    decision_base_url: str = DEFAULT_DECISION_BASE_URL
+    decision_trusted_hosts: list[str] = Field(default_factory=list)
     decision_timeout_seconds: float = Field(default=0.5, gt=0, le=1.0)
     decision_max_concurrency: int = Field(default=1, ge=1, le=4)
     index_text_fallback: bool = True
@@ -137,14 +139,17 @@ class SCSSettings(BaseSettings):
                     )
         return self
 
-    @field_validator("decision_model_path")
+    @field_validator("decision_base_url")
     @classmethod
-    def _validate_decision_model_path(cls, path: Path | None) -> Path | None:
-        """Keep configured model loading confined to an explicit absolute path."""
+    def _validate_decision_base_url(cls, value: str) -> str:
+        """Validate the decision transport before applying host trust policy."""
 
-        if path is not None and not path.is_absolute():
-            raise ValueError("decision_model_path must be absolute")
-        return path
+        parsed = urlsplit(value)
+        if parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("decision_base_url must be an absolute credential-free http URL")
+        if parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/v1":
+            raise ValueError("decision_base_url must end at /v1")
+        return value.rstrip("/")
 
     @field_validator("openai_compatible_base_url")
     @classmethod
@@ -160,21 +165,22 @@ class SCSSettings(BaseSettings):
     def _validate_openai_compatible_host_trust(self) -> "SCSSettings":
         """Require explicit trust before sending entity text off the workstation."""
 
-        host = urlsplit(self.openai_compatible_base_url).hostname
-        assert host is not None  # The field validator requires an absolute URL.
-        host = host.lower()
-        try:
-            is_loopback = ip_address(host).is_loopback
-        except ValueError:
-            is_loopback = host == "localhost"
-        trusted_hosts = {
-            trusted.lower() for trusted in self.openai_compatible_trusted_hosts
-        }
-        if not is_loopback and host not in trusted_hosts:
-            raise ValueError(
-                "openai_compatible_base_url must use a loopback host or an exact "
-                "host listed in openai_compatible_trusted_hosts"
-            )
+        for base_url, trusted, field in (
+            (self.openai_compatible_base_url, self.openai_compatible_trusted_hosts,
+                "openai_compatible_base_url"),
+            (self.decision_base_url, self.decision_trusted_hosts, "decision_base_url"),
+        ):
+            host = urlsplit(base_url).hostname
+            assert host is not None
+            host = host.lower()
+            try:
+                is_loopback = ip_address(host).is_loopback
+            except ValueError:
+                is_loopback = host == "localhost"
+            if not is_loopback and host not in {item.lower() for item in trusted}:
+                raise ValueError(
+                    f"{field} must use a loopback host or an exact trusted host"
+                )
         return self
 
     @field_validator("reranking_model")

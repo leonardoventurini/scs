@@ -87,9 +87,9 @@ tool history. A seven-day slice was also checked to distinguish current behavior
 from older failures.
 
 The sample included all repository paths present in SCS tool arguments. It was
-not limited to the SCS repository. High-volume repositories included Mentagen,
-VitaFlow, Cortex, SolidScript, MES, Meteor, TypeFerry, infrastructure projects,
-and SCS itself. Temporary test repositories and malformed test inputs were kept
+not limited to the SCS repository. High-volume repositories included several
+application and infrastructure projects, plus SCS itself. Temporary test
+repositories and malformed test inputs were kept
 visible when classifying failures but were not treated as normal product usage.
 
 The following facts were aggregated:

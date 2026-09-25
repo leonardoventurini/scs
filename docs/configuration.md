@@ -68,11 +68,19 @@ local provider requires an OpenAI API key.
 
 ## Optional query classifier
 
-Laya is disabled by default. On Apple Silicon, after installing its pinned
-bundle as described in the [README](../README.md#optional-laya-routing), set
-`decision_model = "laya"` in `~/.scs/config.toml`. The optional
-`decision_model_path` can select another absolute bundle path; SCS verifies
-its files before loading it. The release installer does not include Laya.
+Laya is disabled by default. A separate Apple Silicon service owns its runtime
+and pinned bundle. After starting a compatible service as described in the
+[README](../README.md#optional-laya-routing), set:
+
+```toml
+decision_model = "laya"
+decision_base_url = "http://127.0.0.1:10000/v1"
+```
+
+For an explicitly trusted remote host, set `decision_trusted_hosts` to a
+list containing its exact hostname. The decision API uses credential-free HTTP
+and sends goals and anchors to that host. SCS verifies the model identity and
+requires model readiness before its daemon becomes ready.
 
 ## Reranking
 

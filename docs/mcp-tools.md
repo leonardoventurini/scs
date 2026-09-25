@@ -33,12 +33,12 @@ the unified tool with versioned internal-route sequences on this repository.
 The `IMPACT` playbook uses bounded incoming dependency analysis and includes
 test-file targets backed by direct dependency edges.
 
-When configured, the optional local Laya worker receives only the goal and
-explicit anchors. A configured daemon reports ready after the worker loads and
-warms, restarts a worker that exits, and waits for recovery before routing new
-queries. An inference failure during a query returns deterministic discovery
-evidence with a degradation reason. Missing or invalid model files prevent
-daemon startup. The model is never downloaded during a query.
+When configured, the Laya choice service receives only the goal, explicit anchors,
+and SCS playbook choices. A configured daemon reports ready after the service confirms
+the pinned model is warm. It waits through short outages and shuts down if
+recovery fails. An inference failure during a query returns deterministic
+discovery evidence with a degradation reason. Missing or invalid model
+files prevent SCS daemon startup.
 
 The seven former read tools are now internal service routes. Existing MCP
 callers must use `query_code`; the [migration guide](query-code-migration.md)

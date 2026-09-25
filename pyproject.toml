@@ -35,11 +35,6 @@ Changelog = "https://github.com/leonardoventurini/scs/blob/main/CHANGELOG.md"
 scs = "scs.cli:main"
 scs-mcp = "scs.mcp.stdio:main"
 
-[project.optional-dependencies]
-laya = [
-    "laya-mlx==0.2.0 ; platform_machine == 'arm64' and sys_platform == 'darwin'",
-]
-
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.9",

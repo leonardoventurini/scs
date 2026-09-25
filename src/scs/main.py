@@ -21,7 +21,6 @@ from scs.indexing.runner import IngestionJobRunner
 from scs.indexing.watcher import RepositoryWatcher
 from scs.identity import IdentityPublisher
 from scs.metrics import AggregateMetrics
-from scs.orchestration.bundle import MODEL_CACHE_NAMESPACE, MODEL_REVISION
 from scs.orchestration.decision import DecisionProvider, DeterministicDecisionProvider
 from scs.orchestration.laya_provider import LayaDecisionProvider
 from scs.orchestration.query import QueryOrchestrator
@@ -108,12 +107,9 @@ class SCSDaemon:
             binding_for_repository=self._binding_for_repository,
             reranker=lambda: self._reranker,
         )
-        model_path = self.settings.decision_model_path or (
-            self.settings.paths.model_cache / MODEL_CACHE_NAMESPACE / MODEL_REVISION
-        )
         self._decision_provider: DecisionProvider = (
             LayaDecisionProvider(
-                model_path,
+                self.settings.decision_base_url,
                 max_concurrency=self.settings.decision_max_concurrency,
                 on_unavailable=self.request_shutdown,
             )
@@ -177,17 +173,6 @@ class SCSDaemon:
             reranker = build_reranker(self.settings)
             stores = ProjectStoreRegistry(home=paths.home, provider=embeddings.metadata)
             if self.settings.decision_model == "laya":
-                model_path = (
-                    self.settings.decision_model_path
-                    or (paths.model_cache / MODEL_CACHE_NAMESPACE / MODEL_REVISION)
-                ).resolve()
-                if not model_path.is_relative_to(paths.model_cache.resolve()) and any(
-                    model_path.is_relative_to(Path(record.canonical_root))
-                    for record in stores.records()
-                ):
-                    raise ValueError(
-                        "decision model may not reside in an indexed repository"
-                    )
                 assert isinstance(self._decision_provider, LayaDecisionProvider)
                 await self._decision_provider.start()
             jobs = await asyncio.to_thread(IngestionJobStore, paths.jobs_database)

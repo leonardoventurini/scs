@@ -37,10 +37,10 @@ can use the corresponding SCSWire service routes. Those routes remain available
 for orchestration, evaluation, and rollback; they are no longer model-facing MCP
 tools.
 
-The optional local classifier receives the goal and anchors only, never source
-or retrieved evidence. A configured daemon warms the classifier before it
-reports ready. If the worker exits, SCS restarts it and holds new queries until
-it is ready. An inference failure returns bounded discovery evidence with a
+The optional external classifier receives the goal, anchors, and playbook choices,
+never source or retrieved evidence. A configured daemon requires model
+readiness before it reports ready. If the service becomes unavailable, SCS holds new
+queries during bounded recovery. An inference failure returns bounded discovery evidence with a
 degradation reason. Check `routing.degraded_reason` when routing matters.
 `ingest_project`, `ingest_files`,
 `delete_repository`, and `get_graph_stats` remain separate MCP operations.

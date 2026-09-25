@@ -3,10 +3,11 @@ status: accepted
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-25
 supersedes:
   - decisions/2026-09-23-use-native-mlx-for-query-routing.md (lazy worker lifecycle only)
 superseded-by:
+  - decisions/2026-09-25-use-external-laya-inference.md (worker supervision only)
 related-specs:
   - specs/2026-09-23-classifier-daemon-readiness.md
 implementation:
@@ -15,6 +16,9 @@ implementation:
 ---
 
 # Gate Daemon Readiness on the Configured Classifier
+
+The worker supervision portion is superseded by
+[Use External Laya Inference](2026-09-25-use-external-laya-inference.md).
 
 ## Context
 

@@ -3,11 +3,12 @@ status: accepted
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-25
 supersedes:
   - decisions/2026-09-22-unify-agent-code-queries.md (classifier runtime only)
 superseded-by:
   - decisions/2026-09-23-gate-daemon-readiness-on-classifier.md (lazy worker lifecycle only)
+  - decisions/2026-09-25-use-external-laya-inference.md (SCS runtime ownership only)
 related-specs:
   - specs/2026-09-22-unified-query-orchestration.md
 implementation:
@@ -16,6 +17,9 @@ implementation:
 ---
 
 # Use Native MLX for Query Routing
+
+The SCS-owned runtime portion is superseded by
+[Use External Laya Inference](2026-09-25-use-external-laya-inference.md).
 
 ## Context
 

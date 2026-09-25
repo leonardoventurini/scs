@@ -13,9 +13,9 @@ CLI, MCP, or client request, and never changes repository source.
 - Stable releases support Apple Silicon macOS and x86-64 Linux with CPython 3.14.
 - Indexing needs an embedding provider. The default uses the OpenAI embeddings
   API and sends source-derived entity text to it. Local providers are available.
-- Laya is an **optional, local Apple Silicon feature** for choosing query
-  playbooks. SCS works without Laya on both supported platforms. See
-  [Laya requirements](#optional-laya-routing) for its measured memory use.
+- Laya is an optional external classifier for choosing query playbooks.
+  SCS works without it on both supported platforms. A compatible Laya server
+  needs Apple Silicon and sufficient memory; see [Laya routing](#optional-laya-routing).
 
 ## Quick start
 
@@ -77,7 +77,7 @@ agent goal + repository + optional anchors
         validate request and paths
                  |
                  v
-     select one of seven playbooks  <--- optional local Laya classifier
+     select one of seven playbooks  <--- optional Laya choice API
                  |
                  v
      bounded index search and graph reads
@@ -120,32 +120,34 @@ are in [embedding configuration](docs/configuration.md).
 
 ## Optional Laya routing
 
-On Apple Silicon, Laya can choose one of SCS's bounded query playbooks.
-SCS runs Laya in its own local MLX worker process; it does not call an
-external inference service. Laya receives the goal and explicit anchors,
-not repository source, embeddings, or retrieved evidence. SCS performs the
-search and graph reads. Without Laya, routing follows deterministic rules.
+An external service can serve Laya on Apple Silicon to choose one of SCS's
+bounded query playbooks. SCS calls its configured choice API with the goal, explicit
+anchors, and its playbook choices. It sends no repository source, embeddings,
+or retrieved evidence. SCS performs the search and graph reads. Without Laya,
+routing follows deterministic rules.
 
 **Resource example:** On one Apple Silicon Mac, the pinned model bundle
 occupied about 807 MB on disk, and a warmed Laya worker measured about
 5.2 GB of physical memory footprint on 2026-09-24. This is one observed
 measurement, not a fixed minimum; usage can vary by host and workload.
-Laya is disabled unless explicitly configured.
+The model runs in the external service, so that memory is outside SCS. Laya is
+disabled unless explicitly configured.
 
-To enable it from a source checkout on Apple Silicon:
+After starting a compatible Laya choice service, set its endpoint in
+`~/.scs/config.toml`:
 
-```bash
-uv sync --all-groups --extra laya
-uv run --extra laya python scripts/install-laya.py
+```toml
+decision_model = "laya"
+decision_base_url = "http://127.0.0.1:10000/v1"
 ```
 
-Add `decision_model = "laya"` to `~/.scs/config.toml`, then run
-`uv run --extra laya scs daemon restart` from that checkout. The release
-installer installs the base tool without the optional Laya dependency.
-The installation script downloads and verifies a pinned model bundle;
-queries never download a model. A configured daemon reports ready only
-after its worker loads and warms. If inference fails during a query, SCS
-reports degradation and uses deterministic routing.
+The [choice API contract](docs/decision-api.md) lets another service provide
+Laya without depending on a specific serving product.
+
+Then restart SCS with `scs daemon restart`. A configured daemon reports ready
+only after the service has loaded and warmed the pinned model. If it is unavailable,
+SCS startup fails. An inference failure during a query reports degradation
+and uses deterministic routing. SCS installs no Laya weights or MLX runtime.
 
 ## Operations and development
 

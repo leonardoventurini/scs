@@ -12,7 +12,7 @@ from typing import ClassVar, Literal, TypedDict, cast
 from pydantic import ConfigDict, Field, model_validator
 
 from scs.graph.models import NodeType, RelationshipType
-from scs.orchestration.bundle import MODEL_REPOSITORY
+from scs.orchestration.laya_provider import MODEL_REPOSITORY
 from scs.orchestration.decision import (
     DecisionProvider,
     DeterministicDecisionProvider,

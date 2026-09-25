@@ -258,7 +258,7 @@ def test_openai_compatible_rejects_untrusted_remote_endpoint() -> None:
     with pytest.raises(ValueError, match="loopback"):
         SCSSettings(
             embedding_provider="openai_compatible",
-            openai_compatible_base_url="http://mes.example.com:10001/v1",
+            openai_compatible_base_url="http://inference.example.com:10001/v1",
         )
 
 
@@ -310,3 +310,27 @@ def test_openai_compatible_trust_loads_from_toml(
 
     assert settings.openai_compatible_trusted_hosts == ["m3"]
     assert settings.openai_compatible_base_url == "http://m3:10000/v1"
+
+
+def test_decision_endpoint_requires_an_explicit_trusted_host() -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        SCSSettings(decision_base_url="http://inference.example.com:10000/v1")
+
+    settings = SCSSettings(
+        decision_base_url="http://inference.example.com:10000/v1/",
+        decision_trusted_hosts=["inference.example.com"],
+    )
+    assert settings.decision_base_url == "http://inference.example.com:10000/v1"
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://127.0.0.1:10000/v1",
+        "http://user:secret@127.0.0.1:10000/v1",
+        "http://127.0.0.1:10000/wrong",
+    ],
+)
+def test_decision_endpoint_rejects_invalid_urls(endpoint: str) -> None:
+    with pytest.raises(ValueError, match="decision_base_url"):
+        SCSSettings(decision_base_url=endpoint)

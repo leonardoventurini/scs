@@ -3,13 +3,12 @@ status: accepted
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
-updated: 2026-09-22
+updated: 2026-09-25
 supersedes:
   - decisions/2026-09-05-trust-explicit-omlx-hosts.md
   - decisions/2026-09-08-activate-reranking-by-configured-model.md
 superseded-by:
-related-specs:
-  - /Users/leonardo/Repositories/mes/specs/2026-09-22-mes-retrieval-model-serving.md
+related-specs: []
 implementation:
   commits:
     - d62c355
@@ -22,8 +21,8 @@ implementation:
 
 SCS's local embedding and reranking clients implement portable HTTP contracts,
 but their configuration, reranker module, metadata, and documentation name the
-previous oMLX runtime. MES now owns the same embedding and reranking models
-through its loopback-only `mlx-serve` child. Retaining the previous product name
+previous oMLX runtime. A separate loopback-only inference service now owns the
+same embedding and reranking models. Retaining the previous product name
 would misrepresent ownership and couple SCS to an implementation it no longer
 uses.
 
@@ -38,13 +37,13 @@ endpoint. Name the adapters and durable provider metadata
 Remove the former provider value, settings, class, module, and environment
 names without a compatibility alias. This deliberate breaking change ships in
 a new SCS release and the local configuration is migrated during the coordinated
-MES rollout.
+local inference rollout.
 
 ## Rejected alternatives
 
 - Keeping the old name as an alias was rejected because the operator explicitly
   chose a complete naming cutover.
-- Naming MES in the SCS provider was rejected because the transport contract is
+- Naming a specific serving product in the SCS provider was rejected because the transport contract is
   portable and SCS should not depend on another product's identity.
 - Giving reranking a separate endpoint was rejected because both operations use
   the same validated local model server.

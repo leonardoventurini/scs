@@ -1,20 +1,24 @@
 ---
-status: shipped
+status: superseded
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-23
-updated: 2026-09-24
+updated: 2026-09-25
 owner: code-intelligence
 decision: decisions/2026-09-23-gate-daemon-readiness-on-classifier.md
 supersedes:
   - specs/2026-09-22-unified-query-orchestration.md (Laya startup and recovery only)
 superseded-by:
+  - specs/2026-09-25-consume-external-laya-inference.md (classifier ownership and recovery only)
 implementation:
   commits: [1c54a6f]
   pull-request:
 ---
 
 # Classifier-Gated Daemon Readiness
+
+The local-worker contract is superseded by
+[Consume External Laya Inference](2026-09-25-consume-external-laya-inference.md).
 
 ## Outcome
 

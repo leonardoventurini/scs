@@ -3,7 +3,7 @@ status: shipped
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
-updated: 2026-09-24
+updated: 2026-09-25
 owner: parser-and-indexing
 decision: decisions/2026-09-22-use-openai-compatible-local-inference.md
 supersedes:
@@ -51,7 +51,7 @@ count rather than aggregate text size.
 
 ### Non-goals
 
-- Change MES limits, model identity, endpoint ownership, vector dimensions, or
+- Change serving limits, model identity, endpoint ownership, vector dimensions, or
   provider configuration.
 - Change public MCP, SCSWire, CLI, or persisted graph/job formats.
 - Split one parsed entity into multiple vectors or silently omit an entity.
@@ -121,7 +121,7 @@ and never include request headers or credentials.
   character budget is exceeded, and returned vectors retain source order.
 - An individually oversized prefixed input fails before transport with a clear
   bounded error.
-- HTTP failures expose MES's `embedding input is too large` detail without
+- HTTP failures expose the server's `embedding input is too large` detail without
   retaining an unbounded response body.
 - All existing parser, ingestion, provider, strict-type, and native tests remain
   compatible.
@@ -154,7 +154,7 @@ Implemented by `023f8d9`.
 - **Passed:** the rebuilt native parser converts the observed
   `OperationRegistry` signature to
   `OperationRegistry = map[OperationID]*OpMeta{…}`. Its prefixed embedding input
-  fell from 280,017 to 126 characters, and the live loopback MES endpoint
+  fell from 280,017 to 126 characters, and the live loopback endpoint
   returned HTTP 200 with 4,096 vector components.
 - **Passed:** Rust and Python cap function, method, variable, and constant
   signatures at 512 UTF-8 bytes without splitting a code point.
@@ -163,7 +163,7 @@ Implemented by `023f8d9`.
 - **Passed:** an individually oversized input fails before transport, while HTTP
   error handling reads at most 1,025 bytes and exposes a bounded detail.
 - **Passed:** public contracts, persisted formats, model identity, vector
-  dimension, and MES configuration remain unchanged.
+  dimension, and server configuration remain unchanged.
 
 ### Executed checks
 
@@ -174,7 +174,7 @@ Implemented by `023f8d9`.
 - `just verify` — passed: Basedpyright and Ruff reported zero findings; 363
   Python tests passed with 87.02% coverage; all Rust workspace and doc tests
   passed, including 108 unit tests.
-- Exact `OperationRegistry` native parse plus live MES embedding request — HTTP
+- Exact `OperationRegistry` native parse plus live embedding request — HTTP
   200 and 4,096 dimensions.
 
 No production deployment, daemon restart, automatic queue drain, persisted

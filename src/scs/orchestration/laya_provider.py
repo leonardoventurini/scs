@@ -1,296 +1,173 @@
-"""Supervise the private local Laya subprocess and validate its responses."""
+"""Strict HTTP client for an external Laya choice service."""
 
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
-import uuid
-from collections import deque
-from collections.abc import Callable, Sequence
-from contextlib import suppress
-from pathlib import Path
+from collections.abc import Callable
+import http.client
+import json
 from time import monotonic
+from typing import ClassVar, Final, cast
+from urllib.parse import urlsplit
 
-from scs.orchestration.bundle import MODEL_DIGEST, MODEL_REPOSITORY, MODEL_REVISION
-from scs.orchestration.decision import RoutingDecision, RoutingRequest
-from scs.orchestration.protocol import (
-    MAX_MESSAGE_BYTES,
-    PROTOCOL_VERSION,
-    QUESTION_SCHEMA_VERSION,
-    RunnerHandshake,
-    RunnerRequest,
-    RunnerResponse,
+from pydantic import BaseModel, ConfigDict, Field
+
+from scs.orchestration.decision import (
+    PLAYBOOK_DESCRIPTIONS,
+    Playbook,
+    RoutingDecision,
+    RoutingRequest,
 )
 
-MAX_WAITING_REQUESTS = 16
-STARTUP_TIMEOUT_SECONDS = 30.0
-SHUTDOWN_TIMEOUT_SECONDS = 35.0
-MAX_WORKER_EXITS = 3
-WORKER_EXIT_WINDOW_SECONDS = 30.0
+MODEL_REPOSITORY: Final[str] = "aac6fef/laya-mlx"
+MODEL_REVISION: Final[str] = "20aed815fc6acde75733882e7ec0e3f28aeb9717"
+MODEL_ID: Final[str] = f"{MODEL_REPOSITORY}@{MODEL_REVISION}"
+QUESTION: Final[str] = "Select the single best code investigation workflow for this goal."
+MAX_RESPONSE_BYTES = 16_384
+HEALTH_INTERVAL_SECONDS = 0.25
+RECOVERY_TIMEOUT_SECONDS = 30.0
+
+
+class ChoiceResponse(BaseModel):
+    """Validate the generic choice answer before mapping it to SCS policy."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", strict=True)
+
+    model: str
+    choice: str
+    confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
+    probabilities: dict[str, float]
 
 
 class LayaDecisionProvider:
-    """Own one warmed worker and recover it while the daemon is running."""
+    """Require a healthy choice endpoint throughout daemon lifetime."""
 
     def __init__(
         self,
-        model_path: Path,
+        base_url: str,
         *,
         max_concurrency: int = 1,
-        runner_command: Sequence[str] | None = None,
         on_unavailable: Callable[[], None] | None = None,
     ) -> None:
-        if not model_path.is_absolute():
-            raise ValueError("Laya model path must be absolute")
         if not 1 <= max_concurrency <= 4:
             raise ValueError("Laya concurrency must be between one and four")
-        self._model_path: Path = model_path
-        self._max_concurrency: int = max_concurrency
-        self._runner_command: tuple[str, ...] = tuple(
-            runner_command or (sys.executable, "-m", "scs.orchestration.laya_runner")
-        )
+        self._base_url: str = base_url.rstrip("/")
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrency)
-        self._startup_lock: asyncio.Lock = asyncio.Lock()
-        self._ready_condition: asyncio.Condition = asyncio.Condition()
-        self._writer_lock: asyncio.Lock = asyncio.Lock()
-        self._startup: asyncio.Task[asyncio.subprocess.Process] | None = None
-        self._process: asyncio.subprocess.Process | None = None
-        self._reader: asyncio.Task[None] | None = None
-        self._pending: dict[str, asyncio.Future[RoutingDecision]] = {}
-        self._abandoned: set[str] = set()
-        self._waiting: int = 0
+        self._ready: bool = False
         self._closed: bool = False
         self._terminal_error: Exception | None = None
+        self._condition: asyncio.Condition = asyncio.Condition()
+        self._monitor: asyncio.Task[None] | None = None
         self._on_unavailable: Callable[[], None] | None = on_unavailable
-        self._recent_exits: deque[float] = deque(maxlen=MAX_WORKER_EXITS)
 
     @property
     def is_ready(self) -> bool:
-        """True only while a verified worker generation is alive."""
+        return self._ready and not self._closed and self._terminal_error is None
 
-        process = self._process
-        return (
-            not self._closed
-            and self._terminal_error is None
-            and process is not None
-            and process.returncode is None
-        )
+    def _request(self, method: str, route: str, payload: dict[str, object] | None = None) -> object:
+        parsed = urlsplit(self._base_url)
+        if parsed.scheme != "http" or not parsed.hostname:
+            raise ValueError("decision base URL must be HTTP")
+        body = json.dumps(payload, separators=(",", ":")).encode() if payload is not None else None
+        connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=2)
+        try:
+            connection.request(
+                method,
+                f"{parsed.path}{route}",
+                body=body,
+                headers={"Content-Type": "application/json"} if body is not None else {},
+            )
+            response = connection.getresponse()
+            contents = response.read(MAX_RESPONSE_BYTES + 1)
+            if response.status != 200 or len(contents) > MAX_RESPONSE_BYTES:
+                raise RuntimeError("decision service returned an invalid response")
+            return cast(object, json.loads(contents))
+        finally:
+            connection.close()
+
+    async def _probe(self) -> bool:
+        try:
+            payload = await asyncio.to_thread(self._request, "GET", "/decisions/ready")
+            return payload == {"status": "ok", "model": MODEL_ID}
+        except (OSError, ValueError, RuntimeError, http.client.HTTPException):
+            return False
 
     async def start(self) -> None:
-        """Load and warm the worker before daemon readiness is published."""
+        if self._closed:
+            raise RuntimeError("Laya decision provider is closed")
+        if not await self._probe():
+            raise RuntimeError("Laya decision service is unavailable or incompatible")
+        self._ready = True
+        self._monitor = asyncio.create_task(self._watch_health())
 
-        await self._ensure_started()
-
-    async def wait_ready(self) -> None:
-        """Hold a new query through automatic worker recovery."""
-
-        async with self._ready_condition:
-            await self._ready_condition.wait_for(
-                lambda: (
-                    self.is_ready or self._terminal_error is not None or self._closed
-                )
-            )
-            if self._terminal_error is not None:
-                raise RuntimeError(
-                    "Laya worker recovery failed"
-                ) from self._terminal_error
-            if self._closed:
-                raise RuntimeError("Laya decision provider is closed")
-
-    async def classify(self, request: RoutingRequest) -> RoutingDecision:
-        """Submit one request or fail so orchestration can discover safely."""
-
-        if self._closed or self._waiting >= MAX_WAITING_REQUESTS:
-            raise RuntimeError("Laya decision queue is unavailable")
-        self._waiting += 1
-        try:
-            await self._semaphore.acquire()
-        finally:
-            self._waiting -= 1
-        identity = uuid.uuid4().hex
-        future: asyncio.Future[RoutingDecision] = (
-            asyncio.get_running_loop().create_future()
-        )
-        try:
-            process = await self._ensure_started()
-            if self._closed:
-                raise RuntimeError("Laya decision provider is closed")
-            request_line = (
-                RunnerRequest(request_id=identity, routing=request)
-                .model_dump_json()
-                .encode()
-                + b"\n"
-            )
-            if len(request_line) > MAX_MESSAGE_BYTES:
-                raise ValueError("Laya routing request exceeds pipe limit")
-            self._pending[identity] = future
-            async with self._writer_lock:
-                if process.stdin is None:
-                    raise RuntimeError("Laya worker has no input pipe")
-                process.stdin.write(request_line)
-                await process.stdin.drain()
-            return await future
-        finally:
-            if self._pending.pop(identity, None) is not None and (
-                future.cancelled() or not future.done()
-            ):
-                if not future.done():
-                    future.cancel()
-                self._abandoned.add(identity)
-                if len(self._abandoned) > MAX_WAITING_REQUESTS:
-                    process = self._process
-                    if process is not None and process.returncode is None:
-                        process.kill()
-            self._semaphore.release()
-
-    async def _ensure_started(self) -> asyncio.subprocess.Process:
-        async with self._startup_lock:
-            if self._closed:
-                raise RuntimeError("Laya decision provider is closed")
-            process = self._process
-            if process is not None and process.returncode is None:
-                return process
-            if self._startup is None or self._startup.done():
-                self._startup = asyncio.create_task(self._spawn())
-            startup = self._startup
-        return await asyncio.shield(startup)
-
-    async def _spawn(self) -> asyncio.subprocess.Process:
-        environment = {
-            key: value
-            for key in ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL")
-            if (value := os.environ.get(key)) is not None
-        }
-        environment.update(
-            {
-                "HF_HUB_OFFLINE": "1",
-                "TRANSFORMERS_OFFLINE": "1",
-                "TOKENIZERS_PARALLELISM": "false",
-            }
-        )
-        process = await asyncio.create_subprocess_exec(
-            *self._runner_command,
-            str(self._model_path),
-            "--workers",
-            str(self._max_concurrency),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            cwd=self._model_path,
-            env=environment,
-            limit=MAX_MESSAGE_BYTES,
-        )
-        try:
-            if process.stdout is None:
-                raise RuntimeError("Laya worker has no output pipe")
-            line = await asyncio.wait_for(
-                process.stdout.readline(), timeout=STARTUP_TIMEOUT_SECONDS
-            )
-            handshake = RunnerHandshake.model_validate_json(line)
-            if (
-                handshake.protocol_version != PROTOCOL_VERSION
-                or handshake.question_schema_version != QUESTION_SCHEMA_VERSION
-                or handshake.model_repository != MODEL_REPOSITORY
-                or handshake.model_revision != MODEL_REVISION
-                or handshake.model_digest != MODEL_DIGEST
-            ):
-                raise RuntimeError("Laya worker handshake is incompatible")
-        except Exception:
-            process.kill()
-            await process.wait()
-            raise
-        async with self._ready_condition:
-            self._process = process
-            self._terminal_error = None
-            self._ready_condition.notify_all()
-        self._reader = asyncio.create_task(self._read_responses(process))
-        return process
-
-    async def _read_responses(self, process: asyncio.subprocess.Process) -> None:
-        try:
-            if process.stdout is None:
-                raise RuntimeError("Laya worker output pipe closed")
-            while line := await process.stdout.readline():
-                if len(line) > MAX_MESSAGE_BYTES:
-                    raise ValueError("Laya response exceeds pipe limit")
-                response = RunnerResponse.model_validate_json(line)
-                future = self._pending.get(response.request_id)
-                if future is None:
-                    if response.request_id in self._abandoned:
-                        self._abandoned.remove(response.request_id)
-                        continue
-                    raise ValueError("Laya response has unknown request identity")
-                if future.cancelled():
-                    continue
-                if future.done():
-                    raise ValueError("Laya worker returned a duplicate response")
-                if response.error is not None:
-                    future.set_exception(RuntimeError(response.error))
-                elif response.decision is not None:
-                    future.set_result(response.decision)
-            raise RuntimeError("Laya worker exited")
-        except Exception:
-            async with self._ready_condition:
-                if self._process is process:
-                    self._process = None
-                    self._startup = None
-                self._ready_condition.notify_all()
-            for future in self._pending.values():
-                if not future.done():
-                    future.set_exception(RuntimeError("Laya worker failed"))
-            if process.returncode is None:
-                with suppress(ProcessLookupError):
-                    process.kill()
-            await process.wait()
-            self._abandoned.clear()
-            if not self._closed:
-                try:
-                    now = monotonic()
-                    self._recent_exits.append(now)
-                    if (
-                        len(self._recent_exits) == MAX_WORKER_EXITS
-                        and now - self._recent_exits[0] < WORKER_EXIT_WINDOW_SECONDS
-                    ):
-                        raise RuntimeError("Laya worker exited repeatedly")
-                    await self._ensure_started()
-                except Exception as error:
-                    async with self._ready_condition:
-                        self._terminal_error = error
-                        self._ready_condition.notify_all()
+    async def _watch_health(self) -> None:
+        unavailable_since: float | None = None
+        while not self._closed:
+            await asyncio.sleep(HEALTH_INTERVAL_SECONDS)
+            healthy = await self._probe()
+            async with self._condition:
+                self._ready = healthy
+                self._condition.notify_all()
+            if healthy:
+                unavailable_since = None
+            else:
+                unavailable_since = unavailable_since or monotonic()
+                if monotonic() - unavailable_since >= RECOVERY_TIMEOUT_SECONDS:
+                    self._terminal_error = RuntimeError("Laya service recovery failed")
+                    async with self._condition:
+                        self._condition.notify_all()
                     if self._on_unavailable is not None:
                         self._on_unavailable()
+                    return
+
+    async def wait_ready(self) -> None:
+        async with self._condition:
+            await self._condition.wait_for(
+                lambda: self.is_ready or self._terminal_error is not None or self._closed
+            )
+        if self._terminal_error is not None:
+            raise RuntimeError("Laya service recovery failed") from self._terminal_error
+        if self._closed:
+            raise RuntimeError("Laya decision provider is closed")
+
+    async def classify(self, request: RoutingRequest) -> RoutingDecision:
+        if not self.is_ready:
+            raise RuntimeError("Laya decision service is unavailable")
+        payload: dict[str, object] = {
+            "model": MODEL_ID,
+            "state": request.model_dump(exclude_none=True),
+            "question": {
+                "key": "playbook",
+                "instructions": QUESTION,
+                "criteria": {
+                    playbook.value: PLAYBOOK_DESCRIPTIONS[playbook]
+                    for playbook in Playbook
+                },
+            },
+        }
+        async with self._semaphore:
+            raw = await asyncio.to_thread(self._request, "POST", "/decisions", payload)
+        response = ChoiceResponse.model_validate(raw)
+        if response.model != MODEL_ID:
+            raise ValueError("Laya model identity differs from configuration")
+        if set(response.probabilities) != {playbook.value for playbook in Playbook}:
+            raise ValueError("Laya probabilities are incomplete")
+        return RoutingDecision(
+            playbook=Playbook(response.choice),
+            model=response.model,
+            confidence=response.confidence,
+            probabilities={Playbook(key): value for key, value in response.probabilities.items()},
+        )
 
     async def close(self) -> None:
-        """Drain bounded work and release the owned subprocess."""
-
-        async with self._ready_condition:
-            self._closed = True
-            self._ready_condition.notify_all()
-        startup = self._startup
-        if startup is not None and not startup.done():
+        self._closed = True
+        self._ready = False
+        monitor, self._monitor = self._monitor, None
+        if monitor is not None:
+            monitor.cancel()
             try:
-                await asyncio.wait_for(
-                    asyncio.shield(startup), timeout=STARTUP_TIMEOUT_SECONDS
-                )
-            except Exception:
-                startup.cancel()
-        if self._pending:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*self._pending.values(), return_exceptions=True),
-                    timeout=SHUTDOWN_TIMEOUT_SECONDS,
-                )
-            except TimeoutError:
+                await monitor
+            except asyncio.CancelledError:
                 pass
-        process = self._process
-        if process is not None and process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5.0)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-        reader = self._reader
-        if reader is not None:
-            await asyncio.gather(reader, return_exceptions=True)
+        async with self._condition:
+            self._condition.notify_all()

@@ -10,6 +10,7 @@ decision-runtime: decisions/2026-09-23-use-native-mlx-for-query-routing.md
 supersedes:
 superseded-by:
   - specs/2026-09-23-classifier-daemon-readiness.md (Laya startup and recovery only)
+  - specs/2026-09-25-consume-external-laya-inference.md (Laya runtime ownership only)
 implementation:
   commits: [0eadb87, f0187cd, dd56819, 21803de, 353d35a, d583b94]
   pull-request:
