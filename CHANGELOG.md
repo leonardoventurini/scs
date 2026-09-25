@@ -9,6 +9,7 @@
 - docs: replace obsolete proxy and OMLX setup guides with current references
 - docs: simplify the README and clarify classifier resource use, embedding
   requirements, and platform support
+- docs: point release installer examples at 0.2.1
 
 ## 0.2.0 - 2026-09-23
 
