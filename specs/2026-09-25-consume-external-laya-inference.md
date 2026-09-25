@@ -1,5 +1,5 @@
 ---
-status: validating
+status: shipped
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-25
@@ -70,11 +70,16 @@ startup; no index migration is needed.
   trusted hosts, exact model identity, complete answers, startup gating,
   outage recovery, and terminal failure. The public SCS documentation and
   diagnostics contain no private serving-product name.
-- **Inferred:** SCS carries no Laya runtime dependency or bundle installer and
-  constructs only an HTTP client when routing is configured; this is verified
-  by source inspection and package lock changes, not a live installed query.
-- **Skipped:** an end-to-end query against a warmed external Laya endpoint and
-  installed SCS binary await the local service rollout.
+- **Passed:** local `scs version` reported 0.2.1, and `scs daemon restart`
+  reported a ready 0.2.1 generation with the configured external endpoint.
+  A fresh stdio MCP bridge then returned a complete `query_code` result with
+  `routing.provider = "laya"`, the pinned model identity, no degraded stages,
+  and no fallback. `get_graph_stats` reported structural and semantic search
+  ready with 3,455 indexed nodes.
+- **Passed by source and package inspection:** SCS constructs only an HTTP
+  decision client and carries no Laya runtime dependency or bundle installer.
+  The live query exercised that client; process memory isolation was not
+  separately measured.
 - **Passed:** version 0.2.1 sources agree under
   `python3 scripts/check-release-version.py v0.2.1`; `just verify` passed again
   after the version bump, and `uv build --wheel` produced the local Apple
