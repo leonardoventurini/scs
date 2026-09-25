@@ -11,7 +11,7 @@ supersedes:
   - specs/2026-09-22-unified-query-orchestration.md (Laya runtime ownership only)
 superseded-by:
 implementation:
-  commits: []
+  commits: [e3238eb]
   pull-request:
 ---
 

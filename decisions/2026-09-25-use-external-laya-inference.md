@@ -11,7 +11,7 @@ superseded-by:
 related-specs:
   - specs/2026-09-25-consume-external-laya-inference.md
 implementation:
-  commits: []
+  commits: [e3238eb]
   pull-request:
 ---
 
