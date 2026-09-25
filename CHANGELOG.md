@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1 - 2026-09-25
+
 - feat: route optional Laya decisions through a configurable choice API
 - docs: label historical specs and decisions with lifecycle status and successors
 - docs: replace obsolete proxy and OMLX setup guides with current references

@@ -75,3 +75,7 @@ startup; no index migration is needed.
   by source inspection and package lock changes, not a live installed query.
 - **Skipped:** an end-to-end query against a warmed external Laya endpoint and
   installed SCS binary await the local service rollout.
+- **Passed:** version 0.2.1 sources agree under
+  `python3 scripts/check-release-version.py v0.2.1`; `just verify` passed again
+  after the version bump, and `uv build --wheel` produced the local Apple
+  Silicon CPython 3.14 wheel. No public tag or release has been published.
