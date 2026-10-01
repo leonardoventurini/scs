@@ -130,3 +130,10 @@ used absent-daemon shutdown; the full suite separately exercised daemon
 shutdown/cancellation and lifecycle coordination. pip and pipx support,
 automatic MCP configuration changes, and publishing/installing the updated
 release on the active workstation are outside this approved scope.
+
+The command was subsequently published as
+[SCS 0.2.2](https://github.com/leonardoventurini/scs/releases/tag/v0.2.2).
+Both hosted platform gates and wheel smoke tests passed, and the public macOS
+installer exercised both self-uninstall modes. See the
+[release verification](2026-10-01-release-0.2.2.md); the active installation was
+not upgraded.
