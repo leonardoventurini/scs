@@ -5,6 +5,7 @@
 ## 0.2.2 - 2026-10-01
 
 - feat(cli): add safe uninstall with optional state purge and manual MCP cleanup
+- test: synchronize startup-grace coverage with job polling
 
 ## 0.2.1 - 2026-09-25
 

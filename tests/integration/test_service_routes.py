@@ -6,6 +6,7 @@ import asyncio
 import json
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import cast
 
@@ -911,10 +912,15 @@ async def test_unattached_startup_grace_keeps_active_jobs_observable(
     class ActiveThenIdleJobs:
         def __init__(self) -> None:
             self.checks = 0
+            self.checked = threading.Event()
+            self.active = threading.Event()
+            self.active.set()
 
         def has_active(self) -> bool:
+            active = self.active.is_set()
             self.checks += 1
-            return self.checks == 1
+            self.checked.set()
+            return active
 
     runtime = Path(tempfile.mkdtemp(prefix="scs-unattached-job-", dir="/tmp"))
     settings = SCSSettings(
@@ -934,9 +940,17 @@ async def test_unattached_startup_grace_keeps_active_jobs_observable(
     daemon.arm_startup_grace()
 
     try:
-        await asyncio.sleep(0.015)
-        assert jobs.checks == 1
+        # The worker runs in a thread; a short sleep cannot establish that its
+        # check has finished. Keep work active until observability is verified.
+        observed = await asyncio.wait_for(
+            asyncio.to_thread(jobs.checked.wait, 1), timeout=2
+        )
+        assert observed is True
+        assert jobs.checks >= 1
         assert (runtime / "scs.sock").exists()
+        health = await SCSClient(runtime / "scs.sock").call("system.health")
+        assert health["ready"] is True
+        jobs.active.clear()
         await asyncio.wait_for(daemon.wait_for_shutdown_request(), timeout=1)
         assert jobs.checks >= 2
     finally:
