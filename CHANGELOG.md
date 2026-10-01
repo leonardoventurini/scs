@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat(cli): add safe uninstall with optional state purge and manual MCP cleanup
+
 ## 0.2.1 - 2026-09-25
 
 - feat: route optional Laya decisions through a configurable choice API

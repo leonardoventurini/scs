@@ -19,6 +19,8 @@ def test_operational_commands_are_parseable() -> None:
     assert parser.parse_args(["doctor"]).command == "doctor"
     assert parser.parse_args(["status"]).command == "status"
     assert parser.parse_args(["version"]).command == "version"
+    assert parser.parse_args(["uninstall"]).purge is False
+    assert parser.parse_args(["uninstall", "--purge"]).purge is True
     assert parser.parse_args(["index", "."]).command == "index"
     assert parser.parse_args(["reindex", "."]).command == "reindex"
     assert parser.parse_args(["list"]).command == "list"
@@ -40,6 +42,44 @@ def test_mcp_entrypoint_is_installed_with_root_scs_package() -> None:
     from scs.mcp.stdio import main as mcp_main
 
     assert callable(mcp_main)
+
+
+@pytest.mark.parametrize("purge", [False, True])
+def test_uninstall_command_reports_cleanup_and_manual_mcp_removal(
+    purge: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: list[bool] = []
+
+    def uninstall(_settings: object, *, purge: bool = False) -> None:
+        calls.append(purge)
+
+    monkeypatch.setattr("scs.cli.uninstall", uninstall)
+
+    assert main(["uninstall", *(["--purge"] if purge else [])]) == 0
+    output = capsys.readouterr().out
+    assert calls == [purge]
+    assert ("purged" if purge else "preserved") in output
+    assert "codex mcp remove scs" in output
+    assert "MCP registrations" in output
+
+
+def test_uninstall_command_reports_failure_without_claiming_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from scs.uninstall import UninstallError
+
+    def fail(_settings: object, *, purge: bool = False) -> None:
+        raise UninstallError("shutdown failed")
+
+    monkeypatch.setattr("scs.cli.uninstall", fail)
+
+    assert main(["uninstall"]) == 1
+    output = capsys.readouterr()
+    assert "shutdown failed" in output.err
+    assert "uninstalled" not in output.out
 
 
 def test_mcp_command_runs_installed_stdio_bridge(

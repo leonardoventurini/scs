@@ -5,6 +5,10 @@ This replaces the launchd proxy and service-install approach in the
 
 Status: shipped
 
+The [uninstall CLI contract](2026-10-01-uninstall-cli.md) extends uninstall with
+an explicit optional purge. The preservation guarantee below applies to default
+uninstall; the daemon and installer contracts remain unchanged.
+
 Project: `scs`
 
 Project root: `/Users/leonardo/Repositories/mentagen/scs`

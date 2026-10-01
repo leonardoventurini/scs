@@ -123,25 +123,54 @@ release changes a persistent schema incompatibly, follow that release's data
 rollback note before starting an older binary. The TSG cutover's retained
 `*.pre-tsg.backup` files remain an independent recovery path.
 
-Uninstall code with:
+Close connected MCP clients, then uninstall the uv-installed executable with:
 
 ```bash
-scs daemon stop
-uv tool uninstall scs
+scs uninstall
 ```
 
-This intentionally preserves user data and logs. There is no automatic purge
-command. To remove only one repository from SCS while leaving its source and all
+This cancels active indexing cooperatively, waits for the daemon to release its
+writer lock, and removes the executing uv tool. Data, configuration, model cache,
+and logs are preserved by default. uv must be available on PATH; if the installer
+used a temporary uv binary, [install uv](https://docs.astral.sh/uv/getting-started/installation/)
+first. The command refuses source-tree, pip, and pipx environments and selects
+the executing tool's directory even if `UV_TOOL_DIR` has since changed.
+
+To also delete SCS state:
+
+```bash
+scs uninstall --purge
+```
+
+Purge removes the configured `SCS_HOME`, `SCS_MODEL_CACHE`, `SCS_LOG_DIR`, and
+`SCS_RUNTIME_DIR` contents, plus `~/.scs/config.toml` even when the data root is
+elsewhere. Configured directories must be dedicated to SCS. Symlink roots,
+shared/system containers, repository trees, and paths overlapping the installed
+tool are rejected before shutdown. Nested directories are cleaned once and
+internal symlinks are removed without following them. The small `.daemon.lock`
+and `.bootstrap.lock` files and their containing directories remain so
+concurrent lifecycle commands continue to share the same lock inodes.
+
+Shutdown or package-removal failure prevents purge. If cleanup fails after the
+package has been removed, the command returns nonzero and reports remaining
+paths for manual cleanup. Deleted state requires a backup to recover.
+
+Both commands leave MCP registrations untouched and print removal guidance.
+For Codex, run `codex mcp remove scs`, then restart connected clients. Use the
+corresponding configuration removal in other harnesses.
+
+Older releases can still be removed with `scs daemon stop` followed by
+`uv tool uninstall scs`.
+
+To remove only one repository from SCS while leaving its source and all
 other indexed repositories intact, call the idempotent MCP
 `delete_repository(repo_path=...)` tool. It durably removes that repository's
 SCS-owned index and catalog registration, stops its watcher, supersedes pending
 indexing work, and also works after the source directory has been removed.
 
-Deleting `SCS_HOME` is a separate, manual uninstall purge that removes all
-persisted SCS configuration, indexes, project-store registrations, and durable
-jobs. Stop the daemon and uninstall the executable before manually removing that
-directory. Neither per-repository deletion nor a global SCS data purge changes
-repository source files.
+Neither per-repository deletion nor uninstall cleanup changes repository source
+files. Reinstall a compatible release to reuse state preserved by ordinary
+uninstall.
 
 ## Maintainer release procedure
 

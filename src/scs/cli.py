@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -16,6 +17,7 @@ from scs.daemon import DaemonController
 from scs.main import serve
 from scs.mcp.stdio import serve_stdio
 from scs.storage.snapshot import list_saved_projects
+from scs.uninstall import UninstallError, uninstall
 from scs.wire.client import SCSConnection
 
 
@@ -31,6 +33,16 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser("doctor", help="validate storage and daemon health")
     subcommands.add_parser("status", help="show daemon state")
     subcommands.add_parser("version", help="show the installed SCS version")
+
+    removal = subcommands.add_parser(
+        "uninstall", help="stop SCS and remove its uv installation"
+    )
+    removal.add_argument(
+        "--purge",
+        action="store_true",
+        help="also delete SCS configuration, indexes, cache, logs, and runtime state",
+    )
+
     metrics = subcommands.add_parser(
         "metrics", help="show privacy-preserving aggregate operation metrics"
     )
@@ -131,6 +143,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if command == "version":
         print(__version__)
+        return 0
+    if command == "uninstall":
+        purge = values.get("purge") is True
+        try:
+            uninstall(SCSSettings(), purge=purge)
+        except (UninstallError, OSError, ValueError) as error:
+            print(f"SCS uninstall failed: {error}", file=sys.stderr)
+            return 1
+        state = "purged (coordination lock files retained)" if purge else "preserved"
+        print(f"SCS uninstalled; data, configuration, cache, and logs {state}.")
+        print(
+            "MCP registrations are unchanged. Remove SCS from your MCP clients manually."
+        )
+        print("For Codex: codex mcp remove scs. Restart connected clients.")
         return 0
     if command == "daemon":
         controller = DaemonController()

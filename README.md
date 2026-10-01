@@ -68,6 +68,20 @@ configuration. Indexing runs as a durable background job; use `scs status` or
 `get_graph_stats` to check when it is ready. The path above assumes the
 installer's default `~/.local/bin` location.
 
+## Uninstall
+
+Close connected MCP clients, then run:
+
+```bash
+scs uninstall          # Preserve indexes, configuration, cache, and logs.
+scs uninstall --purge  # Also delete SCS state; retain coordination lock files.
+```
+
+Choose one command. Both require uv on PATH and leave MCP registrations in place;
+remove the SCS entry from your clients manually (`codex mcp remove scs` for
+Codex). See [uninstall details](docs/github-releases-distribution.md#upgrade-rollback-and-uninstall)
+for custom paths, safety checks, and recovery.
+
 ## How code queries work
 
 ```text
