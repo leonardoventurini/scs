@@ -3,7 +3,7 @@ status: shipped
 project: scs
 project-root: /Users/leonardo/Repositories/scs
 created: 2026-09-22
-updated: 2026-09-24
+updated: 2026-10-09
 owner: code-intelligence
 decision: decisions/2026-09-22-unify-agent-code-queries.md
 decision-runtime: decisions/2026-09-23-use-native-mlx-for-query-routing.md
@@ -151,7 +151,10 @@ INVENTORY
 
 Each label has a constant description and eligibility predicate. The model
 receives the goal, the presence and bounded values of explicit anchors, and
-the enum descriptions. It does not receive source-derived content.
+descriptions of eligible choices. It does not receive source-derived content.
+SCS offers only eligible choices through the generic external choice API and
+expands the returned vector to all seven labels with zero probability for
+excluded choices. Execution independently enforces the same eligibility rules.
 
 If the selected playbook is ineligible, SCS chooses the deterministic fallback
 defined below and records `routing.degraded_reason = "ineligible_playbook"`.
@@ -206,6 +209,14 @@ Eligibility and fallback rules are evaluated in this order:
 
 Within each playbook, ordering, deduplication, graph direction, truncation, and
 tie-breaking are deterministic for the same index and provider responses.
+File inspection ranks declarations before containers and imports, then uses
+source position, case-folded name, and stable ID to break ties. It reads native
+nodes in finite batches and retains the capped best candidates. This preserves
+membership for uncapped results and keeps existing node/edge budgets.
+
+The 0.2.3 optimization and validation work is tracked in
+[the release spec](2026-10-09-release-0.2.3.md). Its v3 evaluation broadens natural
+goals and missing-anchor coverage; truncation alone is not degradation.
 For Python repositories using a `src/` layout, indexing resolves import names
 against existing repository-scoped symbols beneath `src/` when the direct name
 has no match. It records only real dependency edges; external or missing

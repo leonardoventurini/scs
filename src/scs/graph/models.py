@@ -37,6 +37,18 @@ class RelationshipType(StrEnum):
     MODIFIES = "modifies"
 
 
+SYMBOL_NODE_TYPES = frozenset(
+    {
+        NodeType.CLASS,
+        NodeType.FUNCTION,
+        NodeType.METHOD,
+        NodeType.VARIABLE,
+        NodeType.CONSTANT,
+        NodeType.TYPE_ALIAS,
+    }
+)
+
+
 class Node(BaseModel):
     """A repository-derived graph node."""
 

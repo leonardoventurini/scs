@@ -7,6 +7,8 @@ from typing import ClassVar, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from scs.graph.models import SYMBOL_NODE_TYPES
+
 
 class Playbook(StrEnum):
     """The only workflows a classifier may select."""
@@ -24,12 +26,18 @@ PLAYBOOK_DESCRIPTIONS: dict[Playbook, str] = {
     Playbook.DISCOVER: "Find relevant code symbols or files for a broad goal.",
     Playbook.UNDERSTAND: "Explain how code works using search and graph context.",
     Playbook.RELATIONSHIPS: "Find dependencies and relationships of a symbol.",
-    Playbook.REFERENCES: "Find incoming references to a symbol or source position.",
+    Playbook.REFERENCES: (
+        "Find incoming references. Requires source_position, node_ids, or "
+        "symbol_name supplied in state; a name mentioned only in the goal "
+        "is not an anchor."
+    ),
     Playbook.INSPECT_FILES: "Inspect indexed symbols and edges in source files.",
-    Playbook.IMPACT: "Find affected dependents and tests for changed files.",
+    Playbook.IMPACT: (
+        "Find affected dependents and tests for changed files. Requires "
+        "nonempty file_paths supplied in state."
+    ),
     Playbook.INVENTORY: "List indexed symbols of a specified type.",
 }
-
 
 class SourcePosition(BaseModel):
     """A zero-based location supplied by the caller."""
@@ -72,6 +80,23 @@ class RoutingDecision(BaseModel):
         if abs(sum(self.probabilities.values()) - 1.0) > 0.01:
             raise ValueError("probabilities must sum to one")
         return self
+
+
+def eligible_playbooks(request: RoutingRequest) -> frozenset[Playbook]:
+    """Share anchor requirements between model guidance and route authority.
+
+    Goal prose never supplies an anchor. The external classifier can choose
+    only from this set, and execution independently validates its answer.
+    """
+
+    available = set(Playbook)
+    if not request.file_paths:
+        available.remove(Playbook.IMPACT)
+    if not (request.source_position or request.node_ids or request.symbol_name):
+        available.remove(Playbook.REFERENCES)
+    if request.node_type is not None and request.node_type not in SYMBOL_NODE_TYPES:
+        available.remove(Playbook.INVENTORY)
+    return frozenset(available)
 
 
 def _finite(value: float) -> bool:

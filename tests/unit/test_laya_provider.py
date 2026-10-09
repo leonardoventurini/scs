@@ -6,18 +6,20 @@ import asyncio
 
 import pytest
 
-from scs.orchestration.decision import Playbook, RoutingRequest
+from scs.orchestration.decision import Playbook, RoutingRequest, eligible_playbooks
 from scs.orchestration.laya_provider import LayaDecisionProvider, MODEL_ID
 
 
 def decision() -> dict[str, object]:
+    available = eligible_playbooks(RoutingRequest(goal="find parser"))
+
     return {
         "model": MODEL_ID,
         "choice": "UNDERSTAND",
         "confidence": 0.8,
         "probabilities": {
-            playbook.value: 0.8 if playbook is Playbook.UNDERSTAND else 0.2 / 6
-            for playbook in Playbook
+            playbook.value: 0.8 if playbook is Playbook.UNDERSTAND else 0.2 / (len(available) - 1)
+            for playbook in available
         },
     }
 
@@ -52,7 +54,12 @@ async def test_provider_sends_bounded_request_and_accepts_complete_answer(
         assert payload["model"] == MODEL_ID
         question = payload["question"]
         assert isinstance(question, dict)
-        assert set(question["criteria"]) == {playbook.value for playbook in Playbook}
+        assert set(question["criteria"]) == {
+            playbook.value for playbook in eligible_playbooks(RoutingRequest(goal="find parser"))
+        }
+        assert set(answer.probabilities) == set(Playbook)
+        assert answer.probabilities[Playbook.IMPACT] == 0
+        assert answer.probabilities[Playbook.REFERENCES] == 0
     finally:
         await provider.close()
 
@@ -73,8 +80,10 @@ async def test_provider_rejects_incompatible_service_at_startup(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_choice", ["ARBITRARY_TOOL", Playbook.REFERENCES.value])
 async def test_provider_rejects_invalid_choice_response(
     monkeypatch: pytest.MonkeyPatch,
+    invalid_choice: str,
 ) -> None:
     def request(
         _self: LayaDecisionProvider,
@@ -85,7 +94,7 @@ async def test_provider_rejects_invalid_choice_response(
         if route == "/decisions/ready":
             return {"status": "ok", "model": MODEL_ID}
         answer = decision()
-        answer["choice"] = "ARBITRARY_TOOL"
+        answer["choice"] = invalid_choice
         return answer
 
     monkeypatch.setattr(LayaDecisionProvider, "_request", request)

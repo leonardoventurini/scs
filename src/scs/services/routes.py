@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from heapq import nsmallest
 from pathlib import Path
 from time import perf_counter
 from typing import cast
 
-from scs.graph.models import Edge, Node, NodeType, RelationshipType
+from scs.graph.models import SYMBOL_NODE_TYPES, Edge, Node, NodeType, RelationshipType
 from scs.graph.native import NativeGraph
 from scs.indexing.jobs import (
     ACTIVE_JOB_STATUSES,
@@ -30,16 +31,6 @@ from scs.source_paths import validated_source_path
 GraphForRepository = Callable[[str], NativeGraph | None]
 BindingForRepository = Callable[[str], tuple[str, str] | None]
 
-SYMBOL_NODE_TYPES = frozenset(
-    {
-        NodeType.CLASS,
-        NodeType.FUNCTION,
-        NodeType.METHOD,
-        NodeType.VARIABLE,
-        NodeType.CONSTANT,
-        NodeType.TYPE_ALIAS,
-    }
-)
 TEST_PATH_MARKERS = ("tests/", "test/", "test_", "_test.", ".test.", "Tests.swift")
 DEPENDENCY_RELATIONSHIPS = frozenset(
     {
@@ -54,6 +45,8 @@ DEFAULT_INSPECT_NODE_LIMIT = 50
 DEFAULT_INSPECT_EDGE_LIMIT = 100
 MAX_INSPECT_NODE_LIMIT = 200
 MAX_INSPECT_EDGE_LIMIT = 500
+INSPECT_READ_BATCH_SIZE = 128
+UNKNOWN_SOURCE_LINE = 2**63 - 1
 COMPACT_CONTENT_CHARACTERS = 1_024
 MAX_JOB_WAIT_SECONDS = 10.0
 JOB_WAIT_POLL_SECONDS = 0.1
@@ -254,6 +247,34 @@ def _integer_metadata(value: object, *, key: str, default: int) -> int:
     if not isinstance(value, (str, bytes, bytearray, int, float)):
         raise TypeError(f"{key} must be numeric")
     return int(value)
+
+
+def _inspection_rank(node: Node) -> tuple[int, int, str, str]:
+    """Prefer declarations, then source order, instead of opaque ID order."""
+
+    if node.type in SYMBOL_NODE_TYPES:
+        category = 0
+    elif node.type in {NodeType.FILE, NodeType.MODULE}:
+        category = 1
+    else:
+        category = 2
+
+    line = node.metadata.get("start_line")
+    source_line = line if isinstance(line, int) and line >= 0 else UNKNOWN_SOURCE_LINE
+
+    return category, source_line, node.name.casefold(), node.id
+
+
+def _inspection_nodes(graph: NativeGraph, node_ids: list[str], limit: int) -> list[Node]:
+    """Rank all candidates while retaining only a batch and the capped result."""
+
+    def candidates() -> Iterator[Node]:
+        for offset in range(0, len(node_ids), INSPECT_READ_BATCH_SIZE):
+            batch = node_ids[offset : offset + INSPECT_READ_BATCH_SIZE]
+
+            yield from graph.batch_get_nodes_sync(batch)
+
+    return nsmallest(limit, candidates(), key=_inspection_rank)
 
 
 class SCSServiceRoutes:
@@ -733,11 +754,11 @@ class SCSServiceRoutes:
                 "nodes_truncated": False,
                 "edges_truncated": False,
             }
-        node_ids = sorted(await asyncio.to_thread(
+        node_ids = await asyncio.to_thread(
             graph.get_node_ids_for_file_sync,
             canonicalize_repo_path(repo_path),
             Path(file_path).as_posix(),
-        ))
+        )
         node_limit = min(
             MAX_INSPECT_NODE_LIMIT,
             _integer(
@@ -756,13 +777,8 @@ class SCSServiceRoutes:
                 minimum=1,
             ),
         )
-        selected_node_ids = node_ids[:node_limit]
-        nodes = [
-            node
-            for node_id in selected_node_ids
-            if (node := await asyncio.to_thread(graph.get_node_sync, node_id))
-            is not None
-        ]
+        nodes = await asyncio.to_thread(_inspection_nodes, graph, node_ids, node_limit)
+        selected_node_ids = [node.id for node in nodes]
         all_edges = (
             await asyncio.to_thread(graph.batch_get_edges_sync, selected_node_ids)
             if selected_node_ids

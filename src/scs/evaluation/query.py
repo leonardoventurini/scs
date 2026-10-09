@@ -316,7 +316,7 @@ async def run_query_evaluation(
                     for stage in stages
                 ),
                 truncated=response.get("truncated") is True,
-                degraded=response.get("complete") is not True,
+                degraded=bool(response.get("degraded_stages")) or bool(route.get("degraded_reason")),
             ))
 
             baseline_results: list[str] = []

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- fix(query): constrain classifier choices to eligible anchored workflows
+- fix(query): prioritize declarations in bounded file inspection
+- fix(evaluation): distinguish capped evidence from degraded query execution
+- test: broaden query evaluation with natural goals and missing anchors
+- docs: explain efficient readiness checks and partial query results
+
 ## 0.2.2 - 2026-10-01
 
 - feat(cli): add safe uninstall with optional state purge and manual MCP cleanup

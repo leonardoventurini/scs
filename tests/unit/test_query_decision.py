@@ -12,7 +12,28 @@ from scs.orchestration.decision import (
     Playbook,
     RoutingDecision,
     RoutingRequest,
+    eligible_playbooks,
 )
+
+
+@pytest.mark.parametrize(
+    ("anchors", "unavailable"),
+    [
+        ({}, {Playbook.IMPACT, Playbook.REFERENCES}),
+        ({"file_paths": ["parser.py"]}, {Playbook.REFERENCES}),
+        ({"symbol_name": "parse"}, {Playbook.IMPACT}),
+        ({"node_ids": ["node"]}, {Playbook.IMPACT}),
+        ({"source_position": {"file_path": "parser.py", "line": 0}}, {Playbook.IMPACT}),
+        ({"node_type": "file"}, {Playbook.IMPACT, Playbook.REFERENCES, Playbook.INVENTORY}),
+        ({"file_paths": ["parser.py"], "symbol_name": "parse"}, set()),
+    ],
+)
+def test_eligibility_requires_real_anchors(
+    anchors: dict[str, object], unavailable: set[Playbook]
+) -> None:
+    request = RoutingRequest.model_validate({"goal": "Investigate parser", **anchors})
+
+    assert eligible_playbooks(request) == frozenset(Playbook) - unavailable
 
 
 def test_routing_decision_requires_exact_finite_probability_vector() -> None:

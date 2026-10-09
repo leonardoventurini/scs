@@ -17,12 +17,17 @@ from scs.orchestration.decision import (
     Playbook,
     RoutingDecision,
     RoutingRequest,
+    eligible_playbooks,
 )
 
 MODEL_REPOSITORY: Final[str] = "aac6fef/laya-mlx"
 MODEL_REVISION: Final[str] = "20aed815fc6acde75733882e7ec0e3f28aeb9717"
 MODEL_ID: Final[str] = f"{MODEL_REPOSITORY}@{MODEL_REVISION}"
-QUESTION: Final[str] = "Select the single best code investigation workflow for this goal."
+QUESTION: Final[str] = (
+    "Select the single best available code investigation workflow for this goal. "
+    "Only explicit state fields count as anchors; when a goal lacks required "
+    "anchors, discover relevant code first."
+)
 MAX_RESPONSE_BYTES = 16_384
 HEALTH_INTERVAL_SECONDS = 0.25
 RECOVERY_TIMEOUT_SECONDS = 30.0
@@ -133,6 +138,8 @@ class LayaDecisionProvider:
     async def classify(self, request: RoutingRequest) -> RoutingDecision:
         if not self.is_ready:
             raise RuntimeError("Laya decision service is unavailable")
+        available = eligible_playbooks(request)
+
         payload: dict[str, object] = {
             "model": MODEL_ID,
             "state": request.model_dump(exclude_none=True),
@@ -142,6 +149,7 @@ class LayaDecisionProvider:
                 "criteria": {
                     playbook.value: PLAYBOOK_DESCRIPTIONS[playbook]
                     for playbook in Playbook
+                    if playbook in available
                 },
             },
         }
@@ -150,13 +158,20 @@ class LayaDecisionProvider:
         response = ChoiceResponse.model_validate(raw)
         if response.model != MODEL_ID:
             raise ValueError("Laya model identity differs from configuration")
-        if set(response.probabilities) != {playbook.value for playbook in Playbook}:
+        if set(response.probabilities) != {playbook.value for playbook in available}:
             raise ValueError("Laya probabilities are incomplete")
+        if Playbook(response.choice) not in available:
+            raise ValueError("Laya selected an unavailable playbook")
         return RoutingDecision(
             playbook=Playbook(response.choice),
             model=response.model,
             confidence=response.confidence,
-            probabilities={Playbook(key): value for key, value in response.probabilities.items()},
+            # The generic choice service sees eligible options only. SCS still
+            # exposes its complete closed probability vector to callers.
+            probabilities={
+                playbook: response.probabilities.get(playbook.value, 0.0)
+                for playbook in Playbook
+            },
         )
 
     async def close(self) -> None:

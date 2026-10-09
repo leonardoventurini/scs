@@ -92,7 +92,18 @@ def test_aggregate_reports_per_playbook_and_latency_percentile() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runner_warms_both_paths_and_counts_measured_calls() -> None:
+@pytest.mark.parametrize(
+    ("response_flags", "expected_degradation"),
+    [
+        ({"complete": True}, 0),
+        ({"complete": False, "truncated": True}, 0),
+        ({"complete": False, "degraded_stages": ["search"]}, 1),
+        ({"complete": False, "routing_reason": "ineligible_playbook"}, 1),
+    ],
+)
+async def test_runner_warms_both_paths_and_counts_measured_calls(
+    response_flags: dict[str, object], expected_degradation: int
+) -> None:
     class FakeCaller:
         def __init__(self) -> None:
             self.methods: list[str] = []
@@ -101,10 +112,13 @@ async def test_runner_warms_both_paths_and_counts_measured_calls() -> None:
             self.methods.append(method)
             if method == "knowledge.query":
                 return {
-                    "routing": {"playbook": "DISCOVER", "confidence": 0.9},
+                    "routing": {
+                        "playbook": "DISCOVER", "confidence": 0.9,
+                        "degraded_reason": response_flags.get("routing_reason"),
+                    },
                     "evidence": {"symbols": [{"file_path": "a.py"}]},
                     "trace": [], "timings": {"classification_ms": 3},
-                    "complete": True,
+                    **response_flags,
                 }
             return {"results": [{"file_path": "a.py"}]}
 
@@ -126,6 +140,7 @@ async def test_runner_warms_both_paths_and_counts_measured_calls() -> None:
     ]
     assert report["warmup"] is True
     assert cast(dict[str, object], report["unified_summary"])["mean_recall_at_k"] == 1
+    assert cast(dict[str, object], report["unified_summary"])["degradation_rate"] == expected_degradation
 
 
 def test_suite_anchor_cannot_override_repository_or_mode() -> None:

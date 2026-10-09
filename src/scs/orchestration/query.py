@@ -20,6 +20,7 @@ from scs.orchestration.decision import (
     RoutingDecision,
     RoutingRequest,
     SourcePosition,
+    eligible_playbooks,
 )
 from scs.source_paths import validated_source_path
 
@@ -185,7 +186,7 @@ class QueryOrchestrator:
             degraded_reason = "classifier_timeout" if isinstance(error, TimeoutError) else "classifier_unavailable"
         classification_ms = (perf_counter() - classification_started) * 1_000
         selected = decision.playbook
-        if not self._eligible(selected, request):
+        if selected not in eligible_playbooks(request):
             selected = Playbook.DISCOVER
             degraded_reason = "ineligible_playbook"
 
@@ -445,19 +446,6 @@ class QueryOrchestrator:
                 "total_ms": total_ms,
             },
         }
-
-    @staticmethod
-    def _eligible(playbook: Playbook, request: QueryRequest) -> bool:
-        if playbook is Playbook.IMPACT:
-            return bool(request.file_paths)
-        if playbook is Playbook.REFERENCES:
-            return bool(request.source_position or request.node_ids or request.symbol_name)
-        if playbook is Playbook.INVENTORY and request.node_type is not None:
-            return request.node_type in {
-                NodeType.CLASS.value, NodeType.FUNCTION.value, NodeType.METHOD.value,
-                NodeType.VARIABLE.value, NodeType.CONSTANT.value, NodeType.TYPE_ALIAS.value,
-            }
-        return True
 
     @staticmethod
     def _file_path(node: dict[str, object]) -> object | None:

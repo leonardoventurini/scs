@@ -38,14 +38,36 @@ for orchestration, evaluation, and rollback; they are no longer model-facing MCP
 tools.
 
 The optional external classifier receives the goal, anchors, and playbook choices,
-never source or retrieved evidence. A configured daemon requires model
+never source or retrieved evidence. Only eligible choices are offered: REFERENCES
+needs `source_position`, `node_ids`, or `symbol_name`, and IMPACT needs
+`file_paths`. A symbol mentioned in prose does not supply a structured anchor.
+The response still includes all seven probabilities; excluded choices are zero.
+A configured daemon requires model
 readiness before it reports ready. If the service becomes unavailable, SCS holds new
 queries during bounded recovery. An inference failure returns bounded discovery evidence with a
 degradation reason. Check `routing.degraded_reason` when routing matters.
 `ingest_project`, `ingest_files`,
 `delete_repository`, and `get_graph_stats` remain separate MCP operations.
 
+## Inspection and readiness
+
+Bounded file inspection prioritizes declarations before file containers and
+imports, then uses source order and stable ties. It retains the same node and
+edge limits. `truncated=true` with no degraded stage means useful evidence was
+capped; it does not mean the index needs rebuilding. Read the relevant source
+files and narrow the next query using returned file or symbol anchors.
+
+Check `get_graph_stats` once at the start of an investigation. Check again after
+explicit ingestion or an availability failure, rather than before every query.
+After ingestion, pass its job ID as `wait_job_id` with a positive
+`wait_timeout_seconds` (at most ten seconds). Inspect the returned `wait` outcome
+and job status; if still running, respect `retry_after_ms` before waiting again.
+Existing indexes can remain readable during indexing, so `ready` alone does not
+prove that a requested ingestion job has finished.
+
 Run `just eval-query` to compare `query_code` with versioned internal-route
-sequences on this repository. The v2 fast, balanced, and thorough five-tool
+sequences on this repository. The default v3 suite adds natural-goal paraphrases
+and missing-anchor cases. Evaluation reports truncation separately from routing
+or execution degradation. The historical v2 fast, balanced, and thorough five-tool
 reports in `evals/reports/` passed the routing, evidence, latency, call-count,
 and byte gates after wrapper removal.
