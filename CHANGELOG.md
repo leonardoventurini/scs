@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.3 - 2026-10-09
+
 - fix(query): clarify inventory routing for missing-anchor goals
 - fix(query): constrain classifier choices to eligible anchored workflows
 - fix(query): prioritize declarations in bounded file inspection

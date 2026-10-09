@@ -51,6 +51,10 @@ degradation reason. Check `routing.degraded_reason` when routing matters.
 
 ## Inspection and readiness
 
+Use the default `balanced` mode for broad investigations. Use `fast` for a
+bounded first pass or known file/symbol anchors: it searches fewer seeds,
+hydrates fewer files, and skips reranking, so broad-goal recall can be lower.
+
 Bounded file inspection prioritizes declarations before file containers and
 imports, then uses source order and stable ties. It retains the same node and
 edge limits. `truncated=true` with no degraded stage means useful evidence was
@@ -71,3 +75,8 @@ and missing-anchor cases. Evaluation reports truncation separately from routing
 or execution degradation. The historical v2 fast, balanced, and thorough five-tool
 reports in `evals/reports/` passed the routing, evidence, latency, call-count,
 and byte gates after wrapper removal.
+
+The 2026-10-09 final v3 balanced report passed every gate on the local snapshot.
+Its fast report passed routing and latency gates but failed evidence recall and
+nDCG against the broader baseline. These results preserve the existing mode
+budgets and make that quality tradeoff visible.
