@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix(query): clarify inventory routing for missing-anchor goals
 - fix(query): constrain classifier choices to eligible anchored workflows
 - fix(query): prioritize declarations in bounded file inspection
 - fix(evaluation): distinguish capped evidence from degraded query execution

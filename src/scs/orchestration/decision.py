@@ -36,7 +36,10 @@ PLAYBOOK_DESCRIPTIONS: dict[Playbook, str] = {
         "Find affected dependents and tests for changed files. Requires "
         "nonempty file_paths supplied in state."
     ),
-    Playbook.INVENTORY: "List indexed symbols of a specified type.",
+    Playbook.INVENTORY: (
+        "List indexed symbols of a specified type. Use only for explicitly "
+        "listing or enumerating all symbols, never for locating code or references."
+    ),
 }
 
 class SourcePosition(BaseModel):
